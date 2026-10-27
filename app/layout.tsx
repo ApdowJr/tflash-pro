@@ -1,35 +1,38 @@
-import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
+import { AppSettingsProvider } from "@/components/app/settings-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
 import "./globals.css";
 
-const sans = Geist({
-  variable: "--font-sans",
-  subsets: ["latin"],
-  weight: "variable",
-  display: "swap",
-});
-
-const mono = Geist_Mono({
-  variable: "--font-mono",
-  subsets: ["latin"],
-  weight: "variable",
-  display: "swap",
-});
-
 export const metadata: Metadata = {
-  title: "ururka-lps-agent",
-  description: "A Next.js starter for eve agents with AI Elements.",
+  title: "Ururka Agent — chat on any AI provider",
+  description:
+    "A modern eve agent workspace with OpenRouter, OpenAI, Anthropic, Gemini, Groq, local models and more.",
+  applicationName: "Ururka Agent",
 };
 
-// The page and Eve routes validate the generated app's Better Auth session.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#fafafa" },
+    { media: "(prefers-color-scheme: dark)", color: "#18181b" },
+  ],
+};
+
+// Applies the saved theme before hydration so the first paint never flashes.
+const THEME_SCRIPT = `(function(){try{var s=JSON.parse(localStorage.getItem('ururka:settings:v1')||'{}');if(s.theme==='dark'||s.theme==='light'){document.documentElement.dataset.theme=s.theme;document.documentElement.style.colorScheme=s.theme;}}catch(e){}})();`;
+
 export default function RootLayout({ children }: { readonly children: ReactNode }) {
   return (
-    <html className={cn(sans.variable, mono.variable)} lang="en">
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+      </head>
       <body>
-        <TooltipProvider>{children}</TooltipProvider>
+        <TooltipProvider>
+          <AppSettingsProvider>{children}</AppSettingsProvider>
+        </TooltipProvider>
       </body>
     </html>
   );
