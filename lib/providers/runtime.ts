@@ -16,13 +16,13 @@ export type ResolvedModel = {
   readonly contextWindow: number;
 };
 
-export async function resolveLanguageModel(selection: WireSelection): Promise<ResolvedModel> {
+export async function resolveLanguageModel(selection: WireSelection, ownerId?: string): Promise<ResolvedModel> {
   const provider = getProvider(selection.providerId);
   if (!provider || provider.kind === "gateway") {
     return { model: selection.modelId, contextWindow: selection.contextWindow };
   }
 
-  const credential = await resolveCredential(provider, selection.token);
+  const credential = await resolveCredential(provider, selection.token, ownerId);
   const apiKey = credential.apiKey || undefined;
   const baseURL = credential.baseURL;
   const modelId = selection.modelId;
@@ -30,8 +30,8 @@ export async function resolveLanguageModel(selection: WireSelection): Promise<Re
   const providerHeaders: Record<string, string> =
     provider.id === "openrouter"
       ? {
-          "HTTP-Referer": process.env.APP_URL ?? "https://tflash.local",
-          "X-Title": "T Flash",
+          ...(process.env.APP_URL ? { "HTTP-Referer": process.env.APP_URL } : {}),
+          "X-Title": "Tflash",
         }
       : {};
 
@@ -52,6 +52,10 @@ export async function resolveLanguageModel(selection: WireSelection): Promise<Re
         baseURL,
         apiKey,
         headers: providerHeaders,
+        // A custom host may not redirect server requests to an unapproved host.
+        ...(provider.customBaseURL
+          ? { fetch: (input, init) => fetch(input, { ...init, redirect: "error" }) }
+          : {}),
         // Ask OpenAI-compatible servers to report token usage while streaming.
         includeUsage: true,
       })(modelId);

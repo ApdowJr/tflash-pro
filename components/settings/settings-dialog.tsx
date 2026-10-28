@@ -56,7 +56,7 @@ export function SettingsDialog({
   readonly onOpenChange: (open: boolean) => void;
   readonly initialTab?: Tab;
 }) {
-  const { settings, t, connect, disconnect, isConnected, envConfigured, refreshStatus, loadModels, update, clearChats } =
+  const { settings, t, connect, disconnect, isConnected, envConfigured, refreshStatus, loadModels, update, clearConnections } =
     useAppSettings();
   const [tab, setTab] = useState<Tab>(initialTab);
   const [expanded, setExpanded] = useState<string | null>("openrouter");
@@ -503,8 +503,8 @@ export function SettingsDialog({
                   <Button
                     className="h-8 text-xs"
                     onClick={() => {
-                      clearChats();
-                      setStatus("local", { kind: "ok", message: "Local chat history cleared." });
+                      clearConnections();
+                      setStatus("local", { kind: "ok", message: settings.language === "so" ? "Furayaasha browser-ka waa la saaray." : "Browser provider keys cleared." });
                     }}
                     size="sm"
                     type="button"

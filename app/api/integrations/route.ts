@@ -1,3 +1,4 @@
+import { currentPrincipal } from "@/lib/identity";
 import { INTEGRATIONS, integrationEnvKeys } from "@/lib/integrations/catalog";
 import { resolveIntegrationAuth, type ServerAuthMode } from "@/lib/integrations/connection";
 import { oauthConfigured, oauthProviderFor } from "@/lib/integrations/oauth";
@@ -15,10 +16,11 @@ export type IntegrationStatusItem = {
   readonly id: string;
   /** How the *server* authenticates this connection; the browser may add its own token. */
   readonly mode: ServerAuthMode;
-  readonly connected: boolean;
+  /** Explicit server setting exists; it has not been checked against the service. */
+  readonly configured: boolean;
   /** Env vars the deployer can set for this integration. */
   readonly envKeys: readonly string[];
-  /** Project-wide Connect availability, so the UI can explain the options. */
+  /** A project ID is present. This does not verify a Connect installation. */
   readonly connectAvailable: boolean;
   /** True when this service can be authorized with OAuth *and* the deployment has credentials. */
   readonly oauthAvailable: boolean;
@@ -34,6 +36,7 @@ export type IntegrationsStatusResponse = {
 };
 
 export async function GET(): Promise<Response> {
+  if (!await currentPrincipal()) return Response.json({ error: "Sign in to continue." }, { status: 401 });
   const connectAvailable = Boolean(process.env.VERCEL_PROJECT_ID);
   const integrations: IntegrationStatusItem[] = INTEGRATIONS.map((integration) => {
     const auth = resolveIntegrationAuth(integration);
@@ -47,7 +50,9 @@ export async function GET(): Promise<Response> {
     return {
       id: integration.id,
       mode: auth.mode,
-      connected: auth.mode !== "none",
+      // A project ID alone only suggests a fallback; it does not prove that
+      // the integration is installed, authorized, or reachable.
+      configured: auth.mode === "connect" || auth.mode === "token",
       envKeys: integrationEnvKeys(integration),
       connectAvailable,
       oauthAvailable: oauthConfigured(integration.id),

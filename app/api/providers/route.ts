@@ -1,3 +1,4 @@
+import { currentPrincipal } from "@/lib/identity";
 import {
   DEFAULT_PROVIDER_ID,
   PROVIDERS,
@@ -21,6 +22,7 @@ export type ProviderCatalogResponse = {
 };
 
 export async function GET(): Promise<Response> {
+  if (!await currentPrincipal()) return Response.json({ ok: false, error: "Sign in to continue." }, { status: 401 });
   const providers: ProviderCatalogItem[] = PROVIDERS.map((provider) => ({
     ...provider,
     models: [...provider.models],

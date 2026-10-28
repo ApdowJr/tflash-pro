@@ -1,100 +1,100 @@
 import { eveChannel } from "eve/channels/eve";
-import { localDev, type AuthFn, vercelOidc } from "eve/channels/auth";
-import { auth, authConfigured } from "@/lib/auth";
-import { HEADER_TOKEN } from "@/lib/providers/selection";
+import { ForbiddenError, type AuthFn } from "eve/channels/auth";
+import { requestSupabase } from "@/lib/supabase/request";
+import { vercelPrincipal } from "@/lib/auth-vercel";
 import {
-  HEADER_INTEGRATION_TOKENS,
+  CREATE_PROOF_HEADER,
+  OWNER_PROOF_HEADER,
+  verifyChatCreation,
+  verifyChatOwnership,
+} from "@/lib/security/chat-ownership";
+import { selectionFromHeaders, selectionToAttributes } from "@/lib/providers/selection";
+import {
   ATTR_INTEGRATION_TOKENS,
+  HEADER_INTEGRATION_TOKENS,
   sealedTokensFromHeader,
   sealedTokensToAttribute,
 } from "@/lib/integrations/credentials";
-import {
-  selectionFromHeaders,
-  selectionToAttributes,
-} from "@/lib/providers/selection";
 
-const betterAuthSession: AuthFn<Request> = async (request) => {
-  // A broken/absent session must fall through to the other authenticators
-  // instead of failing the whole request with a 500.
-  const session = await auth.api.getSession({ headers: request.headers }).catch((error: unknown) => {
-    console.error("[auth] session lookup failed:", error);
-    return null;
-  });
-  if (!session) return null;
+function sessionPath(request: Request): { create: true } | { sessionId: string } | null {
+  const match = new URL(request.url).pathname.match(/\/eve\/v1\/session(?:\/([^/]+))?(?:\/|$)/);
+  if (!match) return null;
+  if (!match[1]) return { create: true };
+  try {
+    return { sessionId: decodeURIComponent(match[1]) };
+  } catch {
+    throw new ForbiddenError({ message: "Conversation not available." });
+  }
+}
 
-  const attributes: Record<string, string> = {
-    email: session.user.email,
-    name: session.user.name,
+function requireCreationProof(request: Request, principalId: string) {
+  if (request.method !== "POST" || !verifyChatCreation(principalId, request.headers.get(CREATE_PROOF_HEADER))) {
+    throw new ForbiddenError({ message: "Create a conversation from the Tflash app." });
+  }
+}
+
+function requestAttributes(request: Request) {
+  const integrationTokens = sealedTokensToAttribute(
+    sealedTokensFromHeader(request.headers.get(HEADER_INTEGRATION_TOKENS)),
+  );
+  return {
+    ...selectionToAttributes(selectionFromHeaders(request.headers)),
+    ...(integrationTokens ? { [ATTR_INTEGRATION_TOKENS]: integrationTokens } : {}),
   };
-  if (session.user.image) {
-    attributes.picture = session.user.image;
+}
+
+/** Eve authenticates routes but does not itself enforce per-session ownership. */
+const supabaseSession: AuthFn<Request> = async (request) => {
+  if (!request.headers.get("cookie")) return null;
+  const supabase = requestSupabase(request);
+  const { data, error } = await supabase.auth.getUser();
+  const user = data.user;
+  if (error || !user) return null;
+
+  const path = sessionPath(request);
+  if (path && "create" in path) {
+    requireCreationProof(request, user.id);
+  } else if (path && "sessionId" in path) {
+    const { data: chat, error: lookupError } = await supabase
+      .from("tflash_chats")
+      .select("owner_proof")
+      .eq("session_id", path.sessionId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (lookupError || !chat || !verifyChatOwnership(user.id, path.sessionId, chat.owner_proof)) {
+      throw new ForbiddenError({ message: "Conversation not available." });
+    }
   }
 
   return {
-    attributes,
-    authenticator: "better-auth:vercel",
-    principalId: session.user.id,
+    authenticator: "supabase",
+    principalId: user.id,
     principalType: "user",
+    attributes: {
+      email: user.email ?? "",
+      name: typeof user.user_metadata?.full_name === "string" ? user.user_metadata.full_name : "",
+      ...requestAttributes(request),
+    },
   };
 };
 
-/**
- * Every authenticated request carries the caller's provider/model choice.
- * `selectionFromHeaders` validates it against the server-side catalog, so a
- * client can only choose an allowlisted provider and a safe model id. The
- * dynamic model resolver reads these attributes from `ctx.session.auth`.
- */
-const withModelSelection =
-  (authenticate: AuthFn<Request>): AuthFn<Request> =>
-  async (request) => {
-    const result = await authenticate(request);
-    if (!result) return result;
-    const integrationTokens = sealedTokensToAttribute(
-      // Still sealed: only the connection's auth resolver can open a token.
-      sealedTokensFromHeader(request.headers.get(HEADER_INTEGRATION_TOKENS)),
-    );
-    return {
-      ...result,
-      attributes: {
-        ...result.attributes,
-        ...selectionToAttributes(selectionFromHeaders(request.headers)),
-        ...(integrationTokens ? { [ATTR_INTEGRATION_TOKENS]: integrationTokens } : {}),
-      },
-    };
-  };
-
-/**
- * Bring-your-own-key guest access, used only when the deployment has no account
- * system at all (`authConfigured === false`).
- *
- * The request must carry a sealed provider key of its own — that is the whole
- * point: an anonymous caller can never spend the operator's server keys. The
- * principal id is derived from that sealed key, so it is stable for a browser
- * without identifying a person.
- */
-const byokGuest: AuthFn<Request> = async (request) => {
-  if (authConfigured) return null;
-  const sealed = request.headers.get(HEADER_TOKEN);
-  if (!sealed) return null;
-
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(sealed));
-  const id = Array.from(new Uint8Array(digest).slice(0, 8), (byte) =>
-    byte.toString(16).padStart(2, "0"),
-  ).join("");
-
+/** Vercel accounts keep their signed chat index locally, not in Supabase RLS. */
+const vercelSession: AuthFn<Request> = async (request) => {
+  const principal = await vercelPrincipal(request.headers);
+  if (!principal) return null;
+  const path = sessionPath(request);
+  if (path && "create" in path) {
+    requireCreationProof(request, principal.id);
+  } else if (path && "sessionId" in path &&
+    !verifyChatOwnership(principal.id, path.sessionId, request.headers.get(OWNER_PROOF_HEADER))) {
+    throw new ForbiddenError({ message: "Conversation not available." });
+  }
   return {
-    attributes: {},
-    authenticator: "guest:byok",
-    principalId: `guest-${id}`,
-    principalType: "anonymous",
+    authenticator: "better-auth:vercel",
+    principalId: principal.id,
+    principalType: "user",
+    attributes: { email: principal.email, name: principal.name, ...requestAttributes(request) },
   };
 };
 
-export default eveChannel({
-  auth: [
-    withModelSelection(betterAuthSession),
-    withModelSelection(vercelOidc()),
-    withModelSelection(byokGuest),
-    withModelSelection(localDev()),
-  ],
-});
+export default eveChannel({ auth: [supabaseSession, vercelSession] });

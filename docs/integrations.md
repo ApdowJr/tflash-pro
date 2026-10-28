@@ -1,171 +1,62 @@
-# Integrations (MCP tools)
+# Integrations and MCP tools
 
-T Flash ships with ten MCP connections so the agent can work against the tools a
-developer already uses. Everything is driven by one catalog,
-[`lib/integrations/catalog.ts`](../lib/integrations/catalog.ts); the files in
-`agent/connections/` are one-liners that call `defineIntegrationConnection(id)`.
+Tflash has ten MCP connections, defined in `lib/integrations/catalog.ts` and registered through the files in `agent/connections/`. **Every external MCP tool call requires a fresh in-chat approval**, including reads. Shell commands also require approval. Check the exact arguments and the access granted to the service before approving.
 
-| Connection | What the agent can do | Approval |
-| --- | --- | --- |
-| `github` | Repos, issues, PRs, code search, Actions | asks once per session |
-| `linear` | Issues, projects, cycles, comments | asks once per session |
-| `notion` | Search, read, create pages and databases | asks once per session |
-| `sentry` | Errors, events, traces, releases | never (read-only) |
-| `supabase` | Projects, SQL, auth users, storage | every call |
-| `neon` | Projects, branches, SQL | every call |
-| `vercel` | Projects, deployments, logs, env vars | asks once per session |
-| `posthog` | Insights, events, feature flags | asks once per session |
-| `stripe` | Customers, payments, invoices | every call |
-| `resend` | Send email, inspect deliveries | every call |
+| Connection | Examples of the available tool surface |
+| --- | --- |
+| GitHub | Repositories, issues, pull requests, Actions |
+| Linear | Issues, projects, cycles, comments |
+| Notion | Search, pages, databases |
+| Sentry | Errors, events, traces, releases |
+| Supabase | Projects, SQL, auth, storage |
+| Neon | Projects, branches, SQL |
+| Vercel | Projects, deployments, logs, environment variables |
+| PostHog | Insights, events, feature flags |
+| Stripe | Customers, payments, invoices |
+| Resend | Email and deliveries |
 
-Approval comes from `access` in the catalog:
+The catalog's `access` field describes potential scope; it does **not** change the approval rule. Provider and MCP keys are separate: connecting OpenRouter does not connect any MCP service.
 
-- `read` → no gate (nothing to approve on a lookup).
-- `write` → `once()`, one approval per session per connection.
-- `destructive` → `always()`, every single call.
+## Choose a credential
 
-## Authorize a service
+At each call, the resolver uses the first available source:
 
-Credentials never reach the model. Three paths exist; the browser grant wins,
-then Vercel Connect, then a server env var.
+1. The current account's valid, sealed browser token, supplied by OAuth or a pasted token.
+2. An explicit `CONNECT_<SERVICE>_CONNECTOR` Vercel Connect connector ID.
+3. A static token in one of the integration's server environment variables.
+4. When `VERCEL_PROJECT_ID` exists, a project Connect fallback named `<service>/<project-id>`. The project ID alone does **not** prove that the service is installed or authorized.
+5. Otherwise the resolver reports a missing connection. Remote services can still reject an expired, under-scoped, or revoked credential.
 
-### 1. One tap in Settings → Connections (default)
+An explicit connector defaults to user scope; `CONNECT_<SERVICE>_APP_SCOPED=1` makes its credential app-scoped. A static token is shared with every signed-in user allowed to invoke that connection. Server configuration and the presence of a project ID are **not live verification**. The Connections panel distinguishes saved browser records, configured server credentials, and an unverified project fallback.
 
-Open a row and press **Continue with GitHub** (or Vercel, Supabase, Linear,
-Notion, Sentry, PostHog). The browser goes to the provider's own consent screen,
-the developer sees exactly what access is requested, and approving returns them
-to T Flash with the row already connected.
+### Browser OAuth
 
-Under the hood:
+GitHub, Linear, Notion, Sentry, Vercel, Supabase, and PostHog have OAuth flows when an operator has registered and configured the corresponding app. Neon, Stripe, and Resend use the pasted-token path. In **Settings → Connections**, choose the service and follow its consent screen.
 
-| Step | Route | What happens |
-| --- | --- | --- |
-| 1 | `GET /api/integrations/oauth/start?id=<id>` | Builds the authorize URL with PKCE (S256) where supported and a sealed `state` that carries the integration id and the PKCE verifier. No session store needed. |
-| 2 | provider consent screen | The developer approves the scopes listed in the row ("Access requested"). |
-| 3 | `GET /api/integrations/oauth/callback` | Verifies the sealed state, exchanges the code (client secret, or PKCE for public clients), seals the access + refresh token with AES-256-GCM, and hands them to the app in a 5-minute HttpOnly cookie. No token in a URL or a log. |
-| 4 | `GET /api/integrations/oauth/result` | The app reads the cookie once, stores the sealed record in *this browser*, deletes the cookie. |
+| Service | OAuth variables |
+| --- | --- |
+| GitHub | `GITHUB_OAUTH_CLIENT_ID`, `GITHUB_OAUTH_CLIENT_SECRET` |
+| Linear | `LINEAR_OAUTH_CLIENT_ID`, `LINEAR_OAUTH_CLIENT_SECRET` |
+| Notion | `NOTION_OAUTH_CLIENT_ID`, `NOTION_OAUTH_CLIENT_SECRET` |
+| Sentry | `SENTRY_OAUTH_CLIENT_ID`, `SENTRY_OAUTH_CLIENT_SECRET` |
+| Vercel integration | `VERCEL_INTEGRATION_CLIENT_ID`, `VERCEL_INTEGRATION_CLIENT_SECRET` |
+| Supabase | `SUPABASE_OAUTH_CLIENT_ID`, `SUPABASE_OAUTH_CLIENT_SECRET` |
+| PostHog | `POSTHOG_OAUTH_CLIENT_ID`; optionally `POSTHOG_OAUTH_BASE_URL` for the region |
 
-Grants that expire are renewed silently: the app refreshes in the background
-through `POST /api/integrations/oauth/refresh` before the access token lapses
-(Linear 24h, PostHog 1h, Supabase 1h). Grants without a refresh token stay valid
-in the browser for 7 days, renewed ones for 30.
+Register `https://your-host/api/integrations/oauth/callback` with each provider and set the matching client credentials privately on the server. Vercel integration credentials are **not** the `VERCEL_APP_CLIENT_ID`/`VERCEL_APP_CLIENT_SECRET` used for Tflash login. In production, callback origins must match `APP_URL`, a Vercel-exposed deployment/branch/production host, or an exact HTTPS origin in `OAUTH_ALLOWED_ORIGINS`; add aliases explicitly. Register every preview origin separately where the provider requires exact redirects.
 
-**Operator setup.** Register one OAuth app per service and point its redirect
-URI at `https://your-deployment/api/integrations/oauth/callback`:
+OAuth state is encrypted, short-lived, and bound to both the signed-in account and an HttpOnly browser nonce. PKCE is used where supported. The callback exchanges the code server-side without following redirects, and hands the sealed grant to the browser through a short-lived HttpOnly cookie, not through a URL. The account must remain signed in through the flow.
 
-| Service | Variables | Where to register |
-| --- | --- | --- |
-| GitHub | `GITHUB_OAUTH_CLIENT_ID`, `GITHUB_OAUTH_CLIENT_SECRET` | <https://github.com/settings/developers> |
-| Linear | `LINEAR_OAUTH_CLIENT_ID`, `LINEAR_OAUTH_CLIENT_SECRET` | <https://linear.app/settings/api/applications/new> |
-| Notion | `NOTION_OAUTH_CLIENT_ID`, `NOTION_OAUTH_CLIENT_SECRET` | <https://www.notion.so/my-integrations> |
-| Sentry | `SENTRY_OAUTH_CLIENT_ID`, `SENTRY_OAUTH_CLIENT_SECRET` | <https://sentry.io/settings/account/api/applications/> |
-| Vercel | `VERCEL_INTEGRATION_CLIENT_ID`, `VERCEL_INTEGRATION_CLIENT_SECRET` | <https://vercel.com/dashboard/integrations/console> |
-| Supabase | `SUPABASE_OAUTH_CLIENT_ID`, `SUPABASE_OAUTH_CLIENT_SECRET` | <https://supabase.com/docs/guides/integrations/build-a-supabase-oauth-integration> |
-| PostHog | `POSTHOG_OAUTH_CLIENT_ID` (public client, PKCE only) | <https://us.posthog.com/settings/user-oauth-applications> |
+The saved grant is encrypted and account-bound. Non-refreshable envelopes expire after seven days; refreshable ones last up to 30 days and the app attempts renewal while open. Provider expiry, revocation, offline operation, or failed refresh can still require reconnection. Sign-out or clearing site data removes the browser copy but does not revoke the service grant; revoke it at the provider when needed. Saved grants do not sync to another browser.
 
-Without those variables the row says so plainly and offers two fallbacks: a
-server-wide token (below) or a token the developer pastes themselves. Nothing
-pretends to be connected.
+### Pasted personal token
 
-Neon, Stripe and Resend do not offer OAuth for third-party apps, so their rows
-say that outright rather than hiding a token field behind a button.
+Select **Use a personal token instead**. The server attempts a provider-specific probe; 401/403 rejects the token. A network error or inconclusive 404 allows an explicit **Save anyway**, labeled as not live-verified. A successful probe confirms only that request, not all MCP permissions or future availability. The account-bound envelope lasts seven days. Use the narrowest permissions possible, especially for databases, deployments, payments, and email.
 
-### 2. A token the developer pastes
+### Vercel Connect and static server tokens
 
-Still there, one click behind **Use a personal token instead**. It goes to
-`POST /api/integrations/connect`, which validates it against the service's own
-probe (`/user`, `/v2/user`, `/v1/projects`, …). 401/403 means rejected; an
-unreachable service offers **Save anyway**. Accepted tokens are sealed the same
-way and live in that browser for 7 days.
+Attach the connector through Vercel and set the integration's `CONNECT_<SERVICE>_CONNECTOR` variable; the exact keys are shown in each Settings row. Alternatively configure one of the service's static token environment variables listed in the catalog. Rotate or revoke a leaked token at the provider, then update the environment and redeploy. Do not put secrets in `NEXT_PUBLIC_*` variables.
 
-### 3. Vercel Connect
+## Adding a service
 
-```bash
-vercel link
-vercel connect create github --name t-flash     # prints a connector UID
-vercel connect attach <connector-uid> --yes
-vercel env pull
-```
-
-Then pin the UID so the catalog uses it:
-
-```bash
-CONNECT_GITHUB_CONNECTOR=<connector-uid>
-```
-
-By default the connection is **user-scoped**: each signed-in person authorizes
-their own account, and eve pauses the turn with an authorization prompt (inline
-in the chat) until they finish. Set `CONNECT_GITHUB_APP_SCOPED=1` when a single
-shared bot credential is the right model.
-
-If `CONNECT_GITHUB_CONNECTOR` is unset but `VERCEL_PROJECT_ID` exists, the
-connection falls back to the project's own connector
-(`<service>/<VERCEL_PROJECT_ID>`), which Vercel Connect provisions or links on
-first use.
-
-### 4. Static token on the server
-
-Simplest for one developer or a single-tenant deployment. Put a token in the
-matching variable and the connection is app-scoped for everyone:
-
-```bash
-GITHUB_MCP_TOKEN=ghp_...
-SENTRY_ACCESS_TOKEN=sntrys_...
-```
-
-Full list in [`.env.example`](../.env.example). Tokens are read on the server per
-request, so rotating one is an env change plus a redeploy — not a migration.
-
-### Nothing configured
-
-The connection still exists so the model can explain what is missing instead of
-guessing, but calls fail with the service's own 401. **Settings → Connections**
-shows which connections are live and which need a credential.
-
-### Precedence at call time
-
-`authResolverFor` in [`lib/integrations/connection.ts`](../lib/integrations/connection.ts)
-tries, in order:
-
-1. the sealed browser grant for that connection (`credentialOwner: "user"`),
-2. `CONNECT_<ID>_CONNECTOR`, else the project connector,
-3. the static token env var (`credentialOwner: "app"`),
-4. a resolver that throws with a "Settings → Connections" hint, so the model
-   reports the missing credential instead of retrying.
-
-## Add another service
-
-1. Add an entry to `INTEGRATIONS` in `lib/integrations/catalog.ts` (id, MCP URL,
-   docs link, `connectService`, token env vars, `access`, a `probe` — the tiny
-   authenticated request used to validate a pasted token — and, when the service
-   supports it, `oauth.access`: the human summary of the scopes its consent
-   screen asks for).
-2. Add the id to `IntegrationId`.
-3. Create `agent/connections/<id>.ts`:
-
-```ts
-import { defineIntegrationConnection } from "@/lib/integrations/connection";
-
-export default defineIntegrationConnection("<id>");
-```
-
-The filename is the connection name, so tools appear as `<id>__<tool>`. Add an
-icon for the settings panel in `components/settings/connections-panel.tsx`.
-
-## Notes and sharp edges
-
-- The hosted GitHub MCP server accepts OAuth or a personal access token; OAuth
-  through GitHub requires a Copilot-enabled account, a PAT does not.
-- Stripe: use a restricted key. Every call asks for approval, but a restricted key
-  is still the safer blast radius.
-- Supabase and Neon run SQL. Point them at a development project, not production.
-- Connections are only as private as the tokens behind them: on a shared
-  deployment prefer Vercel Connect (per-user) over a shared server token.
-- Browser grants are sealed, not vaulted: they live in one browser's settings.
-  Clearing site data disconnects them, and they do not follow a developer to a
-  second machine. That is the trade for storing nothing server-side.
-- Prefer OAuth over pasted tokens: the grant is scoped to what the consent
-  screen showed, revocable from the service, and refreshable. When a token is
-  unavoidable, use the narrowest one (GitHub fine-grained PAT, Vercel scoped
-  token, Stripe restricted key) — the probe only proves it works, not that it is
-  minimal.
+Add an entry and ID in `lib/integrations/catalog.ts`, create a thin `agent/connections/<id>.ts` calling `defineIntegrationConnection(id)`, and add an icon in `components/settings/connections-panel.tsx`. Add OAuth endpoints, scopes, and tests if supported. Keep fresh approval on every call and test with least-privileged credentials; live third-party behavior is not guaranteed by local mocks.

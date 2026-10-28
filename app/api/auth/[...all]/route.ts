@@ -12,7 +12,10 @@ function guarded(
   method: (request: Request) => Promise<Response> | Response,
 ): (request: Request) => Promise<Response> {
   return async (request) => {
-    if (!authConfigured) {
+    // Clearing an old cookie should work even when Vercel sign-in has since
+    // been disabled. The handler still checks Better Auth's normal CSRF rules.
+    const isSignOut = request.method === "POST" && new URL(request.url).pathname === "/api/auth/sign-out";
+    if (!authConfigured && !isSignOut) {
       return Response.json(
         {
           error: "auth_not_configured",
@@ -30,8 +33,7 @@ function guarded(
       return Response.json(
         {
           error: "auth_unavailable",
-          message: error instanceof Error ? error.message : "Auth is unavailable.",
-          allowedHosts: process.env.ALLOWED_HOSTS ?? null,
+          message: "Auth is unavailable.",
         },
         { status: 503, headers: { "cache-control": "no-store" } },
       );

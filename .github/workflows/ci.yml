@@ -1,0 +1,41 @@
+name: Tflash checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tflash-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      # Dummy, non-production values; the checks do not call real services.
+      NEXT_PUBLIC_SUPABASE_URL: https://supabase.example.test
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ci-public-key
+      TFLASH_SESSION_SECRET: ci-session-secret-not-for-production-0123456789
+      PROVIDER_KEYS_SECRET: ci-provider-secret-not-for-production-0123456789
+      APP_URL: https://tflash.example.test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - name: Test
+        run: corepack pnpm test
+      - name: Typecheck
+        run: corepack pnpm typecheck
+      - name: Build web application
+        run: corepack pnpm build
+      - name: Build Eve agent
+        run: corepack pnpm build:eve

@@ -16,6 +16,7 @@ import {
   getProvider,
   type ModelInfo,
 } from "@/lib/providers/catalog";
+import { OWNER_PROOF_HEADER } from "@/lib/security/chat-ownership-wire";
 import { HEADER_INTEGRATION_TOKENS } from "@/lib/integrations/wire";
 import {
   HEADER_TOKEN,
@@ -27,9 +28,7 @@ import { translate, type Language, type TranslationKey, type Translator } from "
 import { clientContextFor, type PersonaId } from "./personas";
 
 export const STORAGE_KEY = "tflash:settings:v1";
-/** Previous product name; read once so existing users keep their settings. */
-const LEGACY_STORAGE_KEY = "ururka:settings:v1";
-const MAX_CHATS = 30;
+const MAX_CHATS = 100;
 
 export type Theme = "system" | "light" | "dark";
 
@@ -73,6 +72,7 @@ export type AppSettings = {
   readonly connections: Readonly<Record<string, ConnectionRecord>>;
   readonly integrationTokens: Readonly<Record<string, IntegrationTokenRecord>>;
   readonly chats: readonly ChatRecord[];
+  readonly chatProofs: Readonly<Record<string, string>>;
 };
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -85,6 +85,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   connections: {},
   integrationTokens: {},
   chats: [],
+  chatProofs: {},
 };
 
 export type ModelsState = {
@@ -117,19 +118,24 @@ type SettingsContextValue = {
   readonly oauthJustConnected?: string;
   readonly clearOAuthNotice: () => void;
   readonly refreshStatus: () => Promise<void>;
-  readonly addChat: (id: string, title: string) => void;
-  readonly removeChat: (id: string) => void;
-  readonly clearChats: () => void;
+  readonly addChat: (id: string, title: string) => Promise<void>;
+  readonly removeChat: (id: string) => Promise<void>;
+  readonly refreshChats: () => Promise<void>;
+  readonly registerChatProof: (id: string, proof: string) => void;
+  readonly historyError?: string;
+  readonly clearConnections: () => void;
+  /** Remove locally stored provider and integration credentials on sign-out. */
+  readonly clearLocalCredentials: () => void;
 };
 
 const SettingsContext = createContext<SettingsContextValue | null>(null);
 
-function readStoredSettings(): AppSettings {
+function readStoredSettings(storageKey: string, accountKind: "supabase" | "vercel"): AppSettings {
   if (typeof window === "undefined") return DEFAULT_SETTINGS;
   try {
-    const raw =
-      window.localStorage.getItem(STORAGE_KEY) ?? window.localStorage.getItem(LEGACY_STORAGE_KEY);
-    if (!raw) return DEFAULT_SETTINGS;
+    const raw = window.localStorage.getItem(storageKey);
+    const language = window.localStorage.getItem("tflash:language") === "so" ? "so" : "en";
+    if (!raw) return { ...DEFAULT_SETTINGS, language };
     const parsed = JSON.parse(raw) as Partial<AppSettings>;
     const provider = getProvider(parsed.providerId) ?? defaultProvider();
     return {
@@ -142,37 +148,39 @@ function readStoredSettings(): AppSettings {
       connections:
         parsed.connections && typeof parsed.connections === "object" ? parsed.connections : {},
       integrationTokens:
-        parsed.integrationTokens && typeof parsed.integrationTokens === "object"
-          ? parsed.integrationTokens
-          : {},
-      chats: Array.isArray(parsed.chats) ? parsed.chats.slice(0, MAX_CHATS) : [],
+        parsed.integrationTokens && typeof parsed.integrationTokens === "object" ? parsed.integrationTokens : {},
+      chats: accountKind === "vercel" && Array.isArray(parsed.chats) ? parsed.chats.slice(0, MAX_CHATS) : [],
+      chatProofs: accountKind === "vercel" && parsed.chatProofs && typeof parsed.chatProofs === "object" ? parsed.chatProofs : {},
     };
   } catch {
     return DEFAULT_SETTINGS;
   }
 }
 
-export function AppSettingsProvider({ children }: { readonly children: ReactNode }) {
+export function AppSettingsProvider({ children, userId, accountKind }: { readonly children: ReactNode; readonly userId: string; readonly accountKind: "supabase" | "vercel" }) {
+  const storageKey = `${STORAGE_KEY}:${userId}`;
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [hydrated, setHydrated] = useState(false);
   const [envConfigured, setEnvConfigured] = useState<Readonly<Record<string, boolean>>>({});
   const [liveModels, setLiveModels] = useState<Readonly<Record<string, readonly ModelInfo[]>>>({});
   const [modelsState, setModelsState] = useState<Readonly<Record<string, ModelsState>>>({});
+  const [historyError, setHistoryError] = useState<string>();
   const [oauthError, setOauthError] = useState<string>();
   const [oauthJustConnected, setOauthJustConnected] = useState<string>();
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
   useEffect(() => {
-    setSettings(readStoredSettings());
+    setSettings(readStoredSettings(storageKey, accountKind));
     setHydrated(true);
-  }, []);
+  }, [storageKey, accountKind]);
 
   /**
    * Finish an OAuth round trip: the callback wrote a short-lived HttpOnly
    * cookie, this reads it once, stores the sealed record, and cleans the URL.
    */
   useEffect(() => {
+    if (!hydrated) return;
     const url = new URL(window.location.href);
     const code = url.searchParams.get("oauth");
     const integrationId = url.searchParams.get("integration");
@@ -224,7 +232,7 @@ export function AppSettingsProvider({ children }: { readonly children: ReactNode
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [hydrated]);
 
   const clearOAuthNotice = useCallback(() => {
     setOauthError(undefined);
@@ -234,11 +242,19 @@ export function AppSettingsProvider({ children }: { readonly children: ReactNode
   useEffect(() => {
     if (!hydrated) return;
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+      // Keep encrypted provider credentials scoped to this account. Chat
+      // titles are retrieved from Supabase rather than persisted locally.
+      window.localStorage.setItem(storageKey, JSON.stringify({ ...settings, chats: accountKind === "vercel" ? settings.chats : [], chatProofs: accountKind === "vercel" ? settings.chatProofs : {} }));
+      window.localStorage.setItem("tflash:theme", settings.theme);
+      window.localStorage.setItem("tflash:language", settings.language);
     } catch {
       // Storage may be unavailable (private mode); settings stay in memory.
     }
-  }, [settings, hydrated]);
+  }, [settings, hydrated, storageKey, accountKind]);
+
+  useEffect(() => {
+    document.documentElement.lang = settings.language;
+  }, [settings.language]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -306,24 +322,76 @@ export function AppSettingsProvider({ children }: { readonly children: ReactNode
     [settings.connections, envConfigured],
   );
 
-  const addChat = useCallback((id: string, title: string) => {
-    setSettings((current) => {
-      const without = current.chats.filter((chat) => chat.id !== id);
-      return {
+  const registerChatProof = useCallback((id: string, proof: string) => {
+    if (accountKind !== "vercel") return;
+    setSettings((current) => current.chatProofs[id] === proof ? current : ({ ...current, chatProofs: { ...current.chatProofs, [id]: proof } }));
+  }, [accountKind]);
+
+  const refreshChats = useCallback(async () => {
+    if (accountKind === "vercel") return;
+    try {
+      const response = await fetch("/api/chats", { cache: "no-store" });
+      if (!response.ok) throw new Error("Could not load conversations.");
+      const data = (await response.json()) as { chats: ChatRecord[] };
+      setSettings((current) => ({ ...current, chats: (data.chats ?? []).slice(0, MAX_CHATS) }));
+      setHistoryError(undefined);
+    } catch {
+      setHistoryError("Could not load conversations. Please try again.");
+    }
+  }, [accountKind]);
+
+  useEffect(() => {
+    if (hydrated) void refreshChats();
+  }, [hydrated, refreshChats]);
+
+  const addChat = useCallback(async (id: string, title: string) => {
+    const safeTitle = title.trim().slice(0, 120) || "New conversation";
+    try {
+      const response = await fetch(`/api/chats/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json", ...(accountKind === "vercel" ? { [OWNER_PROOF_HEADER]: settingsRef.current.chatProofs[id] ?? "" } : {}) },
+        body: JSON.stringify({ title: safeTitle }),
+      });
+      if (!response.ok) throw new Error("Could not save conversation.");
+      setSettings((current) => ({
         ...current,
-        chats: [{ id, title: title.slice(0, 80) || "New conversation", updatedAt: Date.now() }, ...without].slice(
-          0,
-          MAX_CHATS,
-        ),
-      };
-    });
-  }, []);
+        chats: [{ id, title: safeTitle, updatedAt: Date.now() }, ...current.chats.filter((chat) => chat.id !== id)].slice(0, MAX_CHATS),
+      }));
+      setHistoryError(undefined);
+    } catch {
+      setHistoryError("Could not save the conversation. Please try again.");
+      throw new Error("Could not save the conversation. Please try again.");
+    }
+  }, [accountKind]);
 
-  const removeChat = useCallback((id: string) => {
-    setSettings((current) => ({ ...current, chats: current.chats.filter((chat) => chat.id !== id) }));
-  }, []);
+  const removeChat = useCallback(async (id: string) => {
+    try {
+      const response = await fetch(`/api/chats/${encodeURIComponent(id)}`, {
+        method: "DELETE", headers: { "content-type": "application/json", ...(accountKind === "vercel" ? { [OWNER_PROOF_HEADER]: settingsRef.current.chatProofs[id] ?? "" } : {}) },
+      });
+      if (!response.ok) throw new Error("Could not remove conversation.");
+      setSettings((current) => {
+        const chatProofs = { ...current.chatProofs };
+        delete chatProofs[id];
+        return { ...current, chatProofs, chats: current.chats.filter((chat) => chat.id !== id) };
+      });
+      setHistoryError(undefined);
+    } catch {
+      setHistoryError("Could not remove the conversation. Please try again.");
+      throw new Error("Could not remove the conversation. Please try again.");
+    }
+  }, [accountKind]);
 
-  const clearChats = useCallback(() => update({ chats: [] }), [update]);
+  const clearConnections = useCallback(() => update({ connections: {} }), [update]);
+
+  const clearLocalCredentials = useCallback(() => {
+    const cleared = { ...settingsRef.current, connections: {}, integrationTokens: {} };
+    settingsRef.current = cleared;
+    // Persist synchronously before navigating, while preserving the Vercel
+    // browser-only history and proofs needed to resume those conversations.
+    try { window.localStorage.setItem(storageKey, JSON.stringify(cleared)); } catch { /* storage unavailable */ }
+    setSettings(cleared);
+  }, [storageKey]);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -545,7 +613,11 @@ export function AppSettingsProvider({ children }: { readonly children: ReactNode
     refreshStatus,
     addChat,
     removeChat,
-    clearChats,
+    refreshChats,
+    registerChatProof,
+    historyError,
+    clearConnections,
+    clearLocalCredentials,
   };
 
   return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;

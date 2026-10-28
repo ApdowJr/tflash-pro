@@ -38,8 +38,8 @@ function requestHeaders(provider: ProviderInfo, apiKey: string): Record<string, 
   }
   if (provider.kind === "anthropic") headers["anthropic-version"] = "2023-06-01";
   if (provider.id === "openrouter") {
-    headers["HTTP-Referer"] = process.env.APP_URL ?? "https://tflash.local";
-    headers["X-Title"] = "T Flash";
+    if (process.env.APP_URL) headers["HTTP-Referer"] = process.env.APP_URL;
+    headers["X-Title"] = "Tflash";
   }
   return { ...headers, ...(provider.modelHeaders ?? {}) };
 }
@@ -152,6 +152,9 @@ export async function fetchLiveModels(
       headers: requestHeaders(provider, credential.apiKey),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       cache: "no-store",
+      // Do not allow a trusted endpoint to redirect a server request to a
+      // different, potentially private host (or leak credentials there).
+      redirect: "error",
     });
     if (!response.ok) {
       return {

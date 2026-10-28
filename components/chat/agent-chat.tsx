@@ -26,36 +26,84 @@ import { ModelPicker } from "@/components/settings/model-picker";
 import { useAppSettings } from "@/components/settings/app-settings";
 import { SettingsDialog } from "@/components/settings/settings-dialog";
 import { sessionTitle } from "@/lib/chat-history";
+import { OWNER_PROOF_HEADER } from "@/lib/security/chat-ownership-wire";
 import { AgentMessage } from "./agent-message";
 
 const DEFAULT_AGENT_NAME = "t-flash";
 
-export function AgentChat({
-  account,
-  sessionId,
-  sessionless = false,
-}: {
-  readonly account?: Account;
+type ReadySession = { readonly id: string; readonly resume: boolean; readonly proof?: string };
+
+/** Start sessions server-side so every login method receives a bound owner. */
+export function AgentChat({ account, sessionId, sessionless = false }: {
+  readonly account: Account;
   readonly sessionId?: string;
   readonly sessionless?: boolean;
 }) {
+  const { hydrated, eveHeaders, settings, registerChatProof } = useAppSettings();
+  const [ready, setReady] = useState<ReadySession>();
+  const [preparationError, setPreparationError] = useState<string>();
+  const [attempt, setAttempt] = useState(0);
+  const createRef = useRef<Promise<{ id: string; proof?: string }> | null>(null);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    if (sessionId) {
+      const proof = settings.chatProofs[sessionId];
+      if (account.kind === "vercel" && !proof) {
+        setPreparationError("This conversation does not have a verifiable owner in this browser. Older chats are not imported automatically.");
+        return;
+      }
+      setReady({ id: sessionId, resume: true, ...(proof ? { proof } : {}) });
+      return;
+    }
+    let active = true;
+    if (!createRef.current) {
+      createRef.current = fetch("/api/chats", {
+        method: "POST", headers: { ...eveHeaders(), "content-type": "application/json" }, body: "{}",
+      }).then(async (response) => {
+        const body = await response.json() as { sessionId?: string; ownerProof?: string; error?: string };
+        if (!response.ok || !body.sessionId || (account.kind === "vercel" && !body.ownerProof)) {
+          throw new Error(body.error || "Could not start a conversation.");
+        }
+        return { id: body.sessionId, ...(body.ownerProof ? { proof: body.ownerProof } : {}) };
+      });
+    }
+    createRef.current.then(({ id, proof }) => {
+      if (!active) return;
+      if (proof) registerChatProof(id, proof);
+      setReady({ id, resume: false, ...(proof ? { proof } : {}) });
+      setPreparationError(undefined);
+    }).catch((error: unknown) => {
+      if (active) setPreparationError(error instanceof Error ? error.message : "Could not start a conversation.");
+    });
+    return () => { active = false; };
+  }, [account.kind, sessionId, hydrated, attempt, eveHeaders, registerChatProof, settings.chatProofs]);
+
+  const retry = () => {
+    createRef.current = null;
+    setPreparationError(undefined);
+    setAttempt((value) => value + 1);
+  };
   return (
     <PromptInputProvider>
-      <ChatSession account={account} sessionId={sessionId} sessionless={sessionless} />
+      <ChatSession key={ready?.id ?? "preparing"} account={account} sessionId={ready?.id}
+        resume={ready?.resume ?? false} ownerProof={ready?.proof} sessionless={sessionless}
+        preparationError={preparationError} canRetry={!sessionId} onRetry={retry} />
     </PromptInputProvider>
   );
 }
 
-function ChatSession({
-  account,
-  sessionId,
-  sessionless,
-}: {
-  readonly account?: Account;
+function ChatSession({ account, sessionId, resume, ownerProof, sessionless, preparationError, canRetry, onRetry }: {
+  readonly account: Account;
   readonly sessionId?: string;
+  readonly resume: boolean;
+  readonly ownerProof?: string;
   readonly sessionless: boolean;
+  readonly preparationError?: string;
+  readonly canRetry: boolean;
+  readonly onRetry: () => void;
 }) {
-  const { t, selection, eveHeaders, turnContext, addChat, oauthJustConnected } = useAppSettings();
+  const { t, settings, selection, eveHeaders, turnContext, addChat, oauthJustConnected } = useAppSettings();
   const controller = usePromptInputController();
   const [cancellationError, setCancellationError] = useState<string>();
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -65,40 +113,22 @@ function ChatSession({
   const [modelsOpen, setModelsOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const hasSubmittedMessage = useRef(false);
-  const pendingTitle = useRef("");
 
   const replaceSessionRoute = (nextSessionId: string) => {
-    if (sessionId !== undefined) return;
-    // Framework routers patch window.history; navigating through them would
-    // remount this route and detach the active stream.
-    History.prototype.replaceState.call(
-      window.history,
-      window.history.state,
-      "",
-      `/s/${encodeURIComponent(nextSessionId)}`,
-    );
+    if (resume) return;
+    History.prototype.replaceState.call(window.history, window.history.state, "", `/s/${encodeURIComponent(nextSessionId)}`);
   };
 
   const agent = useEveAgent({
     agent: WEB_CHAT_AGENT,
-    headers: eveHeaders,
-    prewarm: controller.textInput.value.trim().length > 0,
-    initialSession:
-      sessionId === undefined
-        ? undefined
-        : {
-            sessionId,
-            streamIndex: 0,
-          },
-    resume: sessionId !== undefined,
+    headers: () => ({ ...eveHeaders(), ...(ownerProof ? { [OWNER_PROOF_HEADER]: ownerProof } : {}) }),
+    prewarm: false,
+    initialSession: sessionId ? { sessionId, streamIndex: 0 } : undefined,
+    resume,
     onSessionChange(session) {
-      if (hasSubmittedMessage.current && session !== undefined) {
-        replaceSessionRoute(session.sessionId);
-        addChat(session.sessionId, pendingTitle.current || t("unnamedChat"));
-      }
+      if (hasSubmittedMessage.current && session) replaceSessionRoute(session.sessionId);
     },
   });
-
   const isBusy = agent.status === "submitted" || agent.status === "streaming";
   const isResuming = agent.status === "resuming";
   const isEmpty = agent.data.messages.length === 0;
@@ -122,29 +152,7 @@ function ChatSession({
       (input) => input.request.kind === "question" && input.request.action.callId === callId,
     );
 
-  // Keep the local chat list useful for resumed sessions too.
-  useEffect(() => {
-    const id = sessionId ?? agent.session?.sessionId;
-    if (!id) return;
-    const firstUser = agent.data.messages.find((message) => message.role === "user");
-    const firstText = firstUser?.parts.find((part) => part.type === "text");
-    if (firstText?.type === "text" && firstText.text) {
-      addChat(id, firstText.text.slice(0, 80));
-    }
-    // Only re-run when the session or message count changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, agent.session?.sessionId, agent.data.messages.length, addChat]);
-
-  const startNewChat = () => {
-    setSidebarOpen(false);
-    if (sessionId !== undefined) {
-      window.location.assign("/");
-      return;
-    }
-    agent.reset();
-    History.prototype.replaceState.call(window.history, window.history.state, "", "/");
-    setCancellationError(undefined);
-  };
+  const startNewChat = () => window.location.assign("/");
 
   const openSettings = useCallback(
     (tab: "providers" | "connections" | "models" | "preferences" = "providers") => {
@@ -212,15 +220,20 @@ function ChatSession({
 
   const handleSubmit = async (message: PromptInputMessage) => {
     const text = message.text.trim();
-    if ((text.length === 0 && message.files.length === 0) || isResuming) return;
-
+    if ((text.length === 0 && message.files.length === 0) || isResuming || !sessionId) return;
     setCancellationError(undefined);
-    hasSubmittedMessage.current = true;
-    pendingTitle.current = text.slice(0, 80) || t("attach");
-    if (agent.session !== undefined) {
-      replaceSessionRoute(agent.session.sessionId);
-      addChat(agent.session.sessionId, pendingTitle.current);
+    const firstUser = agent.data.messages.find((entry) => entry.role === "user");
+    const firstText = firstUser?.parts.find((part) => part.type === "text");
+    const title = settings.chats.find((chat) => chat.id === sessionId)?.title ||
+      (firstText?.type === "text" ? firstText.text : "") || text || t("attach");
+    try {
+      await addChat(sessionId, title);
+    } catch (error) {
+      setCancellationError(toErrorMessage(error));
+      throw error; // Keep the draft when history could not be saved.
     }
+    hasSubmittedMessage.current = true;
+    replaceSessionRoute(sessionId);
     const options = {
       clientContext: turnContext(),
       ...(isBusy ? { turnPolicy: "steer" as const } : {}),
@@ -273,7 +286,7 @@ function ChatSession({
         {showConversationLayout ? (
           <Conversation
             className="min-h-0 flex-1"
-            initial={sessionId === undefined ? undefined : false}
+            initial={resume ? false : undefined}
             resize={activeSessionId === undefined ? "smooth" : "instant"}
             scrollRestorationKey={
               isEmpty || activeSessionId === undefined
@@ -322,9 +335,14 @@ function ChatSession({
 
         <div className="tf-safe-bottom shrink-0 px-3 pt-1 sm:px-6">
           <div className="mx-auto w-full max-w-2xl">
+            {preparationError ? (
+              <div className="mb-3 rounded-md border border-destructive/30 px-3 py-2 text-destructive text-sm" role="alert">
+                {preparationError}{canRetry ? <button className="ml-2 underline" onClick={onRetry} type="button">Retry</button> : null}
+              </div>
+            ) : !sessionId ? <p className="mb-2 text-muted-foreground text-xs" role="status">Preparing conversation…</p> : null}
             <ChatComposer
               isBusy={isBusy}
-              isResuming={isResuming}
+              isResuming={isResuming || !sessionId}
               onCancel={requestCancellation}
               onOpenModels={() => setModelsOpen(true)}
               onOpenPersona={() => openSettings("preferences")}

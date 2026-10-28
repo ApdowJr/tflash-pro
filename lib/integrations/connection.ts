@@ -25,8 +25,8 @@ import {
   type ConnectionAuthDefinition,
   type ConnectionAuthProvider,
 } from "eve/connections";
-import { always, once } from "eve/tools/approval";
-import { integrationOrThrow, type IntegrationAccess, type IntegrationInfo } from "./catalog";
+import { always } from "eve/tools/approval";
+import { integrationOrThrow, type IntegrationInfo } from "./catalog";
 import { integrationTokenFor } from "./credentials";
 
 export type IntegrationAuthMode =
@@ -84,28 +84,6 @@ export function resolveIntegrationAuth(
   return { mode: "none" };
 }
 
-export function isIntegrationConnected(integration: IntegrationInfo): boolean {
-  return resolveIntegrationAuth(integration).mode !== "none";
-}
-
-/**
- * Approval gate by blast radius.
- *
- * `read` connections never interrupt, `write` connections ask once per session,
- * and `destructive` connections (money, databases, outbound email) ask every
- * time — approval fatigue is a real failure mode, but so is a silent refund.
- */
-function approvalFor(access: IntegrationAccess) {
-  switch (access) {
-    case "read":
-      return undefined;
-    case "write":
-      return once();
-    case "destructive":
-      return always();
-  }
-}
-
 /** Server-configured credential: Vercel Connect or a static env token. */
 function environmentAuthFor(integration: IntegrationInfo): ConnectionAuthProvider | undefined {
   const resolved = resolveIntegrationAuth(integration);
@@ -138,9 +116,11 @@ type AuthResolverContext = {
   readonly session: {
     readonly auth: {
       readonly current?: {
+        readonly principalId?: string;
         readonly attributes?: Readonly<Record<string, string | readonly string[]>>;
       } | null;
       readonly initiator?: {
+        readonly principalId?: string;
         readonly attributes?: Readonly<Record<string, string | readonly string[]>>;
       } | null;
     };
@@ -156,9 +136,8 @@ type AuthResolverContext = {
  */
 function authResolverFor(integration: IntegrationInfo): ConnectionAuthDefinition {
   return async (ctx: AuthResolverContext): Promise<ConnectionAuthProvider> => {
-    const attributes =
-      ctx.session.auth.current?.attributes ?? ctx.session.auth.initiator?.attributes ?? undefined;
-    const browserToken = await integrationTokenFor(integration.id, attributes);
+    const current = ctx.session.auth.current ?? ctx.session.auth.initiator;
+    const browserToken = await integrationTokenFor(integration.id, current?.attributes, current?.principalId);
     if (browserToken) {
       return {
         credentialOwner: "user",
@@ -194,6 +173,6 @@ export function defineIntegrationConnection(id: string) {
     description: integration.description,
     auth: authResolverFor(integration),
     ...(integration.tools ? { tools: { allow: [...integration.tools] } } : {}),
-    ...(approvalFor(integration.access) ? { approval: approvalFor(integration.access) } : {}),
+    approval: always(),
   });
 }

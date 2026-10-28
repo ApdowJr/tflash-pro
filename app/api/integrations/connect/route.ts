@@ -1,3 +1,4 @@
+import { currentPrincipal } from "@/lib/identity";
 import { getIntegration, type IntegrationInfo } from "@/lib/integrations/catalog";
 import { sealIntegrationToken } from "@/lib/integrations/credentials";
 
@@ -46,7 +47,7 @@ async function probeToken(
   token: string,
 ): Promise<{ status: "ok" | "rejected" | "unreachable"; message?: string }> {
   const probe = integration.probe;
-  if (!probe) return { status: "ok" };
+  if (!probe) return { status: "unreachable", message: `No verification probe is configured for ${integration.name}.` };
 
   const headers: Record<string, string> = {
     accept: "application/json",
@@ -63,7 +64,7 @@ async function probeToken(
       headers,
       ...(probe.body ? { body: probe.body } : {}),
       cache: "no-store",
-      redirect: "follow",
+      redirect: "error",
       signal: controller.signal,
     });
     if (response.ok) return { status: "ok" };
@@ -71,8 +72,9 @@ async function probeToken(
       return { status: "rejected", message: `The service rejected this token (HTTP ${response.status}).` };
     }
     if (response.status === 404) {
-      // Some APIs answer 404 for a valid token that can see nothing yet.
-      return { status: "ok" };
+      // A 404 may mean no access or an unavailable endpoint, not a verified
+      // credential. Offer an explicit save-without-verification instead.
+      return { status: "unreachable", message: `${integration.name} returned HTTP 404; the token could not be verified.` };
     }
     return {
       status: "rejected",
@@ -89,6 +91,9 @@ async function probeToken(
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const principal = await currentPrincipal();
+  if (!principal) return Response.json({ ok: false, message: "Sign in to continue." }, { status: 401 });
+  if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) return Response.json({ ok: false, message: "Expected JSON." }, { status: 415 });
   let body: ConnectRequest;
   try {
     body = (await request.json()) as ConnectRequest;
@@ -145,6 +150,7 @@ export async function POST(request: Request): Promise<Response> {
 
   const sealed = await sealIntegrationToken({
     integrationId: integration.id,
+    ownerId: principal.id,
     token,
   });
 

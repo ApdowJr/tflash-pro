@@ -41,6 +41,7 @@ import {
   QuestionnaireTitle,
 } from "@/components/ui/questionnaire";
 import { cn } from "@/lib/utils";
+import { useAppSettings } from "@/components/settings/app-settings";
 
 export type AgentInputResponse = {
   readonly optionId?: string;
@@ -147,7 +148,7 @@ function AgentMessagePart({
 
       return (
         <>
-          <Tool>
+          <Tool key={part.state === "approval-requested" ? "review" : "activity"} defaultOpen={part.state === "approval-requested"}>
             <ToolHeader
               state={part.state}
               title={part.toolMetadata?.eve?.label ?? part.toolName}
@@ -412,6 +413,7 @@ function InputRequestActions({
   readonly onInputResponses: (responses: readonly AgentInputResponse[]) => void | Promise<void>;
   readonly part: EveDynamicToolPart;
 }) {
+  const { t } = useAppSettings();
   const inputRequest = part.toolMetadata?.eve?.inputRequest;
   if (!inputRequest) {
     return null;
@@ -432,6 +434,7 @@ function InputRequestActions({
   return (
     <div className="space-y-3 rounded-md border border-yellow-500/30 bg-yellow-500/5 p-3">
       <p className="text-muted-foreground text-sm">{inputRequest.prompt}</p>
+      {!inputResponse && !settledApproval && inputRequest.kind === "tool-approval" ? <p className="text-muted-foreground text-xs">{t("reviewToolAction")}</p> : null}
       {inputResponse || settledApproval ? (
         <p className="font-medium text-sm">
           Responded:{" "}

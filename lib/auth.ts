@@ -61,28 +61,30 @@ function getAllowedHosts(): string[] {
   ]
     .map((value) => value?.trim())
     .filter((value): value is string => Boolean(value))
-    .map((value) => {
+    .flatMap((value) => {
       try {
-        return new URL(value.startsWith("http") ? value : `https://${value}`).host;
+        const url = new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`);
+        // Production trusts only exact operator/platform hosts, never patterns,
+        // credential-bearing URLs, or paths disguised as an origin.
+        if (url.protocol !== "https:" || url.username || url.password || url.pathname !== "/" ||
+            url.search || url.hash || /[\s*]/.test(url.host)) return [];
+        return [url.host];
       } catch {
-        return value;
+        return [];
       }
     });
-  // Every Vercel-provided host is ours: the deployment URL, the branch URL, the
-  // production alias, and any custom domain attached to the project. Aliases
-  // such as `tflash-pro.vercel.app` are not always in VERCEL_URL, so trust the
-  // platform's own domain space while we are actually running on Vercel.
-  if (process.env.VERCEL === "1" || process.env.VERCEL_ENV) {
-    configured.push("*.vercel.app");
-  }
+  // Only operator- or platform-provided exact hosts are trusted. Custom aliases
+  // that Vercel does not expose must be explicitly listed in ALLOWED_HOSTS.
   if (configured.length > 0) return Array.from(new Set(configured));
 
   // Fail closed for unknown hosts instead of crashing during `next build`.
   // Set ALLOWED_HOSTS (comma-separated) or APP_URL for self-hosted production.
   console.warn(
-    "[auth] No trusted deployment hosts configured; allowing local + preview hosts only.",
+    "[auth] No trusted deployment hosts configured; Vercel sign-in will fail closed.",
   );
-  return ["localhost:*", "127.0.0.1:*", "*.e2b.app"];
+  // Better Auth needs a non-empty list. .invalid is reserved and cannot be a
+  // real deployment host; Supabase email/password remains available.
+  return ["tflash-auth-unconfigured.invalid"];
 }
 
 const vercelProvider =
@@ -96,8 +98,7 @@ const vercelProvider =
 
 if (!authConfigured && process.env.NODE_ENV === "production") {
   console.warn(
-    `[auth] Accounts are disabled: missing ${missingAuthEnv().join(", ")}. ` +
-      "The app still serves; visitors can use their own provider key.",
+    `[auth] Vercel sign-in is disabled: missing ${missingAuthEnv().join(", ")}. Supabase sign-in remains available.`,
   );
 }
 

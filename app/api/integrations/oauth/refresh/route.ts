@@ -1,3 +1,4 @@
+import { currentPrincipal } from "@/lib/identity";
 import { openIntegrationTokenForRefresh, sealIntegrationToken } from "@/lib/integrations/credentials";
 import { getIntegration } from "@/lib/integrations/catalog";
 import { refreshOAuthToken } from "@/lib/integrations/oauth";
@@ -15,6 +16,9 @@ const REFRESHABLE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
  * ever crosses the wire in either direction.
  */
 export async function POST(request: Request): Promise<Response> {
+  const principal = await currentPrincipal();
+  if (!principal) return Response.json({ ok: false, message: "Sign in to continue." }, { status: 401 });
+  if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) return Response.json({ ok: false, message: "Expected JSON." }, { status: 415 });
   let body: { token?: unknown };
   try {
     body = (await request.json()) as { token?: unknown };
@@ -24,6 +28,7 @@ export async function POST(request: Request): Promise<Response> {
 
   const record = await openIntegrationTokenForRefresh(
     typeof body.token === "string" ? body.token : undefined,
+    principal.id,
   );
   if (!record) {
     return Response.json({ ok: false, message: "Unknown grant." }, { status: 400 });
@@ -53,6 +58,7 @@ export async function POST(request: Request): Promise<Response> {
 
   const sealed = await sealIntegrationToken({
     integrationId: integration.id,
+    ownerId: principal.id,
     token: tokens.accessToken,
     label: record.label ?? "Authorized",
     ...(tokens.tokenExpiresAt ? { tokenExpiresAt: tokens.tokenExpiresAt } : {}),

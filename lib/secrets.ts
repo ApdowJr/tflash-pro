@@ -8,6 +8,8 @@
  * Server-only: the key material comes from `process.env`.
  */
 
+import { deploymentSecret } from "./security/deployment-secrets.mjs";
+
 const TOKEN_PREFIX = "v1";
 const encoder = new TextEncoder();
 
@@ -18,13 +20,13 @@ export type SealedEnvelope = {
 };
 
 function secretMaterial(): string {
-  const secret =
-    process.env.PROVIDER_KEYS_SECRET ??
-    process.env.BETTER_AUTH_SECRET ??
-    "ururka-local-development-only";
+  const secret = deploymentSecret("credentials");
+  if (process.env.NODE_ENV === "production" && (!secret || secret.length < 32)) {
+    throw new Error("Set PROVIDER_KEYS_SECRET to a random value of at least 32 characters.");
+  }
   // Legacy namespace kept on purpose: tokens sealed before the T Flash rename
   // must keep decrypting until they expire.
-  return `ururka:provider-credentials:v1:${secret}`;
+  return `ururka:provider-credentials:v1:${secret || "ururka-local-development-only"}`;
 }
 
 async function encryptionKey(): Promise<CryptoKey> {

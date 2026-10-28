@@ -1,3 +1,4 @@
+import { currentPrincipal } from "@/lib/identity";
 import { openJson } from "@/lib/secrets";
 import { OAUTH_HANDOFF_COOKIE, OAUTH_HANDOFF_TTL_MS } from "@/lib/integrations/wire";
 
@@ -8,6 +9,7 @@ type Handoff = {
   readonly v: 1;
   readonly expiresAt: number;
   readonly integrationId: string;
+  readonly ownerId: string;
   readonly token: string;
   readonly tokenExpiresAt?: number;
   readonly refreshable?: boolean;
@@ -31,6 +33,8 @@ function readCookie(request: Request, name: string): string | undefined {
  * own settings, exactly like a token the developer pasted.
  */
 export async function GET(request: Request): Promise<Response> {
+  const principal = await currentPrincipal();
+  if (!principal) return Response.json({ connected: false }, { status: 401 });
   const raw = readCookie(request, OAUTH_HANDOFF_COOKIE);
   const clear = `${OAUTH_HANDOFF_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
   if (!raw) {
@@ -40,7 +44,7 @@ export async function GET(request: Request): Promise<Response> {
     );
   }
 
-  const handoff = await openJson<Handoff>(raw, (payload) => typeof payload.integrationId === "string");
+  const handoff = await openJson<Handoff>(raw, (payload) => typeof payload.integrationId === "string" && payload.ownerId === principal.id);
   if (!handoff) {
     return Response.json(
       { connected: false },

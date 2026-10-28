@@ -24,5 +24,8 @@ export type OAuthEnvelope = {
   readonly v: 1;
   readonly expiresAt: number;
   readonly integrationId: string;
+  readonly ownerId: string;
+  readonly flowId: string;
+  readonly nonce: string;
   readonly verifier?: string;
 };

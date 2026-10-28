@@ -20,6 +20,7 @@ const MAX_SEALED_TOKENS = 12;
 
 export type SealedIntegrationToken = SealedEnvelope & {
   readonly integrationId: string;
+  readonly ownerId: string;
   readonly token: string;
   readonly label?: string;
   /** When the *provider's* access token expires, if it told us. */
@@ -30,6 +31,7 @@ export type SealedIntegrationToken = SealedEnvelope & {
 
 export async function sealIntegrationToken(input: {
   readonly integrationId: IntegrationId;
+  readonly ownerId: string;
   readonly token: string;
   readonly label?: string;
   readonly tokenExpiresAt?: number;
@@ -40,6 +42,7 @@ export async function sealIntegrationToken(input: {
   return sealJson(
     {
       integrationId: input.integrationId,
+      ownerId: input.ownerId,
       token: input.token,
       label: input.label ?? "Connected in this browser",
       ...(input.tokenExpiresAt ? { tokenExpiresAt: input.tokenExpiresAt } : {}),
@@ -55,9 +58,10 @@ export async function sealIntegrationToken(input: {
  */
 export async function openIntegrationTokenForRefresh(
   sealed: string | undefined,
+  ownerId: string,
 ): Promise<SealedIntegrationToken | null> {
   return openJson<SealedIntegrationToken>(sealed, (payload) => {
-    if (typeof payload.integrationId !== "string") return false;
+    if (payload.ownerId !== ownerId || typeof payload.integrationId !== "string") return false;
     if (typeof payload.token !== "string" || payload.token.length === 0) return false;
     return getIntegration(payload.integrationId) !== undefined;
   });
@@ -65,9 +69,10 @@ export async function openIntegrationTokenForRefresh(
 
 export async function openIntegrationToken(
   sealed: string | undefined,
+  ownerId: string,
 ): Promise<SealedIntegrationToken | null> {
   return openJson<SealedIntegrationToken>(sealed, (payload) => {
-    if (typeof payload.integrationId !== "string") return false;
+    if (payload.ownerId !== ownerId || typeof payload.integrationId !== "string") return false;
     if (typeof payload.token !== "string" || payload.token.length === 0) return false;
     if (getIntegration(payload.integrationId) === undefined) return false;
     // A stale access token is as good as no token: the browser refreshes ahead
@@ -116,11 +121,13 @@ function readAttribute(
 export async function integrationTokenFor(
   integrationId: string,
   attributes: Readonly<Record<string, string | readonly string[]>> | null | undefined,
+  principalId: string | undefined,
 ): Promise<string | undefined> {
+  if (!principalId) return undefined;
   const raw = readAttribute(attributes, ATTR_INTEGRATION_TOKENS);
   if (!raw) return undefined;
   for (const sealed of sealedTokensFromHeader(raw)) {
-    const opened = await openIntegrationToken(sealed);
+    const opened = await openIntegrationToken(sealed, principalId);
     if (opened?.integrationId === integrationId) return opened.token;
   }
   return undefined;

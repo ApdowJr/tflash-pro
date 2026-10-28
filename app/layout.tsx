@@ -1,7 +1,9 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
-import { AppSettingsProvider } from "@/components/settings/app-settings";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import "@fontsource/dm-serif-display/400.css";
+import "@fontsource/dm-serif-display/400-italic.css";
+import "@fontsource/dm-mono/400.css";
 import "./globals.css";
 
 const DESCRIPTION =
@@ -45,7 +47,7 @@ export const viewport: Viewport = {
 };
 
 // Applies the saved theme before hydration so the first paint never flashes.
-const THEME_SCRIPT = `(function(){try{var k='tflash:settings:v1',r=localStorage.getItem(k)||localStorage.getItem('ururka:settings:v1')||'{}',s=JSON.parse(r);if(s.theme==='dark'||s.theme==='light'){document.documentElement.dataset.theme=s.theme;document.documentElement.style.colorScheme=s.theme;}}catch(e){}})();`;
+const THEME_SCRIPT = `(function(){try{var t=localStorage.getItem('tflash:theme');if(t==='dark'||t==='light'){document.documentElement.dataset.theme=t;document.documentElement.style.colorScheme=t;}}catch(e){}})();`;
 
 export default function RootLayout({ children }: { readonly children: ReactNode }) {
   return (
@@ -55,7 +57,7 @@ export default function RootLayout({ children }: { readonly children: ReactNode 
       </head>
       <body>
         <TooltipProvider>
-          <AppSettingsProvider>{children}</AppSettingsProvider>
+          {children}
         </TooltipProvider>
       </body>
     </html>

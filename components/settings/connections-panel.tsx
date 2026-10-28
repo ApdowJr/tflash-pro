@@ -54,6 +54,13 @@ type Status = IntegrationsStatusResponse["integrations"][number];
 
 const CONNECT_COMMAND = "vercel connect create github --name t-flash && vercel env pull";
 
+function usableRecord(record: IntegrationTokenRecord | undefined): boolean {
+  if (!record || typeof record.token !== "string" || !record.token.startsWith("v1.")) return false;
+  const now = Date.now();
+  return (!record.expiresAt || record.expiresAt > now) &&
+    (!record.tokenExpiresAt || record.tokenExpiresAt > now);
+}
+
 /** Maps the `?oauth=` code from the callback route onto UI copy. */
 function oauthErrorKey(code: string) {
   switch (code) {
@@ -122,10 +129,10 @@ export function ConnectionsPanel({ className }: { readonly className?: string })
     [],
   );
 
-  const connectedCount = INTEGRATIONS.filter(
+  const configuredCount = INTEGRATIONS.filter(
     (integration) =>
-      Boolean(settings.integrationTokens[integration.id]) ||
-      statuses[integration.id]?.connected === true,
+      usableRecord(settings.integrationTokens[integration.id]) ||
+      statuses[integration.id]?.configured === true,
   ).length;
 
   const copy = (value: string) => {
@@ -198,7 +205,7 @@ export function ConnectionsPanel({ className }: { readonly className?: string })
             {connectAvailable ? t("connectReady") : t("connectUnavailable")}
           </span>
           <span className="text-[11px] text-muted-foreground">
-            {connectedCount}/{INTEGRATIONS.length} {t("connectionsActive")}
+            {configuredCount}/{INTEGRATIONS.length} {t("connectionsActive")}
           </span>
         </div>
         {connectAvailable ? null : (
@@ -280,9 +287,9 @@ function ConnectionRow({
 }) {
   const { t, settings, connectIntegration } = useAppSettings();
   const Icon = ICONS[integration.id];
-  const browserConnected = Boolean(record);
-  const serverConnected = status?.connected ?? false;
-  const connected = browserConnected || serverConnected;
+  const browserConnected = usableRecord(record);
+  const serverConfigured = status?.configured ?? false;
+  const connected = browserConnected || serverConfigured;
   const mode = status?.mode ?? "none";
   // Optimistic until the status call lands: an unconfigured provider bounces
   // back with `?oauth=unconfigured`, which the panel turns into a clear banner.
@@ -382,12 +389,12 @@ function ConnectionRow({
             >
               {browserConnected
                 ? t("integrationBrowser")
-                : connected
+                : connected || mode === "project-connect"
                   ? t(accessLabelKey(mode))
                   : t("integrationNotConnected")}
             </span>
             <span className="rounded-full border border-border/70 px-1.5 py-0 text-[10px] text-muted-foreground">
-              {t(approvalLabelKey(integration.access))}
+              {t("approvalAlways")}
             </span>
           </span>
           <span className="mt-0.5 block text-pretty text-muted-foreground text-[12px] leading-snug">
@@ -434,6 +441,15 @@ function ConnectionRow({
                 variant="ghost"
               >
                 <Trash2Icon className="size-3" />
+                {t("tokenDisconnect")}
+              </Button>
+            </div>
+          ) : null}
+
+          {!browserConnected && record ? (
+            <div className="flex items-center gap-2 rounded-lg border border-border/70 px-2.5 py-2 text-[11px] text-muted-foreground">
+              <span>{t("integrationExpired")}</span>
+              <Button className="ml-auto h-7 px-2 text-[11px]" onClick={onDisconnect} size="sm" type="button" variant="ghost">
                 {t("tokenDisconnect")}
               </Button>
             </div>
@@ -632,17 +648,6 @@ function ConnectionRow({
       ) : null}
     </div>
   );
-}
-
-function approvalLabelKey(access: IntegrationInfo["access"]) {
-  switch (access) {
-    case "read":
-      return "approvalNever" as const;
-    case "write":
-      return "approvalOnce" as const;
-    case "destructive":
-      return "approvalAlways" as const;
-  }
 }
 
 function accessLabelKey(mode: Status["mode"]) {

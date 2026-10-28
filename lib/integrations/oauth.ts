@@ -179,11 +179,17 @@ async function codeChallenge(verifier: string): Promise<string> {
 /** Sealed state: survives the redirect without a database, expires in 10 min. */
 export async function sealOAuthState(input: {
   readonly integrationId: string;
+  readonly ownerId: string;
+  readonly flowId: string;
+  readonly nonce: string;
   readonly verifier?: string;
 }): Promise<string> {
   const { token } = await sealJson(
     {
       integrationId: input.integrationId,
+      ownerId: input.ownerId,
+      flowId: input.flowId,
+      nonce: input.nonce,
       ...(input.verifier ? { verifier: input.verifier } : {}),
     },
     OAUTH_STATE_TTL_MS,
@@ -194,7 +200,10 @@ export async function sealOAuthState(input: {
 export async function openOAuthState(state: string | null): Promise<OAuthEnvelope | null> {
   if (!state) return null;
   return openJson<OAuthEnvelope>(state, (payload) =>
-    typeof payload.integrationId === "string" && oauthProviderFor(payload.integrationId) !== undefined,
+    typeof payload.integrationId === "string" && oauthProviderFor(payload.integrationId) !== undefined &&
+    typeof payload.ownerId === "string" && payload.ownerId.length > 0 &&
+    typeof payload.flowId === "string" && /^[a-f0-9-]{36}$/.test(payload.flowId) &&
+    typeof payload.nonce === "string" && /^[a-f0-9]{64}$/.test(payload.nonce),
   );
 }
 
@@ -313,6 +322,7 @@ async function postTokenRequest(
         provider.tokenFormat === "json"
           ? JSON.stringify(payload)
           : new URLSearchParams(payload).toString(),
+      redirect: "error",
       signal: AbortSignal.timeout(10_000),
     });
   } catch {

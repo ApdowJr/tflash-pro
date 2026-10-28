@@ -26,8 +26,11 @@ import { groupChats, searchChats } from "@/lib/chat-history";
 import { cn } from "@/lib/utils";
 import { useAppSettings, type Theme } from "@/components/settings/app-settings";
 import { authClient } from "@/lib/auth-client";
+import { browserSupabase } from "@/lib/supabase/browser";
 
 export type Account = {
+  readonly id: string;
+  readonly kind: "supabase" | "vercel";
   readonly name: string;
   readonly email: string;
   readonly image?: string | null;
@@ -50,7 +53,7 @@ export function Sidebar({
   readonly onOpenConnections: () => void;
   readonly onOpenSettings: () => void;
 }) {
-  const { settings, t, removeChat, update } = useAppSettings();
+  const { settings, t, removeChat, update, historyError, refreshChats } = useAppSettings();
   const [query, setQuery] = useState("");
   const groups = useMemo(
     () => groupChats(searchChats(settings.chats, query)),
@@ -126,6 +129,7 @@ export function Sidebar({
           </label>
         </div>
 
+        {historyError ? <div className="px-3 py-2 text-xs text-destructive" role="alert">{historyError} <button className="underline" onClick={() => void refreshChats()} type="button">{t("refresh")}</button></div> : null}
         <nav aria-label={t("chats")} className="tflash-scroll min-h-0 flex-1 overflow-y-auto px-2 pb-2">
           {groups.length === 0 ? (
             <p className="px-2.5 py-6 text-pretty text-muted-foreground text-xs leading-relaxed">
@@ -156,7 +160,7 @@ export function Sidebar({
                         <button
                           aria-label={t("deleteChat")}
                           className="tf-reveal absolute top-1/2 right-1 flex size-8 -translate-y-1/2 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-background hover:text-destructive focus-visible:opacity-100 group-hover/chat:opacity-100 lg:size-6"
-                          onClick={() => removeChat(chat.id)}
+                          onClick={() => { void removeChat(chat.id).then(() => { if (chat.id === activeChatId) window.location.assign("/"); }).catch(() => {}); }}
                           type="button"
                         >
                           <Trash2Icon className="size-3.5" />
@@ -211,21 +215,32 @@ export function Sidebar({
 }
 
 function AccountMenu({ account }: { readonly account: Account }) {
-  const { t } = useAppSettings();
+  const { t, clearLocalCredentials } = useAppSettings();
   const [imageFailed, setImageFailed] = useState(false);
   const [pending, setPending] = useState(false);
+  const [signOutError, setSignOutError] = useState(false);
   const initials = getInitials(account.name, account.email);
 
   async function signOut() {
     setPending(true);
+    setSignOutError(false);
     try {
-      await authClient.signOut({
-        fetchOptions: {
-          onError: () => setPending(false),
-          onSuccess: () => window.location.assign("/"),
-        },
-      });
+      // Both cookie sets can be present at once. Do not claim success if
+      // either sign-out failed, or if an authenticated session remains.
+      const [supabaseResult, vercelResult] = await Promise.allSettled([
+        browserSupabase().auth.signOut({ scope: "local" }),
+        authClient.signOut(),
+      ]);
+      if (supabaseResult.status === "rejected" || supabaseResult.value.error ||
+          vercelResult.status === "rejected" || vercelResult.value.error) {
+        throw new Error("Sign-out incomplete");
+      }
+      const check = await fetch("/api/chats", { cache: "no-store" });
+      if (check.status !== 401) throw new Error("Session still active");
+      clearLocalCredentials();
+      window.location.assign("/login");
     } catch {
+      setSignOutError(true);
       setPending(false);
     }
   }
@@ -262,10 +277,11 @@ function AccountMenu({ account }: { readonly account: Account }) {
           {t("account")}
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <DropdownMenuItem className="text-[13px]" disabled={pending} onSelect={signOut}>
+        <DropdownMenuItem className="text-[13px]" disabled={pending} onSelect={(event) => { event.preventDefault(); void signOut(); }}>
           <LogOutIcon className="size-3.5" />
           {pending ? "…" : t("signOut")}
         </DropdownMenuItem>
+        {signOutError ? <p role="alert" className="px-2 py-1 text-xs text-destructive">{t("signOutFailed")}</p> : null}
       </DropdownMenuContent>
     </DropdownMenu>
   );
