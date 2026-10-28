@@ -303,32 +303,36 @@ function AuthorizationPrompt({ part }: { readonly part: EveAuthorizationPart }) 
   return (
     <div
       className={cn(
-        "space-y-3 rounded-md border p-3",
+        "space-y-3 rounded-xl border p-3.5",
         isAuthorized
-          ? "border-emerald-500/30 bg-emerald-500/5"
+          ? "border-emerald-500/25 bg-emerald-500/5"
           : isCompleted
-            ? "border-destructive/30 bg-destructive/5"
-            : "border-blue-500/30 bg-blue-500/5",
+            ? "border-destructive/25 bg-destructive/5"
+            : "border-brand/35 bg-brand/6",
       )}
     >
       <div className="flex items-start gap-3">
         <span
           className={cn(
-            "mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full",
+            "mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg",
             isAuthorized
               ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
               : isCompleted
                 ? "bg-destructive/10 text-destructive"
-                : "bg-blue-500/10 text-blue-700 dark:text-blue-300",
+                : "bg-brand/15 text-foreground",
           )}
         >
           <Icon className="size-4" />
         </span>
         <div className="min-w-0 flex-1 space-y-2">
-          <p className="font-medium text-sm">{authorizationTitle(part)}</p>
-          <p className="text-muted-foreground text-sm">{authorizationDescription(part)}</p>
+          <p className="font-medium text-[13px]">{authorizationTitle(part)}</p>
+          <p className="text-pretty text-muted-foreground text-[12px] leading-relaxed">
+            {authorizationDescription(part)}
+          </p>
           {shouldShowInstructions ? (
-            <p className="text-muted-foreground text-sm">{instructions}</p>
+            <p className="text-pretty text-muted-foreground text-[12px] leading-relaxed">
+              {instructions}
+            </p>
           ) : null}
           {part.state === "required" && part.authorization?.userCode ? (
             <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -339,9 +343,9 @@ function AuthorizationPrompt({ part }: { readonly part: EveAuthorizationPart }) 
             </div>
           ) : null}
           {part.state === "required" && part.authorization?.url ? (
-            <Button asChild size="sm">
+            <Button asChild className="h-8 gap-1.5 text-[12px]" size="sm">
               <a href={part.authorization.url} rel="noreferrer" target="_blank">
-                <ExternalLinkIcon className="size-4" />
+                <ExternalLinkIcon className="size-3.5" />
                 Sign in with {part.displayName}
               </a>
             </Button>
