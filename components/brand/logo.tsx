@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 
 /**
- * T Flash mark.
+ * Tflash mark.
  *
  * A capital T whose stem is drawn as a lightning bolt: the bar says the
  * letter, the bolt says what the product is for. Two flat colors, no
@@ -70,7 +70,7 @@ export function FlashLockup({
           wordmarkClassName,
         )}
       >
-        T Flash
+        Tflash
       </span>
     </span>
   );

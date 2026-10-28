@@ -173,6 +173,8 @@ export interface TextInputContext {
   value: string;
   setInput: (v: string) => void;
   clear: () => void;
+  /** Clear only when the current text still matches the submitted draft. */
+  clearIfUnchanged: (submitted: string) => void;
 }
 
 export interface PromptInputControllerProps {
@@ -225,6 +227,9 @@ export const PromptInputProvider = ({
   // ----- textInput state
   const [textInput, setTextInput] = useState(initialTextInput);
   const clearInput = useCallback(() => setTextInput(""), []);
+  const clearInputIfUnchanged = useCallback((submitted: string) => {
+    setTextInput((current) => current === submitted ? "" : current);
+  }, []);
 
   // ----- attachments state (global when wrapped)
   const [attachmentFiles, setAttachmentFiles] = useState<(FileUIPart & { id: string })[]>([]);
@@ -320,11 +325,12 @@ export const PromptInputProvider = ({
       attachments,
       textInput: {
         clear: clearInput,
+        clearIfUnchanged: clearInputIfUnchanged,
         setInput: setTextInput,
         value: textInput,
       },
     }),
-    [textInput, clearInput, attachments, __registerFileInput],
+    [textInput, clearInput, clearInputIfUnchanged, attachments, __registerFileInput],
   );
 
   return (
@@ -657,11 +663,6 @@ export const PromptInput = ({
     ? controller.attachments.openFileDialog
     : openFileDialogLocal;
 
-  const clear = useCallback(() => {
-    clearAttachments();
-    clearReferencedSources();
-  }, [clearAttachments, clearReferencedSources]);
-
   // Let provider know about our hidden file input so external menus can call openFileDialog()
   useEffect(() => {
     if (!usingProvider) {
@@ -821,31 +822,19 @@ export const PromptInput = ({
           }),
         );
 
-        const result = onSubmit({ files: convertedFiles, text }, event);
+        await onSubmit({ files: convertedFiles, text }, event);
 
-        // Handle both sync and async onSubmit
-        if (result instanceof Promise) {
-          try {
-            await result;
-            clear();
-            if (usingProvider) {
-              controller.textInput.clear();
-            }
-          } catch {
-            // Don't clear on error - user may want to retry
-          }
-        } else {
-          // Sync function completed without throwing, clear inputs
-          clear();
-          if (usingProvider) {
-            controller.textInput.clear();
-          }
-        }
+        // A user can start the next draft while the request is pending. Remove
+        // only the attachments and text actually submitted, not newer edits.
+        for (const file of files) remove(file.id);
+        const submittedSources = new Set(referencedSources.map((source) => source.id));
+        setReferencedSources((current) => current.filter((source) => !submittedSources.has(source.id)));
+        if (usingProvider) controller.textInput.clearIfUnchanged(text);
       } catch {
-        // Don't clear on error - user may want to retry
+        // Don't clear on error - user may want to retry.
       }
     },
-    [usingProvider, controller, files, onSubmit, clear],
+    [usingProvider, controller, files, referencedSources, onSubmit, remove],
   );
 
   // Render with or without local provider

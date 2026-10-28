@@ -7,16 +7,16 @@ export type ChatGroup = {
   readonly chats: readonly ChatRecord[];
 };
 
-const DAY = 24 * 60 * 60 * 1000;
-
-/** Local history grouped the way people actually look for a conversation. */
+/** Group by the user's calendar day rather than a rolling 24-hour window. */
 export function groupChats(
   chats: readonly ChatRecord[],
   now: number = Date.now(),
 ): readonly ChatGroup[] {
   const sorted = [...chats].sort((a, b) => b.updatedAt - a.updatedAt);
-  const today = sorted.filter((chat) => now - chat.updatedAt < DAY);
-  const earlier = sorted.filter((chat) => now - chat.updatedAt >= DAY);
+  const startOfToday = new Date(now);
+  startOfToday.setHours(0, 0, 0, 0);
+  const today = sorted.filter((chat) => chat.updatedAt >= startOfToday.getTime());
+  const earlier = sorted.filter((chat) => chat.updatedAt < startOfToday.getTime());
   return [
     ...(today.length > 0 ? [{ key: "today" as const, chats: today }] : []),
     ...(earlier.length > 0 ? [{ key: "earlier" as const, chats: earlier }] : []),

@@ -38,6 +38,7 @@ class Query {
   select() { return this; }
   eq(key, value) { this.filters.push((row) => row[key] === value); return this; }
   not(key, operator, value) { assert.equal(operator, "is"); this.filters.push((row) => row[key] !== value); return this; }
+  is(key, value) { this.filters.push((row) => row[key] === value); return this; }
   order() { return this; }
   limit() { return this; }
   update(patch) { this.action = "update"; this.patch = patch; return this; }
@@ -106,9 +107,22 @@ test("creation, history, isolation, forgery checks, and best-effort deletion", a
     assert.equal(rows.get("session-a").owner_proof, signChatOwnership("user-a", "session-a"));
     assert.deepEqual((await (await GET()).json()).chats, []); // Drafts are hidden.
 
-    const patch = await chatRoute.PATCH(jsonRequest("https://app.test/api/chats/session-a", "PATCH", {}, { title: "  First chat  " }), detail("session-a"));
+    const patch = await chatRoute.PATCH(jsonRequest("https://app.test/api/chats/session-a", "PATCH", {}, { title: "  First chat  ", activity: true }), detail("session-a"));
     assert.equal(patch.status, 200);
+    assert.equal((await patch.json()).title, "First chat");
     assert.equal((await (await GET()).json()).chats[0].title, "First chat");
+
+    const renamed = await chatRoute.PATCH(jsonRequest("https://app.test/api/chats/session-a", "PATCH", {}, { title: "  Project notes  " }), detail("session-a"));
+    assert.equal(renamed.status, 200);
+    assert.equal((await renamed.json()).title, "Project notes");
+    // A later message, including one from a stale browser, must not undo a rename.
+    const activity = await chatRoute.PATCH(jsonRequest("https://app.test/api/chats/session-a", "PATCH", {}, { title: "First chat", activity: true }), detail("session-a"));
+    assert.equal(activity.status, 200);
+    assert.equal((await activity.json()).title, "Project notes");
+    assert.equal((await (await GET()).json()).chats[0].title, "Project notes");
+    assert.equal((await chatRoute.PATCH(jsonRequest("https://app.test/api/chats/session-a", "PATCH", {}, { title: "  " }), detail("session-a"))).status, 400);
+    assert.equal((await chatRoute.PATCH(jsonRequest("https://app.test/api/chats/session-a", "PATCH", {}, null), detail("session-a"))).status, 400);
+    assert.equal((await chatRoute.PATCH(jsonRequest("https://app.test/api/chats/session-a", "PATCH", {}, { title: "x", activity: "true" }), detail("session-a"))).status, 400);
 
     currentUser = "user-b";
     rows.set("forged", { session_id: "forged", user_id: "user-b", title: "forged", owner_proof: "not-a-signature", updated_at: new Date().toISOString() });
@@ -171,6 +185,7 @@ test("Vercel chat proofs are issued to the authenticated owner and cannot cross 
     assert.equal((await chatRoute.PATCH(jsonRequest("https://app.test/api/chats/vercel-session", "PATCH", { [OWNER_PROOF_HEADER]: ownerProof }, { title: "x" }), detail(sessionId))).status, 404);
     currentUser = "vercel:alice";
     assert.equal((await chatRoute.PATCH(jsonRequest("https://app.test/api/chats/vercel-session", "PATCH", { [OWNER_PROOF_HEADER]: ownerProof }, { title: "x" }), detail(sessionId))).status, 200);
+    assert.equal((await chatRoute.PATCH(jsonRequest("https://app.test/api/chats/vercel-session", "PATCH", { [OWNER_PROOF_HEADER]: ownerProof }, { title: "x", activity: true }), detail(sessionId))).status, 200);
     assert.equal((await chatRoute.DELETE(jsonRequest("https://app.test/api/chats/vercel-session", "DELETE", { cookie: "better-auth-test", [OWNER_PROOF_HEADER]: ownerProof }), detail(sessionId))).status, 200);
     assert.equal(calls.length, 2);
   } finally {

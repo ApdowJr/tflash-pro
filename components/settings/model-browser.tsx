@@ -2,6 +2,7 @@
 
 import {
   CheckIcon,
+  ChevronDownIcon,
   EyeIcon,
   KeyRoundIcon,
   Loader2Icon,
@@ -16,10 +17,10 @@ import {
   getProvider,
 } from "@/lib/providers/catalog";
 import { Badge } from "@/components/ui/badge";
+import { providerConnectionExpired } from "@/lib/providers/connection-state";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { ProviderBadge, StatusDot } from "./provider-badge";
 import { useAppSettings } from "./app-settings";
 
 export function ModelBrowser({
@@ -28,7 +29,7 @@ export function ModelBrowser({
   className,
 }: {
   readonly onPick?: () => void;
-  readonly onConnectRequest?: () => void;
+  readonly onConnectRequest?: (providerId: string) => void;
   readonly className?: string;
 }) {
   const { settings, t, modelsFor, modelsStateFor, loadModels, setModel, isConnected, selection } =
@@ -56,58 +57,47 @@ export function ModelBrowser({
       .slice(0, 120);
   }, [models, query]);
 
-  const needsKey = provider.requiresKey && !isConnected(provider.id);
+  const expired = providerConnectionExpired(settings.connections[provider.id]);
+  const needsKey = expired || (provider.requiresKey && !isConnected(provider.id));
 
   return (
     <div className={cn("flex min-h-0 flex-col gap-3", className)}>
-      <div className="tflash-scroll flex max-h-24 flex-wrap gap-1.5 overflow-y-auto">
-        {PROVIDERS.map((item) => {
-          const active = item.id === providerId;
-          return (
-            <button
-              className={cn(
-                "flex items-center gap-1.5 rounded-full border px-2 py-1 text-xs transition-colors",
-                active
-                  ? "border-transparent bg-foreground text-background"
-                  : "border-border/70 bg-card/60 text-muted-foreground hover:border-border hover:text-foreground",
-              )}
-              key={item.id}
-              onClick={() => setProviderId(item.id)}
-              type="button"
-            >
-              <StatusDot active={isConnected(item.id)} />
-              <span className="font-medium">{item.name}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="relative">
-        <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          className="pr-3 pl-9"
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder={t("searchModels")}
-          value={query}
-        />
+      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
+        <div className="relative">
+          <label className="sr-only" htmlFor="model-provider">{t("provider")}</label>
+          <select
+            className="h-10 w-full appearance-none rounded-md border border-input bg-background px-3 pr-9 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            id="model-provider"
+            onChange={(event) => { setProviderId(event.target.value); setQuery(""); }}
+            value={providerId}
+          >
+            {PROVIDERS.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name}{isConnected(item.id) ? ` · ${t("connected")}` : ""}
+              </option>
+            ))}
+          </select>
+          <ChevronDownIcon className="pointer-events-none absolute top-1/2 right-3 size-4 -translate-y-1/2 text-muted-foreground" />
+        </div>
+        <div className="relative">
+          <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            aria-label={t("searchModels")}
+            className="pr-3 pl-9"
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={t("searchModels")}
+            type="search"
+            value={query}
+          />
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2 text-muted-foreground text-xs">
-        <span className="flex items-center gap-1.5">
-          <ProviderBadge provider={provider} size="sm" />
-          <span className="font-medium text-foreground">{provider.name}</span>
-          <span aria-hidden="true">·</span>
-          {state.loading ? (
-            <span className="inline-flex items-center gap-1">
-              <Loader2Icon className="size-3 animate-spin" /> {t("refresh")}
-            </span>
-          ) : (
-            <>
-              {state.source === "live" ? t("liveModels") : t("staticModels")} · {models.length}{" "}
-              {t("modelsFound")}
-            </>
-          )}
-        </span>
+        {state.loading ? (
+          <span className="inline-flex items-center gap-1"><Loader2Icon className="size-3 animate-spin" /> {t("refresh")}</span>
+        ) : (
+          <span>{state.source === "live" ? t("liveModels") : t("staticModels")} · {models.length} {t("modelsFound")}</span>
+        )}
         <Button
           className="h-7 px-2 text-xs"
           disabled={state.loading}
@@ -124,11 +114,11 @@ export function ModelBrowser({
       {needsKey ? (
         <button
           className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-brand/35 bg-brand/8 px-3 py-2 text-left text-[12px] text-foreground/90 transition-colors hover:bg-brand/14"
-          onClick={() => onConnectRequest?.()}
+          onClick={() => onConnectRequest?.(provider.id)}
           type="button"
         >
           <KeyRoundIcon className="size-3.5 shrink-0" />
-          <span>{t("needsKey")}</span>
+          <span>{expired ? t("providerExpired") : t("needsKey")}</span>
           <span className="ml-auto font-medium underline underline-offset-2">{t("connect")} →</span>
         </button>
       ) : null}
@@ -148,6 +138,7 @@ export function ModelBrowser({
             const price = formatPrice(model.inputPrice);
             return (
               <button
+                aria-pressed={active}
                 className={cn(
                   "group flex w-full items-start gap-3 rounded-lg border border-transparent px-2.5 py-2 text-left transition-colors hover:border-border hover:bg-muted/60",
                   active && "border-border bg-muted/70",
