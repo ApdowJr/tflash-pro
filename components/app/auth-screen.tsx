@@ -3,12 +3,14 @@
 import { ArrowLeftIcon, ArrowRightIcon, EyeIcon, EyeOffIcon, LoaderCircleIcon } from "lucide-react";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { browserSupabase } from "@/lib/supabase/browser";
+import { verifySignupCode } from "@/lib/supabase/signup-code";
+import { forgetSignup, readPendingSignup, rememberSignup, RESEND_DELAY_MS } from "@/lib/supabase/pending-signup";
 import { authClient } from "@/lib/auth-client";
 import { safeLocalPath } from "@/lib/security/redirect";
 import { Brand, BrandMark } from "./brand";
 
 type Language = "en" | "so";
-type Mode = "signin" | "signup" | "forgot";
+type Mode = "signin" | "signup" | "verify" | "forgot";
 
 const words = {
   en: {
@@ -44,7 +46,22 @@ const words = {
     sendLink: "Send reset link",
     saving: "One moment…",
     back: "Back to sign in",
-    checkSignup: "Check your inbox for a confirmation link. Open it in this browser to finish creating your account.",
+    verifyTitle: "Check your email.",
+    verifyBody: "Enter the confirmation code we sent you. If the email contains a link instead, open it in this browser.",
+    verificationCode: "Confirmation code",
+    codePlaceholder: "Enter the code from your email",
+    verifyButton: "Verify email",
+    haveCode: "Already have a confirmation code?",
+    resendCode: "Resend code",
+    resendIn: (seconds: number) => `Resend code in ${seconds}s`,
+    codeResent: "If the account still needs confirmation, a new email is on its way.",
+    verified: "Your email is confirmed. Sign in with your password to continue.",
+    autoConfirmed: "Your account is ready. Sign in with your password to continue.",
+    codeFormat: "Enter the numeric code from your email.",
+    validEmail: "Enter a valid email address first.",
+    codeInvalid: "That code is invalid or has expired. Check it or request a new one.",
+    rateLimited: "Please wait a little before requesting another email.",
+    signOutError: "Your account was created, but we couldn't finish signing out. Please try again.",
     checkReset: "If an account exists for that email, a reset link is on its way. Open it in this browser.",
     mismatch: "Passwords do not match.",
     shortPassword: "Use at least 8 characters for your password.",
@@ -91,7 +108,22 @@ const words = {
     sendLink: "Ii soo dir xiriirka",
     saving: "Sug hal daqiiqo…",
     back: "Ku noqo gelitaanka",
-    checkSignup: "Ka eeg email-kaaga xiriirka xaqiijinta. Ka fur browser-kan si aad akoonka u dhammaystirto.",
+    verifyTitle: "Eeg email-kaaga.",
+    verifyBody: "Geli koodhka xaqiijinta ee aan kuu dirnay. Haddii email-ku xiriir leeyahay, ka fur browser-kan.",
+    verificationCode: "Koodhka xaqiijinta",
+    codePlaceholder: "Geli koodhka email-kaaga ku jira",
+    verifyButton: "Xaqiiji email-ka",
+    haveCode: "Ma haysaa koodhka xaqiijinta?",
+    resendCode: "Koodh cusub ii soo dir",
+    resendIn: (seconds: number) => `Dib u dir ${seconds} ilbiriqsi kadib`,
+    codeResent: "Haddii akoonku wali u baahan yahay xaqiijin, email cusub ayaa la dirayaa.",
+    verified: "Email-kaaga waa la xaqiijiyay. Ku soo gal furahaaga si aad u sii wadato.",
+    autoConfirmed: "Akoonkaagu waa diyaar. Ku soo gal furahaaga si aad u sii wadato.",
+    codeFormat: "Geli koodhka tirooyinka ah ee email-kaaga ku jira.",
+    validEmail: "Marka hore geli cinwaan email oo sax ah.",
+    codeInvalid: "Koodhku waa khaldan yahay ama wuu dhacay. Hubi ama mid cusub codso.",
+    rateLimited: "Fadlan wax yar sug ka hor intaadan email kale codsan.",
+    signOutError: "Akoonka waa la sameeyay, balse bixitaanka lama dhammaystirin. Fadlan isku day mar kale.",
     checkReset: "Haddii akoon email-kan ku jiro, xiriirka dib-u-dejinta waa la dirayaa. Ka fur browser-kan.",
     mismatch: "Labada fure isma laha.",
     shortPassword: "Furahaagu ha ka koobnaado ugu yaraan 8 xaraf.",
@@ -200,6 +232,8 @@ function PasswordInput({ id, value, onChange, placeholder, autoComplete, label, 
   );
 }
 
+type NoticeKey = "verified" | "autoConfirmed" | "codeResent" | "checkReset";
+
 export function AuthScreen({ vercelAvailable }: { readonly vercelAvailable: boolean }) {
   const { language, changeLanguage, text } = useLanguage();
   const [mode, setMode] = useState<Mode>("signin");
@@ -207,43 +241,119 @@ export function AuthScreen({ vercelAvailable }: { readonly vercelAvailable: bool
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [code, setCode] = useState("");
   const [pending, setPending] = useState(false);
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState<NoticeKey | null>(null);
   const [error, setError] = useState("");
   const [badLink, setBadLink] = useState(false);
+  const [resendAt, setResendAt] = useState(0);
+  const [clock, setClock] = useState(0);
 
-  useEffect(() => { setBadLink(new URLSearchParams(window.location.search).get("error") === "auth_link"); }, []);
+  useEffect(() => {
+    setBadLink(new URLSearchParams(window.location.search).get("error") === "auth_link");
+    const saved = readPendingSignup();
+    if (saved) {
+      setEmail(saved.email);
+      setResendAt(saved.resendAt);
+      setClock(Date.now());
+      setMode("verify");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (mode !== "verify" || resendAt <= Date.now()) return;
+    const timer = window.setInterval(() => {
+      const now = Date.now();
+      setClock(now);
+      if (now >= resendAt) window.clearInterval(timer);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [mode, resendAt]);
+
+  const resendSeconds = Math.max(0, Math.ceil((resendAt - clock) / 1000));
 
   function changeMode(next: Mode) {
-    setMode(next); setError(""); setNotice(""); setBadLink(false); setPassword(""); setConfirm("");
+    setMode(next); setError(""); setNotice(null); setBadLink(false);
+    setPassword(""); setConfirm(""); setCode("");
+    if (next !== "verify") { forgetSignup(); setResendAt(0); }
+  }
+
+  function signupRedirect(): string {
+    // Keep links from older email templates usable during a gradual rollout.
+    return `${window.location.origin}/auth/callback?next=${encodeURIComponent(safeNext())}`;
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setError(""); setNotice(""); setBadLink(false);
+    event.preventDefault(); setError(""); setNotice(null); setBadLink(false);
     if (mode === "signup" && password.length < 8) { setError(text.shortPassword); return; }
     if (mode === "signup" && password !== confirm) { setError(text.mismatch); return; }
+    if (mode === "verify" && !/^\d{6,10}$/.test(code)) { setError(text.codeFormat); return; }
     setPending(true);
     try {
-      const supabase = browserSupabase();
+      const address = email.trim();
       if (mode === "signin") {
-        const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+        const { error } = await browserSupabase().auth.signInWithPassword({ email: address, password });
         if (error) { setError(error.message); return; }
+        forgetSignup();
         window.location.assign(safeNext());
       } else if (mode === "signup") {
-        const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(safeNext())}`;
+        const supabase = browserSupabase();
         const { data, error } = await supabase.auth.signUp({
-          email: email.trim(), password,
-          options: { emailRedirectTo: redirectTo, data: { full_name: name.trim() } },
+          email: address, password,
+          options: { emailRedirectTo: signupRedirect(), data: { full_name: name.trim() } },
         });
         if (error) { setError(error.message); return; }
-        if (data.session) { window.location.assign(safeNext()); return; }
-        setNotice(text.checkSignup); setPassword(""); setConfirm("");
+        setEmail(address); setPassword(""); setConfirm("");
+        if (data.session) {
+          // Some projects disable email confirmation. Respect the requested
+          // sign-in step rather than silently carrying that session forward.
+          let signOutFailed = false;
+          try {
+            const { error: signOutError } = await supabase.auth.signOut({ scope: "local" });
+            signOutFailed = Boolean(signOutError);
+          } catch { signOutFailed = true; }
+          changeMode("signin");
+          if (signOutFailed) setError(text.signOutError);
+          else setNotice("autoConfirmed");
+          return;
+        }
+        const now = Date.now();
+        const nextResend = now + RESEND_DELAY_MS;
+        rememberSignup({ email: address, resendAt: nextResend });
+        setClock(now); setResendAt(nextResend); setCode(""); setMode("verify");
+      } else if (mode === "verify") {
+        const result = await verifySignupCode(address, code);
+        if (!result.ok) { setError(result.reason === "invalid" ? text.codeInvalid : text.genericError); return; }
+        setEmail(address);
+        changeMode("signin");
+        setNotice("verified");
       } else {
         const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent("/auth/reset-password")}`;
-        const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo });
+        const { error } = await browserSupabase().auth.resetPasswordForEmail(address, { redirectTo });
         if (error) { setError(error.message); return; }
-        setNotice(text.checkReset);
+        setNotice("checkReset");
       }
+    } catch { setError(text.genericError); }
+    finally { setPending(false); }
+  }
+
+  async function resend() {
+    if (pending || Date.now() < resendAt) return;
+    const address = email.trim();
+    if (address.length > 254 || !/^[^\s@]+@[^\s@]+$/.test(address)) { setError(text.validEmail); return; }
+    setError(""); setNotice(null); setBadLink(false); setPending(true);
+    try {
+      const { error } = await browserSupabase().auth.resend({
+        type: "signup", email: address, options: { emailRedirectTo: signupRedirect() },
+      });
+      if (error) {
+        setError(error.status === 429 ? text.rateLimited : text.genericError);
+        return;
+      }
+      const now = Date.now();
+      const nextResend = now + RESEND_DELAY_MS;
+      rememberSignup({ email: address, resendAt: nextResend });
+      setEmail(address); setCode(""); setClock(now); setResendAt(nextResend); setNotice("codeResent");
     } catch { setError(text.genericError); }
     finally { setPending(false); }
   }
@@ -256,20 +366,22 @@ export function AuthScreen({ vercelAvailable }: { readonly vercelAvailable: bool
     } catch { setError(text.genericError); setPending(false); }
   }
 
+  const showAccountOptions = mode === "signin" || mode === "signup";
+
   return (
     <AuthLayout language={language} onLanguageChange={changeLanguage}>
       <div className="auth-form-head">
-        <span className="auth-small-label">{mode === "forgot" ? "ACCOUNT RECOVERY" : "TFLASH / ACCOUNT"}</span>
-        <h2>{mode === "signin" ? text.welcome : mode === "signup" ? text.create : text.resetTitle}</h2>
-        <p>{mode === "signin" ? text.welcomeBody : mode === "signup" ? text.createBody : text.resetBody}</p>
+        <span className="auth-small-label">{mode === "forgot" ? "ACCOUNT RECOVERY" : mode === "verify" ? "TFLASH / VERIFY EMAIL" : "TFLASH / ACCOUNT"}</span>
+        <h2>{mode === "signin" ? text.welcome : mode === "signup" ? text.create : mode === "verify" ? text.verifyTitle : text.resetTitle}</h2>
+        <p>{mode === "signin" ? text.welcomeBody : mode === "signup" ? text.createBody : mode === "verify" ? text.verifyBody : text.resetBody}</p>
       </div>
-      {mode !== "forgot" ? (
+      {showAccountOptions ? (
         <div className="auth-tabs" aria-label="Account options">
-          <button aria-pressed={mode === "signin"} onClick={() => changeMode("signin")} type="button">{text.signIn}</button>
-          <button aria-pressed={mode === "signup"} onClick={() => changeMode("signup")} type="button">{text.signUp}</button>
+          <button aria-pressed={mode === "signin"} disabled={pending} onClick={() => changeMode("signin")} type="button">{text.signIn}</button>
+          <button aria-pressed={mode === "signup"} disabled={pending} onClick={() => changeMode("signup")} type="button">{text.signUp}</button>
         </div>
       ) : null}
-      {mode !== "forgot" ? (
+      {showAccountOptions ? (
         <div className="auth-social">
           <button disabled={pending || !vercelAvailable} onClick={signInWithVercel} type="button">
             <svg aria-hidden="true" width="13" height="12" viewBox="0 0 24 20"><path d="M12 0 24 20H0L12 0Z" fill="currentColor" /></svg>
@@ -279,25 +391,40 @@ export function AuthScreen({ vercelAvailable }: { readonly vercelAvailable: bool
           <div><span>{text.orEmail}</span></div>
         </div>
       ) : null}
-      <form className="auth-form" onSubmit={submit}>
+      <form className={`auth-form${mode === "verify" || mode === "forgot" ? " auth-reset-form" : ""}`} onSubmit={submit}>
         {mode === "signup" ? (
           <div className="auth-field"><label htmlFor="name">{text.name}</label><input autoComplete="name" id="name" maxLength={80} onChange={(event) => setName(event.target.value)} placeholder={text.namePlaceholder} required value={name} /></div>
         ) : null}
-        <div className="auth-field"><label htmlFor="email">{text.email}</label><input autoComplete="email" id="email" onChange={(event) => setEmail(event.target.value)} placeholder={text.emailPlaceholder} required type="email" value={email} /></div>
-        {mode !== "forgot" ? (
+        <div className="auth-field"><label htmlFor="email">{text.email}</label><input autoComplete="email" id="email" maxLength={254} onChange={(event) => setEmail(event.target.value)} placeholder={text.emailPlaceholder} required type="email" value={email} /></div>
+        {mode === "verify" ? (
+          <div className="auth-field">
+            <label htmlFor="verification-code">{text.verificationCode}</label>
+            <input autoComplete="one-time-code" autoFocus className="auth-code-input" id="verification-code" inputMode="numeric" maxLength={10} onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 10))} placeholder={text.codePlaceholder} required type="text" value={code} />
+          </div>
+        ) : null}
+        {mode === "signin" || mode === "signup" ? (
           <PasswordInput autoComplete={mode === "signin" ? "current-password" : "new-password"} hideLabel={text.hide} id="password" label={text.password} minLength={mode === "signup" ? 8 : undefined} onChange={setPassword} placeholder={mode === "signup" ? text.createPassword : text.passwordPlaceholder} showLabel={text.show} value={password} />
         ) : null}
         {mode === "signup" ? (
           <PasswordInput autoComplete="new-password" hideLabel={text.hide} id="confirm-password" label={text.confirm} minLength={8} onChange={setConfirm} placeholder={text.confirmPlaceholder} showLabel={text.show} value={confirm} />
         ) : null}
-        {mode === "signin" ? <button className="auth-forgot" onClick={() => changeMode("forgot")} type="button">{text.forgot}</button> : null}
+        {mode === "signin" ? <button className="auth-forgot" disabled={pending} onClick={() => changeMode("forgot")} type="button">{text.forgot}</button> : null}
         {error || badLink ? <p className="auth-message auth-message-error" role="alert">{error || text.linkError}</p> : null}
-        {notice ? <p className="auth-message auth-message-success" role="status">{notice}</p> : null}
+        {notice ? <p className="auth-message auth-message-success" role="status">{text[notice]}</p> : null}
         <button className="auth-submit" disabled={pending} type="submit">
-          <span>{pending ? text.saving : mode === "signin" ? text.continue : mode === "signup" ? text.createButton : text.sendLink}</span>
+          <span>{pending ? text.saving : mode === "signin" ? text.continue : mode === "signup" ? text.createButton : mode === "verify" ? text.verifyButton : text.sendLink}</span>
           {pending ? <LoaderCircleIcon className="animate-spin" size={18} /> : <ArrowRightIcon size={18} />}
         </button>
-        {mode === "forgot" ? <button className="auth-back" onClick={() => changeMode("signin")} type="button"><ArrowLeftIcon size={15} />{text.back}</button> : null}
+        {mode === "verify" ? (
+          <div className="auth-verification-actions">
+            <button className="auth-back" disabled={pending || resendSeconds > 0} onClick={resend} type="button">
+              {resendSeconds > 0 ? text.resendIn(resendSeconds) : text.resendCode}
+            </button>
+            <button className="auth-back" disabled={pending} onClick={() => changeMode("signin")} type="button"><ArrowLeftIcon size={15} />{text.back}</button>
+          </div>
+        ) : null}
+        {mode === "signin" ? <button className="auth-back" disabled={pending} onClick={() => changeMode("verify")} type="button">{text.haveCode}</button> : null}
+        {mode === "forgot" ? <button className="auth-back" disabled={pending} onClick={() => changeMode("signin")} type="button"><ArrowLeftIcon size={15} />{text.back}</button> : null}
       </form>
     </AuthLayout>
   );

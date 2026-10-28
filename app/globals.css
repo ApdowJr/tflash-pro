@@ -376,6 +376,10 @@ body {
 .auth-submit:active:not(:disabled) { transform: translateY(1px); }
 .auth-submit:disabled { opacity: .65; cursor: wait; }
 .auth-back { display: inline-flex; align-self: flex-start; align-items: center; gap: 7px; border: 0; background: none; padding: 2px 0; color: #71816e; font-size: 12px; cursor: pointer; }
+.auth-back:disabled, .auth-tabs button:disabled { opacity: .55; cursor: not-allowed; }
+.auth-verification-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; margin-top: 4px; }
+.auth-verification-actions .auth-back:first-child { color: #8a662e; font-weight: 650; }
+.auth-field .auth-code-input:not(:placeholder-shown) { font-family: "DM Mono", monospace; font-size: 17px; letter-spacing: .16em; }
 .auth-message { margin: 0; border-radius: 7px; padding: 11px 12px; font-size: 12px; line-height: 1.55; }
 .auth-message-error { border: 1px solid #f0d1c8; background: #fff5f1; color: #a5503d; }
 .auth-message-success { border: 1px solid #d9e8cc; background: #f1f8e9; color: #526e42; }
