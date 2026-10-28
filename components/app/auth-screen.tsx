@@ -47,7 +47,7 @@ const words = {
     saving: "One moment…",
     back: "Back to sign in",
     verifyTitle: "Check your email.",
-    verifyBody: "Enter the confirmation code we sent you. If the email contains a link instead, open it in this browser.",
+    verifyBody: "Enter the confirmation code we sent you. If an older email has a link, open it in this browser, then sign in.",
     verificationCode: "Confirmation code",
     codePlaceholder: "Enter the code from your email",
     verifyButton: "Verify email",
@@ -109,7 +109,7 @@ const words = {
     saving: "Sug hal daqiiqo…",
     back: "Ku noqo gelitaanka",
     verifyTitle: "Eeg email-kaaga.",
-    verifyBody: "Geli koodhka xaqiijinta ee aan kuu dirnay. Haddii email-ku xiriir leeyahay, ka fur browser-kan.",
+    verifyBody: "Geli koodhka xaqiijinta ee aan kuu dirnay. Haddii email hore xiriir leeyahay, ka fur browser-kan, kadibna soo gal.",
     verificationCode: "Koodhka xaqiijinta",
     codePlaceholder: "Geli koodhka email-kaaga ku jira",
     verifyButton: "Xaqiiji email-ka",
@@ -250,9 +250,20 @@ export function AuthScreen({ vercelAvailable }: { readonly vercelAvailable: bool
   const [clock, setClock] = useState(0);
 
   useEffect(() => {
-    setBadLink(new URLSearchParams(window.location.search).get("error") === "auth_link");
+    const params = new URLSearchParams(window.location.search);
+    setBadLink(params.get("error") === "auth_link");
     const saved = readPendingSignup();
-    if (saved) {
+    if (params.get("confirmed") === "1") {
+      if (saved) setEmail(saved.email);
+      forgetSignup();
+      setMode("signin");
+      setNotice("verified");
+      // Consume this one-time notice so a later signup in the same tab can be
+      // restored to its own verification step after a refresh.
+      params.delete("confirmed");
+      const remaining = params.toString();
+      window.history.replaceState(window.history.state, "", `${window.location.pathname}${remaining ? `?${remaining}` : ""}${window.location.hash}`);
+    } else if (saved) {
       setEmail(saved.email);
       setResendAt(saved.resendAt);
       setClock(Date.now());
