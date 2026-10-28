@@ -123,7 +123,7 @@ export function ModelBrowser({
 
       {needsKey ? (
         <button
-          className="flex items-center gap-2 rounded-lg border border-brand/35 bg-brand/8 px-3 py-2 text-left text-[12px] text-foreground/90 transition-colors hover:bg-brand/14"
+          className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-brand/35 bg-brand/8 px-3 py-2 text-left text-[12px] text-foreground/90 transition-colors hover:bg-brand/14"
           onClick={() => onConnectRequest?.()}
           type="button"
         >
@@ -173,7 +173,7 @@ export function ModelBrowser({
                     {model.id}
                   </span>
                 </span>
-                <span className="flex shrink-0 items-center gap-1.5 pt-0.5 text-[11px] text-muted-foreground">
+                <span className="flex shrink-0 flex-col items-end gap-0.5 text-[11px] leading-tight text-muted-foreground sm:flex-row sm:items-center sm:gap-1.5 sm:pt-0.5">
                   {formatContext(model.contextWindow) !== "—" ? (
                     <span>{formatContext(model.contextWindow)}</span>
                   ) : null}
@@ -182,8 +182,10 @@ export function ModelBrowser({
                       {price} {t("input")}
                     </span>
                   ) : null}
-                  {active ? <CheckIcon className="size-3.5 text-foreground" /> : null}
                 </span>
+                {active ? (
+                  <CheckIcon className="mt-0.5 size-3.5 shrink-0 text-foreground" />
+                ) : null}
               </button>
             );
           })

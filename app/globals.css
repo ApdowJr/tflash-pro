@@ -257,3 +257,74 @@ textarea {
     animation: none;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * Responsive and touch hardening
+ *
+ * The app is used on a phone as often as on a laptop: these rules keep the
+ * layout from widening, keep long words/code inside their column, and make
+ * hover-only affordances reachable on touch screens.
+ * ------------------------------------------------------------------------- */
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  /* A single wide element (code, table, URL) must never scroll the shell. */
+  overflow-x: clip;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Markdown rendered by Streamdown: keep wide content inside its column. */
+.tf-md {
+  overflow-wrap: anywhere;
+}
+
+.tf-md :where(pre, table, img, video, iframe) {
+  max-width: 100%;
+}
+
+.tf-md :where(pre) {
+  overflow-x: auto;
+}
+
+/* Tables become their own scroll container instead of stretching the bubble. */
+.tf-md :where(table) {
+  display: block;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.tf-md :where(img) {
+  height: auto;
+}
+
+/* iOS zooms the page when a focused field is under 16px. Touch only, so a
+   narrow desktop window keeps the tighter type scale. */
+@media (max-width: 40rem) and (pointer: coarse) {
+  input,
+  textarea,
+  select {
+    font-size: max(16px, 1em);
+  }
+}
+
+/* Touch screens have no hover: show the actions that are hover-only on desktop. */
+@media (hover: none) {
+  .tf-reveal {
+    opacity: 1;
+  }
+}
+
+/* One safe-area token so bottom chrome (composer, sidebar, sheets) stays clear
+   of the home indicator. */
+.tf-safe-bottom {
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+}
+
+.tf-safe-x {
+  padding-left: max(0px, env(safe-area-inset-left));
+  padding-right: max(0px, env(safe-area-inset-right));
+}

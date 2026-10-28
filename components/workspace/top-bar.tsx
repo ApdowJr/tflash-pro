@@ -47,10 +47,10 @@ export function TopBar({
   const connected = isConnected(selection.providerId);
 
   return (
-    <header className="flex h-14 shrink-0 items-center gap-2 px-3 sm:px-4">
+    <header className="tf-safe-x flex h-14 shrink-0 items-center gap-1.5 px-3 sm:gap-2 sm:px-4">
       <button
         aria-label={t("openMenu")}
-        className="-ml-1 flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground lg:hidden"
+        className="-ml-1 flex size-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground sm:size-8 lg:hidden"
         onClick={onOpenSidebar}
         type="button"
       >
@@ -66,7 +66,7 @@ export function TopBar({
       </div>
 
       <button
-        className="group flex h-8 min-w-0 items-center gap-1.5 rounded-full border border-border/80 bg-card/70 pr-2 pl-2.5 text-[12px] transition-colors hover:border-border hover:bg-card"
+        className="group flex h-9 min-w-0 max-w-[62vw] items-center gap-1.5 rounded-full border border-border/80 bg-card/70 pr-2 pl-2.5 text-[12px] transition-colors hover:border-border hover:bg-card sm:h-8 sm:max-w-none"
         onClick={onOpenModels}
         title={t("modelPickerHint")}
         type="button"
@@ -78,7 +78,7 @@ export function TopBar({
             connected ? "bg-emerald-500" : "bg-muted-foreground/40",
           )}
         />
-        <span className="max-w-[7.5rem] truncate font-medium text-foreground sm:max-w-[13rem]">
+        <span className="max-w-[7rem] truncate font-medium text-foreground sm:max-w-[13rem]">
           {selection.modelId}
         </span>
         {provider ? (

@@ -33,6 +33,11 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  // `cover` opts into env(safe-area-inset-*) on iOS so the composer and the
+  // sidebar clear the home indicator instead of sitting under it.
+  viewportFit: "cover",
+  // Keep the layout height in sync with the on-screen keyboard on Android.
+  interactiveWidget: "resizes-content",
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#fdfcfb" },
     { media: "(prefers-color-scheme: dark)", color: "#1c1a18" },
