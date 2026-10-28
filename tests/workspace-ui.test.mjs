@@ -30,6 +30,8 @@ const userEvent = (await import("@testing-library/user-event")).default;
 const { AppSettingsProvider, useAppSettings } = await import("../components/settings/app-settings.tsx");
 const { Sidebar } = await import("../components/workspace/sidebar.tsx");
 const { SettingsDialog } = await import("../components/settings/settings-dialog.tsx");
+const { ConnectionsPanel } = await import("../components/settings/connections-panel.tsx");
+const { INTEGRATIONS } = await import("../lib/integrations/catalog.ts");
 const { ModelBrowser } = await import("../components/settings/model-browser.tsx");
 const { ModelPicker } = await import("../components/settings/model-picker.tsx");
 const { ChatComposer } = await import("../components/chat/chat-composer.tsx");
@@ -47,12 +49,13 @@ afterEach(() => {
   cleanup();
   globalThis.fetch = realFetch;
   window.localStorage.clear();
+  window.history.replaceState({}, "", "/");
 });
 
-function seed({ language = "en", chats = [], chatProofs = {}, connections = {} } = {}) {
+function seed({ language = "en", chats = [], chatProofs = {}, connections = {}, integrationTokens = {} } = {}) {
   window.localStorage.clear();
   window.localStorage.setItem("tflash:language", language);
-  window.localStorage.setItem(storageKey, JSON.stringify({ language, chats, chatProofs, connections }));
+  window.localStorage.setItem(storageKey, JSON.stringify({ language, chats, chatProofs, connections, integrationTokens }));
 }
 
 function app(child, accountKind = "vercel") {
@@ -66,6 +69,7 @@ function fakeFetch(handler = () => undefined) {
     calls.push({ path, options });
     const response = await handler(path, options);
     if (response) return response;
+    if (path === "/api/integrations") return Response.json({ integrations: INTEGRATIONS.map((item) => ({ id: item.id, mode: "none", configured: false, oauthAvailable: item.id !== "github" })) });
     if (path === "/api/providers") {
       return Response.json({ providers: [{ id: "gateway", envConfigured: true }] });
     }
@@ -247,7 +251,7 @@ test("the composer keeps a newer text draft and attachments after an earlier sen
     fireEvent.submit(textarea.closest("form"));
     await waitFor(() => assert.equal(sent?.text, "First draft"));
     assert.equal(sent.files[0].filename, "first.txt");
-    await user.clear(textarea);
+    assert.equal(textarea.value, "", "the submitted text clears while the send is still pending");
     await user.type(textarea, "Second draft");
     await user.upload(upload, new File(["second"], "second.txt", { type: "text/plain" }));
     assert.ok(await screen.findByText("second.txt"));
@@ -340,6 +344,131 @@ test("a failed send keeps the draft available for retry", async () => {
   assert.equal(textarea.value, "Please keep this draft");
 });
 
+
+test("a failed in-flight send does not overwrite a newer draft", async () => {
+  seed();
+  fakeFetch();
+  let rejectSend;
+  let attempted = false;
+  const pending = new Promise((_, reject) => { rejectSend = reject; });
+  const onSubmit = async () => { attempted = true; await pending; };
+  render(app(h(TooltipProvider, null, h(PromptInputProvider, null,
+    h(ChatComposer, { isBusy: false, isResuming: false, onCancel() {}, onSubmit }),
+  ))));
+  const user = userEvent.setup();
+  const textarea = screen.getByPlaceholderText("Ask Tflash anything…");
+  await user.type(textarea, "First draft");
+  fireEvent.submit(textarea.closest("form"));
+  await waitFor(() => assert.equal(attempted, true));
+  assert.equal(textarea.value, "");
+  await user.type(textarea, "New draft");
+  await React.act(async () => { rejectSend(new Error("offline")); try { await pending; } catch {} });
+  assert.equal(textarea.value, "New draft");
+  assert.ok(screen.getByRole("alert").textContent.includes("First draft"));
+  await user.click(screen.getByRole("button", { name: "Restore draft" }));
+  assert.equal(textarea.value, "First draft\n\nNew draft");
+  assert.equal(screen.queryByRole("alert"), null);
+});
+
+test("Connections offers direct consent links without asking users for tokens", async () => {
+  seed();
+  window.history.replaceState({}, "", "/s/current-chat");
+  fakeFetch();
+  render(app(h(ConnectionsPanel)));
+  const user = userEvent.setup();
+  const linear = await screen.findByRole("link", { name: "Connect Linear" });
+  const url = new URL(linear.href);
+  assert.equal(url.origin, window.location.origin);
+  assert.equal(url.pathname, "/api/integrations/oauth/start");
+  assert.equal(url.searchParams.get("id"), "linear");
+  assert.equal(url.searchParams.get("returnTo"), "/s/current-chat");
+  assert.ok(screen.getByRole("link", { name: "Connect Neon" }));
+  assert.ok(screen.getByRole("link", { name: "Connect Stripe" }));
+  assert.ok(screen.getByRole("link", { name: "Connect Resend" }));
+  assert.equal(screen.queryByRole("link", { name: "Connect GitHub" }), null);
+  await user.click(screen.getByRole("button", { name: /GitHub/ }));
+  assert.ok(screen.getByText(/administrator needs to enable authorization/));
+  assert.equal(document.querySelector('input[type="password"]'), null);
+  assert.equal(screen.queryByPlaceholderText(/token/), null);
+  assert.equal(screen.queryByText("Environment variables"), null);
+});
+
+test("OAuth return marks only the approved connection as connected and supports disconnect", async () => {
+  seed({ language: "so" });
+  window.history.replaceState({}, "", "/s/current-chat?integration=linear&connected=1");
+  fakeFetch((path) => path === "/api/integrations/oauth/result" ? Response.json({
+    connected: true, integrationId: "linear", token: "v1.sealed-grant", expiresAt: Date.now() + 86400000,
+    tokenExpiresAt: Date.now() + 3600000, refreshable: true,
+  }) : undefined);
+  render(app(h(ConnectionsPanel)));
+  assert.ok(await screen.findByRole("status"));
+  const linearRow = screen.getByRole("button", { name: /Linear Ku xiran/ }).closest("div").parentElement;
+  assert.ok(within(linearRow).getByRole("button", { name: "Ka saar" }));
+  assert.equal(within(linearRow).queryByRole("link", { name: "Ku xir Linear" }), null);
+  assert.equal(window.location.pathname, "/s/current-chat");
+  assert.equal(window.location.search, "");
+  const record = JSON.parse(window.localStorage.getItem(storageKey)).integrationTokens.linear;
+  assert.equal(record.source, "oauth");
+  assert.equal(record.token, "v1.sealed-grant");
+  await userEvent.setup().click(within(linearRow).getByRole("button", { name: "Ka saar" }));
+  assert.ok(await screen.findByRole("link", { name: "Ku xir Linear" }));
+});
+
+test("a forged or lost OAuth handoff does not show a connection success", async () => {
+  seed();
+  window.history.replaceState({}, "", "/?integration=linear&connected=1");
+  fakeFetch((path) => path === "/api/integrations/oauth/result" ? Response.json({ connected: false }) : undefined);
+  render(app(h(ConnectionsPanel)));
+  assert.match((await screen.findByRole("alert")).textContent, /Authorization did not finish/);
+  assert.equal(screen.queryByRole("status"), null);
+  assert.ok(await screen.findByRole("link", { name: "Connect Linear" }));
+  assert.equal(JSON.parse(window.localStorage.getItem(storageKey)).integrationTokens.linear, undefined);
+});
+
+test("a denied OAuth flow keeps the service disconnected", async () => {
+  seed();
+  window.history.replaceState({}, "", "/?integration=linear&oauth=denied");
+  fakeFetch();
+  render(app(h(ConnectionsPanel)));
+  assert.match((await screen.findByRole("alert")).textContent, /Authorization was cancelled/);
+  assert.equal(screen.queryByRole("status"), null);
+  assert.ok(await screen.findByRole("link", { name: "Connect Linear" }));
+});
+
+test("an in-flight renewal cannot reconnect a grant after the user disconnects it", async () => {
+  seed({ integrationTokens: { linear: { token: "v1.original", label: "Authorized", connectedAt: Date.now(),
+    tokenExpiresAt: Date.now() + 60000, expiresAt: Date.now() + 86400000, refreshable: true, source: "oauth" } } });
+  let finish;
+  const renewal = new Promise((resolve) => { finish = resolve; });
+  const calls = fakeFetch((path) => path === "/api/integrations/oauth/refresh" ? renewal : undefined);
+  render(app(h(ConnectionsPanel)));
+  await waitFor(() => assert.ok(calls.some((item) => item.path === "/api/integrations/oauth/refresh")));
+  await userEvent.setup().click(screen.getByRole("button", { name: "Disconnect" }));
+  await React.act(async () => {
+    finish(Response.json({ ok: true, token: "v1.renewed", expiresAt: Date.now() + 86400000, tokenExpiresAt: Date.now() + 3600000 }));
+    await renewal;
+  });
+  assert.equal(JSON.parse(window.localStorage.getItem(storageKey)).integrationTokens.linear, undefined);
+  assert.ok(await screen.findByRole("link", { name: "Connect Linear" }));
+});
+
+test("a second identical draft survives completion of an earlier send", async () => {
+  seed();
+  fakeFetch();
+  let finish;
+  const pending = new Promise((resolve) => { finish = resolve; });
+  render(app(h(TooltipProvider, null, h(PromptInputProvider, null,
+    h(ChatComposer, { isBusy: false, isResuming: false, onCancel() {}, onSubmit: async () => { await pending; } }),
+  ))));
+  const user = userEvent.setup();
+  const textarea = screen.getByPlaceholderText("Ask Tflash anything…");
+  await user.type(textarea, "Same words");
+  fireEvent.submit(textarea.closest("form"));
+  assert.equal(textarea.value, "");
+  await user.type(textarea, "Same words");
+  await React.act(async () => { finish(); await pending; });
+  assert.equal(textarea.value, "Same words");
+});
 
 test("the sign-in screen keeps both login choices and bilingual email-link signup", async (t) => {
   t.after(async () => { await browserSupabase().auth.dispose(); });

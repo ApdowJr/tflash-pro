@@ -59,7 +59,7 @@ Deleting a chat removes the Supabase index entry or the local Vercel index and a
 
 ### Vercel sign-in
 
-Configure `VERCEL_APP_CLIENT_ID`, `VERCEL_APP_CLIENT_SECRET`, and a stable, random `BETTER_AUTH_SECRET`. Register each intended callback, e.g. `https://your-domain.example/api/auth/callback/vercel`, in the Vercel OAuth app. These credentials are distinct from the optional Vercel *integration* OAuth credentials. The login button is disabled if the Vercel login credentials are missing.
+Configure `VERCEL_APP_CLIENT_ID`, `VERCEL_APP_CLIENT_SECRET`, and a stable, random `BETTER_AUTH_SECRET`. Register each intended callback, e.g. `https://your-domain.example/api/auth/callback/vercel`, in the Vercel OAuth app. These credentials are distinct from MCP connection authorization. The login button is disabled if the Vercel login credentials are missing.
 
 Production Better Auth trusts only exact hosts from `APP_URL`, `BETTER_AUTH_URL`, `ALLOWED_HOSTS` (comma-separated), and Vercel's exposed deployment, branch, and production hosts. Add custom aliases explicitly when the platform does not expose them; wildcard hosts are not accepted in production. Local development also accepts localhost and the development preview domain.
 
@@ -67,7 +67,7 @@ Production Better Auth trusts only exact hosts from `APP_URL`, `BETTER_AUTH_URL`
 
 Set `APP_URL` to the public HTTPS origin. Next calls Eve through `TFLASH_INTERNAL_ORIGIN`, Vercel's deployment URL, or `APP_URL`, in that order. The internal origin must be trusted HTTPS in production and route `/eve/` to this app; it is never chosen from an incoming Host header. On deployments protected by Vercel Authentication, enable [Protection Bypass for Automation](https://vercel.com/docs/deployment-protection/methods-to-bypass-deployment-protection/protection-bypass-automation) and expose `VERCEL_AUTOMATION_BYPASS_SECRET` to the server. It is never forwarded from the client or sent to the browser. Redeploy after changing it.
 
-Integration OAuth has a separate exact-origin allowlist: `APP_URL`, platform-provided Vercel hosts, and `OAUTH_ALLOWED_ORIGINS`. Register each integration app's exact `https://host/api/integrations/oauth/callback` URL. See [docs/integrations.md](docs/integrations.md) for credentials, precedence, and approvals.
+Integration OAuth has a separate exact-origin allowlist: `APP_URL`, platform-provided Vercel hosts, and `OAUTH_ALLOWED_ORIGINS`. MCP clients register the exact callback automatically; GitHub requires an operator-registered OAuth app. Vendor client/callback approval may still be required. See [docs/integrations.md](docs/integrations.md) for credentials, precedence, and approvals.
 
 ## Model providers
 

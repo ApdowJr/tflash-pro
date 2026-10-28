@@ -15,7 +15,7 @@
  * Server-only: reads `process.env` for client credentials.
  */
 import { sealJson, openJson } from "@/lib/secrets";
-import { OAUTH_STATE_TTL_MS, type OAuthEnvelope } from "./wire";
+import { OAUTH_STATE_TTL_MS, type OAuthEnvelope, type OAuthClientRegistration } from "./wire";
 
 export type OAuthProvider = {
   /** Where the user approves access. */
@@ -23,17 +23,20 @@ export type OAuthProvider = {
   /** Where the code is exchanged. */
   readonly tokenUrl: string;
   readonly setupUrl: string;
-  readonly clientIdEnv: string;
+  readonly clientIdEnv?: string;
+  /** Pinned vendor registration endpoint; never taken from a user URL. */
+  readonly registrationUrl?: string;
+  readonly resource?: string;
   /** Omitted for public clients that rely on PKCE alone. */
   readonly clientSecretEnv?: string;
   readonly scopes: readonly string[];
-  /** Join character for `scope`. Linear wants commas, everyone else spaces. */
+  /** Join character for `scope` (defaults to a space). */
   readonly scopeSeparator?: string;
   /** `S256` adds a code_challenge/code_verifier pair. */
   readonly pkce: boolean;
   /** How client credentials reach the token endpoint. */
   readonly tokenAuth: "basic" | "body" | "none";
-  /** Notion's token endpoint takes JSON, everyone else form encoding. */
+  /** Legacy REST OAuth apps may use JSON; MCP token endpoints use form encoding. */
   readonly tokenFormat?: "form" | "json";
   readonly authorizeParams?: Readonly<Record<string, string>>;
   readonly tokenHeaders?: Readonly<Record<string, string>>;
@@ -43,12 +46,23 @@ export type OAuthProvider = {
   readonly assumedTokenTtlMs?: number;
 };
 
-const DAY = 24 * 60 * 60 * 1000;
+/** MCP grants must come from the MCP authorization server, not an unrelated REST app. */
+function mcpProvider(origin: string, input: Partial<OAuthProvider> = {}): OAuthProvider {
+  return {
+    authorizeUrl: `${origin}/authorize`,
+    tokenUrl: `${origin}/token`,
+    registrationUrl: `${origin}/register`,
+    setupUrl: origin,
+    scopes: [],
+    pkce: true,
+    tokenAuth: "none",
+    refreshable: true,
+    ...input,
+  };
+}
 
-/**
- * Seven providers take a real OAuth grant. Neon, Stripe and Resend authenticate
- * with a scoped API key only, so those keep the "use a token" path.
- */
+// Pinned to official vendor metadata, checked 2026-10-28. No arbitrary discovery
+// URLs or redirects are accepted, especially on credential-bearing requests.
 export const OAUTH_PROVIDERS: Readonly<Record<string, OAuthProvider>> = {
   github: {
     authorizeUrl: "https://github.com/login/oauth/authorize",
@@ -62,79 +76,46 @@ export const OAUTH_PROVIDERS: Readonly<Record<string, OAuthProvider>> = {
     tokenHeaders: { accept: "application/json" },
     refreshable: false,
   },
-  linear: {
-    authorizeUrl: "https://linear.app/oauth/authorize",
-    tokenUrl: "https://api.linear.app/oauth/token",
-    setupUrl: "https://linear.app/settings/api/applications/new",
-    clientIdEnv: "LINEAR_OAUTH_CLIENT_ID",
-    clientSecretEnv: "LINEAR_OAUTH_CLIENT_SECRET",
-    scopes: ["read", "write"],
-    scopeSeparator: ",",
-    authorizeParams: { actor: "user" },
-    pkce: true,
-    tokenAuth: "body",
-    refreshable: true,
-    assumedTokenTtlMs: DAY,
-  },
-  notion: {
-    authorizeUrl: "https://api.notion.com/v1/oauth/authorize",
-    tokenUrl: "https://api.notion.com/v1/oauth/token",
-    setupUrl: "https://www.notion.so/my-integrations",
-    clientIdEnv: "NOTION_OAUTH_CLIENT_ID",
-    clientSecretEnv: "NOTION_OAUTH_CLIENT_SECRET",
-    scopes: [],
-    authorizeParams: { owner: "user" },
-    pkce: false,
+  linear: mcpProvider("https://mcp.linear.app", {
+    scopes: ["read", "write"], resource: "https://mcp.linear.app/mcp",
+  }),
+  notion: mcpProvider("https://mcp.notion.com", {
+    scopes: ["default"], resource: "https://mcp.notion.com/mcp",
+  }),
+  sentry: mcpProvider("https://mcp.sentry.dev/oauth", {
+    scopes: ["org:read", "project:write", "team:write", "event:write", "alerts:write"],
+    resource: "https://mcp.sentry.dev/mcp",
+  }),
+  supabase: mcpProvider("https://api.supabase.com/v1/oauth", {
+    registrationUrl: "https://api.supabase.com/platform/oauth/apps/register",
     tokenAuth: "basic",
-    tokenFormat: "json",
-    refreshable: false,
-  },
-  sentry: {
-    authorizeUrl: "https://sentry.io/oauth/authorize/",
-    tokenUrl: "https://sentry.io/oauth/token/",
-    setupUrl: "https://sentry.io/settings/account/api/applications/",
-    clientIdEnv: "SENTRY_OAUTH_CLIENT_ID",
-    clientSecretEnv: "SENTRY_OAUTH_CLIENT_SECRET",
-    scopes: ["org:read", "project:read", "event:read", "event:write", "member:read"],
-    pkce: false,
-    tokenAuth: "body",
-    refreshable: false,
-  },
-  vercel: {
+    scopes: ["organizations:read", "projects:read", "projects:write", "database:write", "database:read", "analytics:read", "secrets:read", "edge_functions:read", "edge_functions:write", "environment:read", "environment:write", "storage:read", "storage:write"],
+    resource: "https://mcp.supabase.com/mcp",
+  }),
+  neon: mcpProvider("https://mcp.neon.tech/api", {
+    scopes: ["read", "write"], resource: "https://mcp.neon.tech/mcp",
+  }),
+  vercel: mcpProvider("https://vercel.com", {
     authorizeUrl: "https://vercel.com/oauth/authorize",
-    tokenUrl: "https://api.vercel.com/v2/oauth/access_token",
-    setupUrl: "https://vercel.com/dashboard/integrations/console",
-    clientIdEnv: "VERCEL_INTEGRATION_CLIENT_ID",
-    clientSecretEnv: "VERCEL_INTEGRATION_CLIENT_SECRET",
-    scopes: [],
-    pkce: false,
-    tokenAuth: "body",
-    refreshable: false,
-  },
-  supabase: {
-    authorizeUrl: "https://api.supabase.com/v1/oauth/authorize",
-    tokenUrl: "https://api.supabase.com/v1/oauth/token",
-    setupUrl: "https://supabase.com/docs/guides/integrations/build-a-supabase-oauth-integration",
-    clientIdEnv: "SUPABASE_OAUTH_CLIENT_ID",
-    clientSecretEnv: "SUPABASE_OAUTH_CLIENT_SECRET",
-    scopes: ["all"],
-    pkce: true,
-    tokenAuth: "basic",
-    refreshable: true,
-    assumedTokenTtlMs: DAY,
-  },
-  posthog: {
-    authorizeUrl: `${process.env.POSTHOG_OAUTH_BASE_URL ?? "https://us.posthog.com"}/oauth/authorize`,
-    tokenUrl: `${process.env.POSTHOG_OAUTH_BASE_URL ?? "https://us.posthog.com"}/oauth/token`,
-    setupUrl: "https://us.posthog.com/settings/user-oauth-applications",
-    clientIdEnv: "POSTHOG_OAUTH_CLIENT_ID",
-    // PostHog OAuth apps are public clients: PKCE, no secret.
-    scopes: [],
-    pkce: true,
-    tokenAuth: "none",
-    refreshable: true,
-    assumedTokenTtlMs: 60 * 60 * 1000,
-  },
+    tokenUrl: "https://vercel.com/api/login/oauth/token",
+    registrationUrl: "https://vercel.com/api/login/oauth/register",
+    scopes: ["openid", "offline_access"], resource: "https://mcp.vercel.com/",
+  }),
+  posthog: mcpProvider("https://oauth.posthog.com/oauth", {
+    authorizeUrl: "https://oauth.posthog.com/oauth/authorize/",
+    tokenUrl: "https://oauth.posthog.com/oauth/token/",
+    registrationUrl: "https://oauth.posthog.com/oauth/register/",
+    // Bounded product permissions, not identity/admin/billing permissions.
+    scopes: ["project:read", "organization:read", "insight:read", "insight:write", "dashboard:read", "dashboard:write", "query:read", "event_definition:read", "person:read", "feature_flag:read", "feature_flag:write", "experiment:read", "experiment:write"],
+    resource: "https://mcp.posthog.com/mcp",
+  }),
+  stripe: mcpProvider("https://access.stripe.com/mcp/oauth2", {
+    scopes: ["mcp"], resource: "https://mcp.stripe.com",
+  }),
+  resend: mcpProvider("https://api.resend.com/oauth", {
+    // Reading deliveries as well as sending requires full_access.
+    scopes: ["full_access"],
+  }),
 };
 
 function envValue(name: string | undefined): string | undefined {
@@ -147,10 +128,11 @@ export function oauthProviderFor(id: string): OAuthProvider | undefined {
   return OAUTH_PROVIDERS[id];
 }
 
-/** True when this deployment has the client credentials for the provider. */
+/** A consent flow is supported, either through registration or configured app credentials. */
 export function oauthConfigured(id: string): boolean {
   const provider = oauthProviderFor(id);
   if (!provider) return false;
+  if (provider.registrationUrl) return true;
   if (!envValue(provider.clientIdEnv)) return false;
   if (provider.clientSecretEnv && !envValue(provider.clientSecretEnv)) return false;
   return true;
@@ -159,6 +141,35 @@ export function oauthConfigured(id: string): boolean {
 export function oauthClientId(id: string): string | undefined {
   const provider = oauthProviderFor(id);
   return envValue(provider?.clientIdEnv);
+}
+
+/** Register only when the user starts a flow; client secrets stay encrypted. */
+export async function registerOAuthClient(integrationId: string, redirectUri: string): Promise<OAuthClientRegistration> {
+  const provider = oauthProviderFor(integrationId);
+  if (!provider?.registrationUrl) throw new Error("Automatic registration unavailable.");
+  const method = provider.tokenAuth === "basic" ? "client_secret_basic" :
+    provider.tokenAuth === "body" ? "client_secret_post" : "none";
+  const response = await fetch(provider.registrationUrl, {
+    method: "POST", redirect: "error", cache: "no-store", signal: AbortSignal.timeout(10_000),
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify({
+      client_name: "Tflash",
+      client_uri: new URL(redirectUri).origin,
+      redirect_uris: [redirectUri],
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      token_endpoint_auth_method: method,
+      ...(provider.scopes.length ? { scope: provider.scopes.join(" ") } : {}),
+    }),
+  });
+  if (!response.ok) throw new Error("Registration refused.");
+  const raw = await response.json() as Record<string, unknown>;
+  if (typeof raw.client_id !== "string" || !raw.client_id || raw.client_id.length > 512 ||
+    (raw.token_endpoint_auth_method !== undefined && raw.token_endpoint_auth_method !== method) ||
+    (method !== "none" && (typeof raw.client_secret !== "string" || !raw.client_secret || raw.client_secret.length > 1024))) {
+    throw new Error("Invalid registration response.");
+  }
+  return { clientId: raw.client_id, ...(method !== "none" ? { clientSecret: raw.client_secret as string } : {}) };
 }
 
 function base64Url(bytes: Uint8Array): string {
@@ -183,6 +194,8 @@ export async function sealOAuthState(input: {
   readonly flowId: string;
   readonly nonce: string;
   readonly verifier?: string;
+  readonly client?: OAuthClientRegistration;
+  readonly returnTo?: string;
 }): Promise<string> {
   const { token } = await sealJson(
     {
@@ -191,6 +204,8 @@ export async function sealOAuthState(input: {
       flowId: input.flowId,
       nonce: input.nonce,
       ...(input.verifier ? { verifier: input.verifier } : {}),
+      ...(input.client ? { client: input.client } : {}),
+      ...(input.returnTo ? { returnTo: input.returnTo } : {}),
     },
     OAUTH_STATE_TTL_MS,
   );
@@ -212,10 +227,11 @@ export async function buildAuthorizeUrl(input: {
   readonly redirectUri: string;
   readonly state: string;
   readonly verifier?: string;
+  readonly client?: OAuthClientRegistration;
 }): Promise<string> {
   const provider = oauthProviderFor(input.integrationId);
   if (!provider) throw new Error(`No OAuth provider for ${input.integrationId}.`);
-  const clientId = oauthClientId(input.integrationId);
+  const clientId = input.client?.clientId ?? oauthClientId(input.integrationId);
   if (!clientId) throw new Error(`${provider.clientIdEnv} is not set.`);
 
   const url = new URL(provider.authorizeUrl);
@@ -223,6 +239,7 @@ export async function buildAuthorizeUrl(input: {
   url.searchParams.set("redirect_uri", input.redirectUri);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("state", input.state);
+  if (provider.resource) url.searchParams.set("resource", provider.resource);
   if (provider.scopes.length > 0) {
     url.searchParams.set("scope", provider.scopes.join(provider.scopeSeparator ?? " "));
   }
@@ -270,7 +287,7 @@ function parseTokens(
   now = Date.now(),
 ): OAuthTokens | null {
   const accessToken = raw.access_token ?? raw.token;
-  if (!accessToken) return null;
+  if (typeof accessToken !== "string" || !accessToken || /\s/.test(accessToken)) return null;
   const expiresIn = Number(raw.expires_in);
   const ttl =
     Number.isFinite(expiresIn) && expiresIn > 0
@@ -350,33 +367,47 @@ export async function exchangeCode(input: {
   readonly code: string;
   readonly redirectUri: string;
   readonly verifier?: string;
+  readonly client?: OAuthClientRegistration;
 }): Promise<{ tokens: OAuthTokens | null; error?: string }> {
   const provider = oauthProviderFor(input.integrationId);
-  const clientId = oauthClientId(input.integrationId);
+  const clientId = input.client?.clientId ?? oauthClientId(input.integrationId);
   if (!provider || !clientId) return { tokens: null, error: "not_configured" };
 
-  const clientSecret = envValue(provider.clientSecretEnv);
+  const clientSecret = input.client?.clientSecret ?? envValue(provider.clientSecretEnv);
   const body: Record<string, string> = {
     grant_type: "authorization_code",
     code: input.code,
     redirect_uri: input.redirectUri,
   };
+  if (provider.pkce && !input.verifier) return { tokens: null, error: "missing_verifier" };
   if (provider.pkce && input.verifier) body.code_verifier = input.verifier;
+  if (provider.resource) body.resource = provider.resource;
   return postTokenRequest(provider, clientId, clientSecret, body);
 }
 
 export async function refreshOAuthToken(input: {
   readonly integrationId: string;
   readonly refreshToken: string;
+  readonly client?: OAuthClientRegistration;
 }): Promise<{ tokens: OAuthTokens | null; error?: string }> {
-  const provider = oauthProviderFor(input.integrationId);
-  const clientId = oauthClientId(input.integrationId);
+  const current = oauthProviderFor(input.integrationId);
+  // Preserve renewal for grants issued by the earlier REST OAuth app flows.
+  // New MCP grants always carry their registered client in the sealed record.
+  const legacy: Readonly<Record<string, Partial<OAuthProvider>>> = {
+    linear: { tokenUrl: "https://api.linear.app/oauth/token", clientIdEnv: "LINEAR_OAUTH_CLIENT_ID", clientSecretEnv: "LINEAR_OAUTH_CLIENT_SECRET", tokenAuth: "body", resource: undefined },
+    supabase: { clientIdEnv: "SUPABASE_OAUTH_CLIENT_ID", clientSecretEnv: "SUPABASE_OAUTH_CLIENT_SECRET", tokenAuth: "basic", resource: undefined },
+    posthog: { tokenUrl: `${process.env.POSTHOG_OAUTH_BASE_URL ?? "https://us.posthog.com"}/oauth/token`, clientIdEnv: "POSTHOG_OAUTH_CLIENT_ID", resource: undefined },
+  };
+  const provider = current && !input.client && legacy[input.integrationId]
+    ? { ...current, ...legacy[input.integrationId] } : current;
+  const clientId = input.client?.clientId ?? envValue(provider?.clientIdEnv);
   if (!provider || !clientId) return { tokens: null, error: "not_configured" };
   if (!provider.refreshable) return { tokens: null, error: "not_refreshable" };
 
-  const clientSecret = envValue(provider.clientSecretEnv);
+  const clientSecret = input.client?.clientSecret ?? envValue(provider.clientSecretEnv);
   return postTokenRequest(provider, clientId, clientSecret, {
     grant_type: "refresh_token",
     refresh_token: input.refreshToken,
+    ...(provider.resource ? { resource: provider.resource } : {}),
   });
 }

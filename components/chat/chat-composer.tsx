@@ -33,31 +33,55 @@ export function ChatComposer({
   const controller = usePromptInputController();
 
   return (
-    <PromptInput
-      className="tflash-composer overflow-visible rounded-[1.35rem] border-border bg-card dark:bg-card focus-within:border-foreground/25! focus-within:ring-1 focus-within:ring-foreground/10"
-      onSubmit={onSubmit}
-    >
-      <ComposerAttachments />
-      <PromptInputTextarea
-        className="min-h-[3.75rem] px-4 pt-3.5 pb-0 text-[15px] leading-relaxed placeholder:text-muted-foreground/70 md:text-[15px]"
-        disabled={isResuming}
-        placeholder={t("placeholder")}
-      />
-      <PromptInputFooter className="flex-wrap border-t-0 px-2.5 pt-1.5 pb-2.5 pr-14">
-        <PromptInputTools className="gap-1">
-          <ComposerAttachButton />
-        </PromptInputTools>
-        <span className="hidden pr-1 text-[11px] text-muted-foreground/60 md:inline">
-          {t("enterToSend")}
-        </span>
-      </PromptInputFooter>
-      <ComposerAction
-        hasInputText={controller.textInput.value.trim().length > 0}
-        isBusy={isBusy}
-        isResuming={isResuming}
-        onCancel={onCancel}
-      />
-    </PromptInput>
+    <>
+      {controller.textInput.failedDrafts.map((draft) => (
+        <div className="mb-2 flex items-start gap-2 rounded-lg border border-destructive/30 px-3 py-2 text-xs" key={draft.id} role="alert">
+          <div className="min-w-0 flex-1">
+            <p className="font-medium text-destructive">{t("draftNotSent")}</p>
+            <p className="mt-1 line-clamp-2 break-words text-muted-foreground">{draft.text}</p>
+          </div>
+          <button
+            className="shrink-0 font-medium underline underline-offset-2"
+            onClick={() => {
+              const current = controller.textInput.value;
+              controller.textInput.setInput(current ? `${draft.text}\n\n${current}` : draft.text);
+              controller.textInput.discardFailed(draft.id);
+            }}
+            type="button"
+          >
+            {t("restoreDraft")}
+          </button>
+          <button aria-label={t("dismiss")} onClick={() => controller.textInput.discardFailed(draft.id)} type="button">
+            <XIcon className="size-3.5" />
+          </button>
+        </div>
+      ))}
+      <PromptInput
+        className="tflash-composer overflow-visible rounded-[1.35rem] border-border bg-card dark:bg-card focus-within:border-foreground/25! focus-within:ring-1 focus-within:ring-foreground/10"
+        onSubmit={onSubmit}
+      >
+        <ComposerAttachments />
+        <PromptInputTextarea
+          className="min-h-[3.75rem] px-4 pt-3.5 pb-0 text-[15px] leading-relaxed placeholder:text-muted-foreground/70 md:text-[15px]"
+          disabled={isResuming}
+          placeholder={t("placeholder")}
+        />
+        <PromptInputFooter className="flex-wrap border-t-0 px-2.5 pt-1.5 pb-2.5 pr-14">
+          <PromptInputTools className="gap-1">
+            <ComposerAttachButton />
+          </PromptInputTools>
+          <span className="hidden pr-1 text-[11px] text-muted-foreground/60 md:inline">
+            {t("enterToSend")}
+          </span>
+        </PromptInputFooter>
+        <ComposerAction
+          hasInputText={controller.textInput.value.trim().length > 0}
+          isBusy={isBusy}
+          isResuming={isResuming}
+          onCancel={onCancel}
+        />
+      </PromptInput>
+    </>
   );
 }
 

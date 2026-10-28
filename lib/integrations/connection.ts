@@ -6,7 +6,7 @@
  *
  * Auth precedence for every integration, resolved on each call:
  *
- *   1. A token the developer pasted in Settings → Connections. It travels as a
+ *   1. The current account’s OAuth grant or legacy token. It travels as a
  *      sealed envelope in the session attributes, is opened here only, and is
  *      never logged or sent to the model.
  *   2. `CONNECT_<ID>_CONNECTOR` — explicit Vercel Connect connector UID
@@ -130,7 +130,7 @@ type AuthResolverContext = {
 /**
  * Per-caller credential, resolved on every tool call:
  *
- *   1. a token the developer pasted in Settings → Connections (sealed in their
+ *   1. the account’s OAuth grant or legacy token (sealed in their
  *      browser, opened here, never logged) — user-scoped;
  *   2. otherwise the deployment's own Connect connector or static token.
  */
@@ -152,7 +152,7 @@ function authResolverFor(integration: IntegrationInfo): ConnectionAuthDefinition
       credentialOwner: "user",
       getToken: async () => {
         throw new Error(
-          `${integration.name} is not connected. Open Settings → Connections and add a token, ` +
+          `${integration.name} is not connected. Open Settings → Connections and approve access, ` +
             `or configure ${integration.connectorEnvKey} on the server.`,
         );
       },

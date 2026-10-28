@@ -19,6 +19,12 @@ export const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 /** The handoff cookie only needs to survive one redirect. */
 export const OAUTH_HANDOFF_TTL_MS = 5 * 60 * 1000;
 
+/** Dynamically registered OAuth credentials, only stored inside sealed envelopes. */
+export type OAuthClientRegistration = {
+  readonly clientId: string;
+  readonly clientSecret?: string;
+};
+
 /** What a sealed `state` parameter carries between authorize and callback. */
 export type OAuthEnvelope = {
   readonly v: 1;
@@ -28,4 +34,6 @@ export type OAuthEnvelope = {
   readonly flowId: string;
   readonly nonce: string;
   readonly verifier?: string;
+  readonly client?: OAuthClientRegistration;
+  readonly returnTo?: string;
 };

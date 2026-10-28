@@ -103,8 +103,8 @@ export const INTEGRATIONS: readonly IntegrationInfo[] = [
     probe: { url: "https://api.github.com/user" },
     featured: true,
     note: {
-      en: "The hosted GitHub MCP server wants either OAuth through Vercel Connect or a personal access token.",
-      so: "Server-ka MCP ee GitHub wuxuu rabaa OAuth Vercel Connect ama personal access token.",
+      en: "The administrator must configure a GitHub OAuth app before users can authorize access.",
+      so: "Maamuluhu waa inuu diyaariyaa GitHub OAuth app ka hor inta isticmaaluhu oggolaan gelitaanka.",
     },
   },
   {
@@ -158,8 +158,8 @@ export const INTEGRATIONS: readonly IntegrationInfo[] = [
     access: "write",
     oauth: {
       access: {
-        en: "Pages and databases you pick in Notion",
-        so: "Bogagga iyo databases-ka aad Notion ka dooratay",
+        en: "Read and update content available to your Notion account",
+        so: "Akhrinta iyo beddelidda xogta akoonkaaga Notion heli karo",
       },
     },
     probe: {
@@ -184,11 +184,11 @@ export const INTEGRATIONS: readonly IntegrationInfo[] = [
     tokenEnvKeys: ["SENTRY_ACCESS_TOKEN"],
     connectorEnvKey: "CONNECT_SENTRY_CONNECTOR",
     appScopeEnvKey: "CONNECT_SENTRY_APP_SCOPED",
-    access: "read",
+    access: "write",
     oauth: {
       access: {
-        en: "Organizations, projects, issues and events you can already see",
-        so: "Organizations, projects, issues iyo events aad horey u arki kurtay",
+        en: "Sentry organizations, projects, issues and alerts, including triage changes",
+        so: "Organizations, projects, issues iyo alerts Sentry, oo ay ku jiraan isbeddellada xalinta",
       },
     },
     probe: { url: "https://sentry.io/api/0/organizations/" },
@@ -237,6 +237,7 @@ export const INTEGRATIONS: readonly IntegrationInfo[] = [
     connectorEnvKey: "CONNECT_NEON_CONNECTOR",
     appScopeEnvKey: "CONNECT_NEON_APP_SCOPED",
     access: "destructive",
+    oauth: { access: { en: "Projects, database branches and SQL, including changes you approve", so: "Projects, laamaha database-ka iyo SQL, oo ay ku jiraan isbeddellada aad ansixiso" } },
     probe: { url: "https://console.neon.tech/api/v2/projects" },
   },
   {
@@ -307,10 +308,11 @@ export const INTEGRATIONS: readonly IntegrationInfo[] = [
     connectorEnvKey: "CONNECT_STRIPE_CONNECTOR",
     appScopeEnvKey: "CONNECT_STRIPE_APP_SCOPED",
     access: "destructive",
+    oauth: { access: { en: "The Stripe accounts and permissions you select on the consent screen", so: "Akoonnada Stripe iyo fasaxyada aad ka doorato bogga oggolaanshaha" } },
     probe: { url: "https://api.stripe.com/v1/balance" },
     note: {
-      en: "Use a restricted key in development. Every call asks for approval.",
-      so: "Isticmaal fure xaddidan markaad horumarinayso. Wicitaan kastaa wuxuu rabaa ogolaansho.",
+      en: "Select a sandbox account and limited permissions on the Stripe consent screen. Every call asks for approval.",
+      so: "Bogga Stripe ka dooro akoon sandbox ah iyo fasaxyo xaddidan. Wicitaan kastaa wuxuu rabaa oggolaansho.",
     },
   },
   {
@@ -322,13 +324,14 @@ export const INTEGRATIONS: readonly IntegrationInfo[] = [
       so: "Dir email oo eeg deliveries-ka.",
     },
     category: "communication",
-    mcpUrl: "https://mcp.resend.com",
-    docsUrl: "https://resend.com/docs/mcp",
+    mcpUrl: "https://mcp.resend.com/mcp",
+    docsUrl: "https://resend.com/docs/mcp-server",
     connectService: "mcp.resend.com",
     tokenEnvKeys: ["RESEND_API_KEY"],
     connectorEnvKey: "CONNECT_RESEND_CONNECTOR",
     appScopeEnvKey: "CONNECT_RESEND_APP_SCOPED",
     access: "destructive",
+    oauth: { access: { en: "Send email and read deliveries in the Resend team you authorize", so: "Dirista email-ka iyo akhrinta fariimaha kooxda Resend aad oggolaato" } },
     probe: { url: "https://api.resend.com/domains" },
   },
 ];

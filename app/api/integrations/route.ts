@@ -22,7 +22,7 @@ export type IntegrationStatusItem = {
   readonly envKeys: readonly string[];
   /** A project ID is present. This does not verify a Connect installation. */
   readonly connectAvailable: boolean;
-  /** True when this service can be authorized with OAuth *and* the deployment has credentials. */
+  /** A consent flow is supported (automatic MCP registration or a configured OAuth app); not a live vendor check. */
   readonly oauthAvailable: boolean;
   /** Env vars the operator must set to turn OAuth on for this service. */
   readonly oauthEnvKeys?: readonly string[];
@@ -41,7 +41,7 @@ export async function GET(): Promise<Response> {
   const integrations: IntegrationStatusItem[] = INTEGRATIONS.map((integration) => {
     const auth = resolveIntegrationAuth(integration);
     const provider = oauthProviderFor(integration.id);
-    const oauthEnvKeys = provider
+    const oauthEnvKeys = provider?.clientIdEnv
       ? [
           provider.clientIdEnv,
           ...(provider.clientSecretEnv ? [provider.clientSecretEnv] : []),

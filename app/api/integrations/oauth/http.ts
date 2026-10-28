@@ -1,4 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
+import { safeLocalPath } from "@/lib/security/redirect";
 
 /** OAuth callbacks must never use an untrusted Host as their redirect origin. */
 export function appOrigin(request: Request): string {
@@ -32,9 +33,10 @@ export function callbackUrl(request: Request): string {
 }
 
 /** Relative redirects do not inherit a potentially forged Host header. */
-export function backToApp(_request: Request, params: Readonly<Record<string, string>>): Response {
-  const query = new URLSearchParams(params).toString();
-  return new Response(null, { status: 302, headers: { location: `/${query ? `?${query}` : ""}`, "cache-control": "no-store" } });
+export function backToApp(_request: Request, params: Readonly<Record<string, string>>, returnTo?: string): Response {
+  const url = new URL(safeLocalPath(returnTo), "https://local.invalid");
+  for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
+  return new Response(null, { status: 302, headers: { location: `${url.pathname}${url.search}${url.hash}`, "cache-control": "no-store" } });
 }
 
 export function readCookie(request: Request, name: string): string | undefined {
