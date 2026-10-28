@@ -30,8 +30,8 @@ export async function resolveLanguageModel(selection: WireSelection): Promise<Re
   const providerHeaders: Record<string, string> =
     provider.id === "openrouter"
       ? {
-          "HTTP-Referer": process.env.APP_URL ?? "https://ururka.local",
-          "X-Title": "Ururka Agent",
+          "HTTP-Referer": process.env.APP_URL ?? "https://tflash.local",
+          "X-Title": "T Flash",
         }
       : {};
 

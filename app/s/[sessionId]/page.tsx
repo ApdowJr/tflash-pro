@@ -1,4 +1,4 @@
-import { AuthenticatedAgentChat } from "@/app/_components/authenticated-agent-chat";
+import { AuthenticatedAgentChat } from "@/components/chat/authenticated-agent-chat";
 
 export default async function SessionPage({
   params,

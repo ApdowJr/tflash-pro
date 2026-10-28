@@ -2,6 +2,7 @@
 
 import {
   CheckCircle2Icon,
+  Settings2Icon,
   ExternalLinkIcon,
   EyeIcon,
   EyeOffIcon,
@@ -34,7 +35,7 @@ import { LANGUAGES, type Language } from "./i18n";
 import { ModelBrowser } from "./model-browser";
 import { PERSONAS } from "./personas";
 import { ProviderBadge, StatusDot } from "./provider-badge";
-import { useAppSettings, type Theme } from "./settings-provider";
+import { useAppSettings, type Theme } from "./app-settings";
 
 type Tab = "providers" | "models" | "preferences";
 
@@ -158,13 +159,15 @@ export function SettingsDialog({
 
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="flex h-[min(88dvh,780px)] w-full max-w-4xl flex-col gap-0 overflow-hidden p-0">
-        <DialogHeader className="shrink-0 border-b px-5 py-4 sm:px-6">
-          <DialogTitle className="flex items-center gap-2 text-base">
-            <SparklesIcon className="size-4 text-indigo-500" />
+      <DialogContent className="flex h-[min(88dvh,760px)] w-full max-w-4xl flex-col gap-0 overflow-hidden p-0">
+        <DialogHeader className="shrink-0 gap-1 border-b border-border/70 px-5 py-4 sm:px-6">
+          <DialogTitle className="flex items-center gap-2 font-semibold text-[15px] tracking-[-0.01em]">
+            <Settings2Icon className="size-4 text-muted-foreground" />
             {t("settings")}
           </DialogTitle>
-          <DialogDescription className="text-xs">{t("providerHint")}</DialogDescription>
+          <DialogDescription className="text-pretty text-muted-foreground text-xs">
+            {t("providerHint")}
+          </DialogDescription>
         </DialogHeader>
 
         <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
@@ -172,10 +175,10 @@ export function SettingsDialog({
             {tabs.map(({ id, label, icon: Icon }) => (
               <button
                 className={cn(
-                  "flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors",
+                  "flex shrink-0 items-center gap-2 rounded-md px-2.5 py-2 text-left text-[13px] transition-colors",
                   tab === id
-                    ? "bg-muted font-medium text-foreground"
-                    : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                    ? "bg-accent font-medium text-foreground"
+                    : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
                 )}
                 key={id}
                 onClick={() => setTab(id)}
@@ -191,12 +194,12 @@ export function SettingsDialog({
             </div>
           </nav>
 
-          <div className="ururka-scroll min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
+          <div className="tflash-scroll min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
             {tab === "providers" ? (
               <div className="space-y-3">
-                <div className="flex items-start gap-2 rounded-lg border border-indigo-500/25 bg-indigo-500/5 px-3 py-2.5 text-xs text-indigo-700 dark:text-indigo-300">
+                <div className="flex items-start gap-2 rounded-lg border border-border/70 bg-muted/40 px-3 py-2.5 text-muted-foreground text-xs">
                   <SparklesIcon className="mt-0.5 size-3.5 shrink-0" />
-                  <span>{t("openRouterTip")}</span>
+                  <span className="text-pretty">{t("openRouterTip")}</span>
                 </div>
                 <div className="grid gap-3 lg:grid-cols-2">
                   {PROVIDERS.map((provider) => {
@@ -222,8 +225,11 @@ export function SettingsDialog({
                             <span className="flex flex-wrap items-center gap-1.5">
                               <span className="font-medium text-sm">{provider.name}</span>
                               {provider.featured ? (
-                                <Badge className="px-1 py-0 text-[10px]" variant="secondary">
-                                  ★
+                                <Badge
+                                  className="rounded-full border-border/70 px-1.5 py-0 text-[10px] font-medium text-muted-foreground"
+                                  variant="outline"
+                                >
+                                  Popular
                                 </Badge>
                               ) : null}
                             </span>
@@ -451,14 +457,14 @@ export function SettingsDialog({
                         type="button"
                         variant={settings.language === language.id ? "default" : "outline"}
                       >
-                        {language.flag} · {language.label}
+                        {language.label}
                       </Button>
                     ))}
                   </div>
                 </PreferenceRow>
 
                 <div className="space-y-2">
-                  <p className="font-medium text-sm">{t("persona")}</p>
+                  <p className="font-medium text-[13px]">{t("persona")}</p>
                   <div className="grid gap-2 sm:grid-cols-2">
                     {PERSONAS.map((persona) => (
                       <button
@@ -485,7 +491,7 @@ export function SettingsDialog({
                 </div>
 
                 <div className="space-y-2 border-t pt-4">
-                  <p className="font-medium text-sm">{t("shortcuts")}</p>
+                  <p className="font-medium text-[13px]">{t("shortcuts")}</p>
                   <p className="text-muted-foreground text-xs">{t("shortcutHint")}</p>
                   <Button
                     className="h-8 text-xs"
@@ -526,7 +532,7 @@ function PreferenceRow({
 }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-4">
-      <p className="flex items-center gap-2 font-medium text-sm">
+      <p className="flex items-center gap-2 font-medium text-[13px]">
         <Icon className="size-4 text-muted-foreground" />
         {label}
       </p>

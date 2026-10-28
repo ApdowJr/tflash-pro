@@ -38,8 +38,8 @@ function requestHeaders(provider: ProviderInfo, apiKey: string): Record<string, 
   }
   if (provider.kind === "anthropic") headers["anthropic-version"] = "2023-06-01";
   if (provider.id === "openrouter") {
-    headers["HTTP-Referer"] = process.env.APP_URL ?? "https://ururka.local";
-    headers["X-Title"] = "Ururka Agent";
+    headers["HTTP-Referer"] = process.env.APP_URL ?? "https://tflash.local";
+    headers["X-Title"] = "T Flash";
   }
   return { ...headers, ...(provider.modelHeaders ?? {}) };
 }

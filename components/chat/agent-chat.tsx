@@ -2,82 +2,60 @@
 
 import type { UserContent } from "ai";
 import { useEveAgent } from "eve/react";
-import {
-  AlertCircleIcon,
-  BrainIcon,
-  CheckIcon,
-  CopyIcon,
-  PaperclipIcon,
-  SparklesIcon,
-  SquareIcon,
-  WandSparklesIcon,
-} from "lucide-react";
+import { AlertCircleIcon, CheckIcon, CopyIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Conversation,
   ConversationContent,
   ConversationScrollButton,
-  ConversationTopFade,
 } from "@/components/ai-elements/conversation";
 import { Message, MessageContent } from "@/components/ai-elements/message";
 import {
-  PromptInput,
-  PromptInputButton,
   type PromptInputMessage,
-  PromptInputFooter,
   PromptInputProvider,
-  PromptInputSubmit,
-  PromptInputTextarea,
-  PromptInputTools,
-  usePromptInputAttachments,
   usePromptInputController,
 } from "@/components/ai-elements/prompt-input";
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 import { WEB_CHAT_AGENT } from "@/app/eve-agent";
-import { AppHeader } from "@/components/app/app-header";
-import { EmptyState } from "@/components/app/empty-state";
-import { ModelPicker } from "@/components/app/model-picker";
-import { getPersona } from "@/components/app/personas";
-import { ProviderBadge } from "@/components/app/provider-badge";
-import { SettingsDialog } from "@/components/app/settings-dialog";
-import { useAppSettings } from "@/components/app/settings-provider";
-import { getProvider } from "@/lib/providers/catalog";
+import { ChatComposer } from "@/components/chat/chat-composer";
+import { EmptyState } from "@/components/workspace/empty-state";
+import { Sidebar, type Account } from "@/components/workspace/sidebar";
+import { TopBar } from "@/components/workspace/top-bar";
+import { ModelPicker } from "@/components/settings/model-picker";
+import { useAppSettings } from "@/components/settings/app-settings";
+import { SettingsDialog } from "@/components/settings/settings-dialog";
+import { sessionTitle } from "@/lib/chat-history";
 import { AgentMessage } from "./agent-message";
 
-const DEFAULT_AGENT_NAME = "ururka-lps-agent";
-const AGENT_NAME = WEB_CHAT_AGENT ?? DEFAULT_AGENT_NAME;
+const DEFAULT_AGENT_NAME = "t-flash";
 
 export function AgentChat({
+  account,
   sessionId,
   sessionless = false,
 }: {
+  readonly account?: Account;
   readonly sessionId?: string;
   readonly sessionless?: boolean;
 }) {
   return (
     <PromptInputProvider>
-      <ChatSession sessionId={sessionId} sessionless={sessionless} />
+      <ChatSession account={account} sessionId={sessionId} sessionless={sessionless} />
     </PromptInputProvider>
   );
 }
 
 function ChatSession({
+  account,
   sessionId,
   sessionless,
 }: {
+  readonly account?: Account;
   readonly sessionId?: string;
   readonly sessionless: boolean;
 }) {
-  const {
-    t,
-    settings,
-    selection,
-    eveHeaders,
-    turnContext,
-    addChat,
-  } = useAppSettings();
+  const { t, selection, eveHeaders, turnContext, addChat } = useAppSettings();
   const controller = usePromptInputController();
   const [cancellationError, setCancellationError] = useState<string>();
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -85,6 +63,7 @@ function ChatSession({
     "providers",
   );
   const [modelsOpen, setModelsOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const hasSubmittedMessage = useRef(false);
   const pendingTitle = useRef("");
 
@@ -135,6 +114,7 @@ function ChatSession({
   const hasConversationContent = sessionless || !isEmpty || errorMessage !== undefined;
   const showConversationLayout = isResuming || hasConversationContent;
   const activeSessionId = sessionId ?? agent.session?.sessionId;
+  const title = sessionTitle(agent.data.messages, t("newChat"));
   const canRespond = (requestId: string) =>
     !isResuming && agent.data.inputs[requestId]?.status === "open";
   const questionsFor = (callId: string) =>
@@ -156,6 +136,7 @@ function ChatSession({
   }, [sessionId, agent.session?.sessionId, agent.data.messages.length, addChat]);
 
   const startNewChat = () => {
+    setSidebarOpen(false);
     if (sessionId !== undefined) {
       window.location.assign("/");
       return;
@@ -172,6 +153,10 @@ function ChatSession({
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setSidebarOpen(false);
+        return;
+      }
       if (!(event.metaKey || event.ctrlKey)) return;
       if (event.key.toLowerCase() === "k") {
         event.preventDefault();
@@ -188,7 +173,7 @@ function ChatSession({
 
   const exportChat = () => {
     const markdown = [
-      `# ${AGENT_NAME}`,
+      `# ${DEFAULT_AGENT_NAME}`,
       `> ${new Date().toISOString()} · ${selection.providerId}/${selection.modelId}`,
       "",
       ...agent.data.messages.map((message) => {
@@ -197,13 +182,13 @@ function ChatSession({
           .map((part) => (part.type === "text" ? part.text : ""))
           .join("\n\n")
           .trim();
-        return `## ${message.role === "user" ? "You" : "Ururka"}\n\n${content}`;
+        return `## ${message.role === "user" ? "You" : "T Flash"}\n\n${content}`;
       }),
     ].join("\n\n---\n\n");
     const url = URL.createObjectURL(new Blob([markdown], { type: "text/markdown" }));
     const link = document.createElement("a");
     link.href = url;
-    link.download = `ururka-chat-${Date.now()}.md`;
+    link.download = `t-flash-chat-${Date.now()}.md`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -252,100 +237,90 @@ function ChatSession({
     await agent.send(parts, options);
   };
 
-  const composer = (
-    <PromptInput onSubmit={handleSubmit}>
-      <PromptInputTextarea disabled={isResuming} placeholder={t("placeholder")} />
-      <PromptInputFooter className="border-t pr-12">
-        <PromptInputTools>
-          <ComposerModelButton onClick={() => setModelsOpen(true)} />
-          <ComposerPersonaButton onClick={() => openSettings("preferences")} />
-          <ComposerAttachButton />
-        </PromptInputTools>
-        <span className="hidden pr-1 text-[11px] text-muted-foreground/70 md:inline">
-          ⌘K {t("models")}
-        </span>
-      </PromptInputFooter>
-      <ComposerAction
-        hasInputText={controller.textInput.value.trim().length > 0}
-        isBusy={isBusy}
-        isResuming={isResuming}
-        onCancel={requestCancellation}
-      />
-    </PromptInput>
-  );
-
   return (
-    <main className="flex h-dvh flex-col overflow-hidden bg-background text-foreground">
-      <AppHeader
-        canExport={!isEmpty}
-        onExportChat={exportChat}
+    <div className="flex h-dvh overflow-hidden bg-background text-foreground">
+      <Sidebar
+        account={account}
+        activeChatId={activeSessionId}
+        onClose={() => setSidebarOpen(false)}
         onNewChat={startNewChat}
-        onOpenModels={() => setModelsOpen(true)}
         onOpenSettings={() => openSettings("providers")}
+        open={sidebarOpen}
       />
 
-      {showConversationLayout ? (
-        <Conversation
-          className="min-h-0 flex-1"
-          initial={sessionId === undefined ? undefined : false}
-          resize={activeSessionId === undefined ? "smooth" : "instant"}
-          scrollRestorationKey={
-            isEmpty || activeSessionId === undefined
-              ? undefined
-              : `eve:web-chat-scroll:${activeSessionId}`
-          }
-        >
-          <ConversationTopFade className="top-14" />
-          <ConversationContent className="ururka-scroll mx-auto w-full max-w-3xl gap-6 px-4 pt-20 pb-36 sm:px-6">
-            {agent.data.messages.map((message, index) =>
-              showPendingThinking &&
-              isPendingAssistantShell &&
-              message.id === lastMessage.id ? null : (
-                <div className="group/msg relative" key={message.id}>
-                  <AgentMessage
-                    canRespond={canRespond}
-                    isStreaming={
-                      agent.status === "streaming" && index === agent.data.messages.length - 1
-                    }
-                    message={message}
-                    questionsFor={questionsFor}
-                    onInputResponses={(inputResponses) => {
-                      setCancellationError(undefined);
-                      return agent.respond(inputResponses, { clientContext: turnContext() });
-                    }}
-                  />
-                  {message.role === "assistant" ? (
-                    <CopyMessageButton message={message} />
-                  ) : null}
-                </div>
-              ),
-            )}
-            {showPendingThinking ? <PendingThinking /> : null}
-            {errorMessage ? <ErrorMessage message={errorMessage} /> : null}
-          </ConversationContent>
-          <ConversationScrollButton />
-        </Conversation>
-      ) : (
-        <div className="ururka-scroll min-h-0 flex-1 overflow-y-auto">
-          <EmptyState
-            onOpenModels={() => setModelsOpen(true)}
-            onOpenSettings={() => openSettings("providers")}
-          />
-        </div>
-      )}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <TopBar
+          canExport={!isEmpty}
+          onExportChat={exportChat}
+          onNewChat={startNewChat}
+          onOpenModels={() => setModelsOpen(true)}
+          onOpenSettings={() => openSettings("providers")}
+          onOpenSidebar={() => setSidebarOpen(true)}
+          title={showConversationLayout ? title : undefined}
+        />
 
-      <div
-        className={cn(
-          "mx-auto w-full px-4 sm:px-6",
-          showConversationLayout
-            ? "fixed bottom-0 left-1/2 z-20 max-w-3xl -translate-x-1/2 bg-gradient-to-t from-background via-background to-transparent pt-4 pb-6"
-            : "relative z-10 -mt-4 flex max-w-3xl flex-1 flex-col items-center justify-start pb-6",
+        {showConversationLayout ? (
+          <Conversation
+            className="min-h-0 flex-1"
+            initial={sessionId === undefined ? undefined : false}
+            resize={activeSessionId === undefined ? "smooth" : "instant"}
+            scrollRestorationKey={
+              isEmpty || activeSessionId === undefined
+                ? undefined
+                : `tflash:chat-scroll:${activeSessionId}`
+            }
+          >
+            <ConversationContent className="tflash-scroll mx-auto w-full max-w-2xl gap-7 px-5 pt-4 pb-8 sm:px-6">
+              {agent.data.messages.map((message, index) =>
+                showPendingThinking &&
+                isPendingAssistantShell &&
+                message.id === lastMessage.id ? null : (
+                  <div className="group/msg relative" key={message.id}>
+                    <AgentMessage
+                      canRespond={canRespond}
+                      isStreaming={
+                        agent.status === "streaming" && index === agent.data.messages.length - 1
+                      }
+                      message={message}
+                      onInputResponses={(inputResponses) => {
+                        setCancellationError(undefined);
+                        return agent.respond(inputResponses, { clientContext: turnContext() });
+                      }}
+                      questionsFor={questionsFor}
+                    />
+                    {message.role === "assistant" ? (
+                      <CopyMessageButton message={message} />
+                    ) : null}
+                  </div>
+                ),
+              )}
+              {isResuming && agent.data.messages.length === 0 ? <ResumingState /> : null}
+              {showPendingThinking ? <PendingThinking /> : null}
+              {errorMessage ? <ErrorMessage message={errorMessage} /> : null}
+            </ConversationContent>
+            <ConversationScrollButton />
+          </Conversation>
+        ) : (
+          <div className="tflash-scroll min-h-0 flex-1 overflow-y-auto">
+            <EmptyState onOpenSettings={() => openSettings("providers")} />
+          </div>
         )}
-      >
-        <div className="w-full">{composer}</div>
-        <p className="mt-2 text-center text-[10px] text-muted-foreground/70">
-          {t("poweredBy")} · {settings.language === "so" ? "Soomaali" : "English"}
-        </p>
+
+        <div className="shrink-0 px-4 pt-1 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
+          <div className="mx-auto w-full max-w-2xl">
+            <ChatComposer
+              isBusy={isBusy}
+              isResuming={isResuming}
+              onCancel={requestCancellation}
+              onOpenModels={() => setModelsOpen(true)}
+              onOpenPersona={() => openSettings("preferences")}
+              onSubmit={handleSubmit}
+            />
+            <p className="mt-2 text-center text-[10.5px] text-muted-foreground/55">
+              {t("disclaimer")}
+            </p>
+          </div>
+        </div>
       </div>
 
       <ModelPicker
@@ -360,62 +335,15 @@ function ChatSession({
         onOpenChange={setSettingsOpen}
         open={settingsOpen}
       />
-    </main>
+    </div>
   );
 }
 
-function ComposerModelButton({ onClick }: { readonly onClick: () => void }) {
-  const { selection, t } = useAppSettings();
-  const provider = getProvider(selection.providerId);
-  return (
-    <PromptInputButton
-      className="h-7 max-w-[13rem] gap-1.5 px-2 text-[11px]"
-      onClick={onClick}
-      size="sm"
-      tooltip={t("chooseModel")}
-      type="button"
-    >
-      {provider ? <ProviderBadge provider={provider} size="sm" /> : <SparklesIcon className="size-3" />}
-      <span className="truncate">{selection.modelId}</span>
-    </PromptInputButton>
-  );
-}
-
-function ComposerPersonaButton({ onClick }: { readonly onClick: () => void }) {
-  const { settings, t } = useAppSettings();
-  const persona = getPersona(settings.persona);
-  return (
-    <PromptInputButton
-      className="h-7 gap-1.5 px-2 text-[11px]"
-      onClick={onClick}
-      size="sm"
-      tooltip={t("persona")}
-      type="button"
-    >
-      <WandSparklesIcon className="size-3" />
-      <span className="hidden sm:inline">{persona.label[settings.language]}</span>
-    </PromptInputButton>
-  );
-}
-
-function ComposerAttachButton() {
-  const { t } = useAppSettings();
-  const attachments = usePromptInputAttachments();
-  return (
-    <PromptInputButton
-      aria-label={t("attach")}
-      className="h-7 w-7"
-      onClick={() => attachments.openFileDialog()}
-      size="icon-sm"
-      tooltip={t("attach")}
-      type="button"
-    >
-      <PaperclipIcon className="size-3.5" />
-    </PromptInputButton>
-  );
-}
-
-function CopyMessageButton({ message }: { readonly message: { parts: readonly { type: string; text?: string }[] } }) {
+function CopyMessageButton({
+  message,
+}: {
+  readonly message: { parts: readonly { type: string; text?: string }[] };
+}) {
   const { t } = useAppSettings();
   const [copied, setCopied] = useState(false);
   const hasText = message.parts.some((part) => part.type === "text" && part.text);
@@ -423,7 +351,7 @@ function CopyMessageButton({ message }: { readonly message: { parts: readonly { 
   return (
     <Button
       aria-label={t("copy")}
-      className="absolute -bottom-6 left-0 h-6 px-1.5 text-[10px] opacity-0 transition-opacity group-hover/msg:opacity-100"
+      className="absolute -bottom-6 left-0 h-6 gap-1 px-1.5 text-[10.5px] text-muted-foreground opacity-0 transition-opacity focus-visible:opacity-100 group-hover/msg:opacity-100"
       onClick={() => {
         const text = message.parts
           .filter((part) => part.type === "text")
@@ -444,53 +372,33 @@ function CopyMessageButton({ message }: { readonly message: { parts: readonly { 
   );
 }
 
-function ComposerAction({
-  hasInputText,
-  isBusy,
-  isResuming,
-  onCancel,
-}: {
-  readonly hasInputText: boolean;
-  readonly isBusy: boolean;
-  readonly isResuming: boolean;
-  readonly onCancel: () => void;
-}) {
-  const attachments = usePromptInputAttachments();
-  const canSubmit = hasInputText || attachments.files.length > 0;
-
-  if (!isBusy || canSubmit) {
-    return <PromptInputSubmit disabled={isResuming} />;
-  }
-
-  return (
-    <PromptInputButton
-      aria-label="Stop"
-      className="absolute right-2.5 bottom-2.5"
-      onClick={onCancel}
-      variant="outline"
-    >
-      <SquareIcon className="size-3 fill-current" />
-    </PromptInputButton>
-  );
-}
-
 function ErrorMessage({ message }: { readonly message: string }) {
   const { t } = useAppSettings();
   return (
     <Message className="max-w-full" from="assistant">
       <MessageContent>
         <div
-          className="flex w-full items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-sm"
+          className="flex w-full items-start gap-3 rounded-xl border border-destructive/25 bg-destructive/5 px-3.5 py-3 text-[13px]"
           role="alert"
         >
           <AlertCircleIcon className="mt-0.5 size-4 shrink-0 text-destructive" />
           <div>
-            <p className="font-medium">{t("requestFailed")}</p>
-            <p className="mt-0.5 text-muted-foreground">{message}</p>
+            <p className="font-medium text-foreground">{t("requestFailed")}</p>
+            <p className="mt-0.5 text-pretty text-muted-foreground leading-relaxed">{message}</p>
           </div>
         </div>
       </MessageContent>
     </Message>
+  );
+}
+
+function ResumingState() {
+  const { t } = useAppSettings();
+  return (
+    <p className="flex items-center gap-2 text-[13px] text-muted-foreground" role="status">
+      <span aria-hidden="true" className="size-1.5 animate-pulse rounded-full bg-brand" />
+      {t("loadingChat")}
+    </p>
   );
 }
 
@@ -499,8 +407,8 @@ function PendingThinking() {
   return (
     <Message aria-live="polite" from="assistant">
       <MessageContent>
-        <div className="mb-4 flex w-full items-center gap-2 text-muted-foreground text-sm">
-          <BrainIcon className="size-4" />
+        <div className="flex w-full items-center gap-2 text-muted-foreground text-sm">
+          <span aria-hidden="true" className="size-1.5 animate-pulse rounded-full bg-brand" />
           <Shimmer duration={1}>{t("thinking")}</Shimmer>
         </div>
       </MessageContent>
