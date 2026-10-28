@@ -38,7 +38,7 @@ CI runs these checks using dummy values. Passing them does not establish live Su
 
 ## Accounts and history
 
-- **Supabase email/password:** sign-up sends an email confirmation code, then returns the user to password sign-in. Password recovery still uses a link. The `tflash_chats` index uses RLS and server-signed account/session ownership proofs. Titles sync with the account; Eve stores the actual transcripts separately.
+- **Supabase email/password:** new accounts are confirmed through an emailed link. Opening that link in the same browser completes confirmation and signs the user in; password recovery also uses a link. The `tflash_chats` index uses RLS and server-signed account/session ownership proofs. Titles sync with the account; Eve stores the actual transcripts separately.
 - **Vercel sign-in:** Better Auth uses the Vercel OAuth app. In its database-free configuration, the verified Vercel account ID provides a stable, namespaced identity. New chat titles and ownership proofs are stored in **this browser** under that identity. Clearing site data, switching browsers, or losing the session secret can make those chats inaccessible.
 
 These are **separate accounts**, even when they have the same email; they are not automatically linked and do not share history. If both sessions exist, Supabase takes precedence. Sign-out attempts to end both sessions, verifies that neither remains active, and removes the current account's saved browser credentials. It retains Vercel browser-only chat history. Existing browser-local chat IDs from earlier versions have no ownership proof and are not automatically imported; do not assume they have been deleted or migrated.
@@ -51,8 +51,8 @@ Deleting a chat removes the Supabase index entry or the local Vercel index and a
 
 1. Apply `supabase/migrations/20261028000000_create_tflash_chats.sql` to your Supabase project if it has not already been applied. It creates the index and user-specific RLS policies; it does not store transcripts.
 2. Enable Email authentication and **Confirm email**. Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` before building.
-3. In **Auth → Email Templates → Confirm sign up**, paste [`supabase/templates/confirm-signup.html`](supabase/templates/confirm-signup.html) and save it. Its `{{ .Token }}` variable is required: without it the default email contains a link instead of a code. The app accepts 6–10 digits so it also works with different Supabase OTP lengths. Confirmation creates a temporary session which is not persisted in the app; the user then signs in with their password.
-4. Under **Auth → URL Configuration**, set the production Site URL and allow each exact callback, including query strings, for example `http://localhost:3000/auth/callback**` and `https://your-domain.example/auth/callback**`. Add the exact preview host separately. Older confirmation links and password-recovery links must be opened in the browser that started the flow so its PKCE verifier is available. A legacy confirmation link returns to password sign-in; only recovery links keep a session for resetting the password.
+3. Use the default **Confirm signup** email template, or another template containing `{{ .ConfirmationURL }}`. No numeric-code template is needed.
+4. Under **Auth → URL Configuration**, set the production Site URL and allow each exact callback, including query strings, for example `http://localhost:3000/auth/callback**` and `https://your-domain.example/auth/callback**`. Add the exact preview host separately. Open confirmation/recovery links in the browser that started the flow so its PKCE verifier is available.
 5. Configure production SMTP, rate limits, and abuse controls before inviting users. Supabase's default email service is restricted.
 
 ### Vercel sign-in

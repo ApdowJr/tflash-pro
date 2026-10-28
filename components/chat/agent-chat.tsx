@@ -26,7 +26,6 @@ import { ModelPicker } from "@/components/settings/model-picker";
 import { useAppSettings } from "@/components/settings/app-settings";
 import { SettingsDialog } from "@/components/settings/settings-dialog";
 import { sessionTitle } from "@/lib/chat-history";
-import { forgetSignup } from "@/lib/supabase/pending-signup";
 import { OWNER_PROOF_HEADER } from "@/lib/security/chat-ownership-wire";
 import { AgentMessage } from "./agent-message";
 
@@ -45,9 +44,6 @@ export function AgentChat({ account, sessionId, sessionless = false }: {
   const [preparationError, setPreparationError] = useState<string>();
   const [attempt, setAttempt] = useState(0);
   const createRef = useRef<Promise<{ id: string; proof?: string }> | null>(null);
-
-  // An older confirmation link can sign in without returning to the form.
-  useEffect(() => { forgetSignup(); }, []);
 
   useEffect(() => {
     if (!hydrated) return;
