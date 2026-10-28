@@ -1,7 +1,8 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import { safeLocalPath } from "@/lib/security/redirect";
 import { currentPrincipal } from "@/lib/identity";
 import { getIntegration } from "@/lib/integrations/catalog";
-import { buildAuthorizeUrl, newCodeVerifier, oauthConfigured, sealOAuthState } from "@/lib/integrations/oauth";
+import { buildAuthorizeUrl, newCodeVerifier, oauthConfigured, oauthProviderFor, registerOAuthClient, sealOAuthState } from "@/lib/integrations/oauth";
 import { OAUTH_STATE_TTL_MS } from "@/lib/integrations/wire";
 import { backToApp, callbackUrl, flowCookie } from "../http";
 
@@ -11,17 +12,22 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request): Promise<Response> {
   const principal = await currentPrincipal();
   if (!principal) return Response.json({ error: "Sign in to continue." }, { status: 401 });
-  const id = new URL(request.url).searchParams.get("id") ?? "";
+  const params = new URL(request.url).searchParams;
+  const returnTo = safeLocalPath(params.get("returnTo"));
+  const id = params.get("id") ?? "";
   const integration = getIntegration(id);
   if (!integration) return backToApp(request, { oauth: "unknown" });
-  if (!oauthConfigured(integration.id)) return backToApp(request, { integration: integration.id, oauth: "unconfigured" });
+  if (!oauthConfigured(integration.id)) return backToApp(request, { integration: integration.id, oauth: "unconfigured" }, returnTo);
 
   try {
+    const redirectUri = callbackUrl(request); // Validate the origin before registration.
+    const client = oauthProviderFor(integration.id)?.registrationUrl
+      ? await registerOAuthClient(integration.id, redirectUri) : undefined;
     const flowId = randomUUID();
     const nonce = randomBytes(32).toString("hex");
     const verifier = newCodeVerifier(integration.id);
-    const state = await sealOAuthState({ integrationId: integration.id, ownerId: principal.id, flowId, nonce, ...(verifier ? { verifier } : {}) });
-    const authorizeUrl = await buildAuthorizeUrl({ integrationId: integration.id, redirectUri: callbackUrl(request), state, ...(verifier ? { verifier } : {}) });
+    const state = await sealOAuthState({ integrationId: integration.id, ownerId: principal.id, flowId, nonce, returnTo, ...(client ? { client } : {}), ...(verifier ? { verifier } : {}) });
+    const authorizeUrl = await buildAuthorizeUrl({ integrationId: integration.id, redirectUri, state, ...(client ? { client } : {}), ...(verifier ? { verifier } : {}) });
     return new Response(null, {
       status: 302,
       headers: {
@@ -31,6 +37,6 @@ export async function GET(request: Request): Promise<Response> {
       },
     });
   } catch {
-    return backToApp(request, { integration: integration.id, oauth: "misconfigured" });
+    return backToApp(request, { integration: integration.id, oauth: "misconfigured" }, returnTo);
   }
 }

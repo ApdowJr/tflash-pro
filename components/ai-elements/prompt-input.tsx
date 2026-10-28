@@ -175,6 +175,10 @@ export interface TextInputContext {
   clear: () => void;
   /** Clear only when the current text still matches the submitted draft. */
   clearIfUnchanged: (submitted: string) => void;
+  /** Restore a failed submission without overwriting a newer draft. */
+  recoverFailed: (submitted: string) => void;
+  failedDrafts: readonly { id: string; text: string }[];
+  discardFailed: (id: string) => void;
 }
 
 export interface PromptInputControllerProps {
@@ -226,9 +230,23 @@ export const PromptInputProvider = ({
 }: PromptInputProviderProps) => {
   // ----- textInput state
   const [textInput, setTextInput] = useState(initialTextInput);
-  const clearInput = useCallback(() => setTextInput(""), []);
+  const textInputRef = useRef(initialTextInput);
+  const [failedDrafts, setFailedDrafts] = useState<{ id: string; text: string }[]>([]);
+  const setInput = useCallback((value: string) => {
+    textInputRef.current = value;
+    setTextInput(value);
+  }, []);
+  const clearInput = useCallback(() => setInput(""), [setInput]);
   const clearInputIfUnchanged = useCallback((submitted: string) => {
-    setTextInput((current) => current === submitted ? "" : current);
+    if (textInputRef.current === submitted) setInput("");
+  }, [setInput]);
+  const recoverFailed = useCallback((submitted: string) => {
+    if (!submitted) return;
+    if (textInputRef.current === "") setInput(submitted);
+    else setFailedDrafts((current) => [...current, { id: nanoid(), text: submitted }]);
+  }, [setInput]);
+  const discardFailed = useCallback((id: string) => {
+    setFailedDrafts((current) => current.filter((draft) => draft.id !== id));
   }, []);
 
   // ----- attachments state (global when wrapped)
@@ -326,11 +344,14 @@ export const PromptInputProvider = ({
       textInput: {
         clear: clearInput,
         clearIfUnchanged: clearInputIfUnchanged,
-        setInput: setTextInput,
+        recoverFailed,
+        failedDrafts,
+        discardFailed,
+        setInput,
         value: textInput,
       },
     }),
-    [textInput, clearInput, clearInputIfUnchanged, attachments, __registerFileInput],
+    [textInput, setInput, clearInput, clearInputIfUnchanged, recoverFailed, failedDrafts, discardFailed, attachments, __registerFileInput],
   );
 
   return (
@@ -800,11 +821,12 @@ export const PromptInput = ({
             return (formData.get("message") as string) || "";
           })();
 
-      // Reset form immediately after capturing text to avoid race condition
-      // where user input during async blob conversion would be lost
-      if (!usingProvider) {
-        form.reset();
-      }
+      if (!text.trim() && files.length === 0) return;
+
+      // Clear the sent text immediately, before file conversion or the turn
+      // completes. The user can start a new draft while the agent is working.
+      if (usingProvider) controller.textInput.clearIfUnchanged(text);
+      else form.reset();
 
       try {
         // Convert blob URLs to data URLs asynchronously
@@ -824,14 +846,20 @@ export const PromptInput = ({
 
         await onSubmit({ files: convertedFiles, text }, event);
 
-        // A user can start the next draft while the request is pending. Remove
-        // only the attachments and text actually submitted, not newer edits.
+        // Remove only the attachments and sources from this submission, not
+        // anything the user added while it was in flight.
         for (const file of files) remove(file.id);
         const submittedSources = new Set(referencedSources.map((source) => source.id));
         setReferencedSources((current) => current.filter((source) => !submittedSources.has(source.id)));
-        if (usingProvider) controller.textInput.clearIfUnchanged(text);
       } catch {
-        // Don't clear on error - user may want to retry.
+        if (usingProvider) {
+          controller.textInput.recoverFailed(text);
+        } else if (text) {
+          const field = form.elements.namedItem("message");
+          if (field instanceof HTMLTextAreaElement) {
+            field.value = field.value ? `${text}\n\n${field.value}` : text;
+          }
+        }
       }
     },
     [usingProvider, controller, files, referencedSources, onSubmit, remove],

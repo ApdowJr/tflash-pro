@@ -18,6 +18,7 @@ import {
 } from "@/lib/providers/catalog";
 import { OWNER_PROOF_HEADER } from "@/lib/security/chat-ownership-wire";
 import { providerConnectionExpired } from "@/lib/providers/connection-state";
+import { getIntegration } from "@/lib/integrations/catalog";
 import { HEADER_INTEGRATION_TOKENS } from "@/lib/integrations/wire";
 import {
   HEADER_TOKEN,
@@ -208,7 +209,11 @@ export function AppSettingsProvider({ children, userId, accountKind }: { readonl
             refreshable?: boolean;
             label?: string;
           };
-          if (!cancelled && payload.connected && payload.integrationId && payload.token) {
+          if (!response.ok || !payload.connected || !payload.integrationId || !getIntegration(payload.integrationId) ||
+            !payload.token?.startsWith("v1.") || (integrationId && payload.integrationId !== integrationId)) {
+            throw new Error("Authorization handoff failed.");
+          }
+          if (!cancelled) {
             setSettings((current) => ({
               ...current,
               integrationTokens: {
@@ -601,22 +606,28 @@ export function AppSettingsProvider({ children, userId, accountKind }: { readonl
           };
           if (cancelled) return;
           if (payload.ok && payload.token) {
-            setSettings((latest) => ({
-              ...latest,
-              integrationTokens: {
-                ...latest.integrationTokens,
-                [integrationId]: {
-                  ...record,
-                  token: payload.token as string,
-                  ...(payload.expiresAt ? { expiresAt: payload.expiresAt } : {}),
-                  ...(payload.tokenExpiresAt ? { tokenExpiresAt: payload.tokenExpiresAt } : {}),
+            setSettings((latest) => {
+              // A renewal must not resurrect a disconnected grant or replace
+              // a newer authorization completed while this request was pending.
+              if (latest.integrationTokens[integrationId]?.token !== record.token) return latest;
+              return {
+                ...latest,
+                integrationTokens: {
+                  ...latest.integrationTokens,
+                  [integrationId]: {
+                    ...record,
+                    token: payload.token as string,
+                    ...(payload.expiresAt ? { expiresAt: payload.expiresAt } : {}),
+                    ...(payload.tokenExpiresAt ? { tokenExpiresAt: payload.tokenExpiresAt } : {}),
+                  },
                 },
-              },
-            }));
+              };
+            });
           } else if (response.status === 401 || response.status === 409) {
             // The grant is gone: drop it so the UI says "not connected" instead
             // of pretending a dead token still works.
             setSettings((latest) => {
+              if (latest.integrationTokens[integrationId]?.token !== record.token) return latest;
               const integrationTokens = { ...latest.integrationTokens };
               delete integrationTokens[integrationId];
               return { ...latest, integrationTokens };

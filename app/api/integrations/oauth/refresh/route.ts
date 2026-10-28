@@ -48,6 +48,7 @@ export async function POST(request: Request): Promise<Response> {
   const { tokens } = await refreshOAuthToken({
     integrationId: integration.id,
     refreshToken: record.refreshToken,
+    ...(record.oauthClient ? { client: record.oauthClient } : {}),
   });
   if (!tokens) {
     return Response.json(
@@ -61,6 +62,7 @@ export async function POST(request: Request): Promise<Response> {
     ownerId: principal.id,
     token: tokens.accessToken,
     label: record.label ?? "Authorized",
+    ...(record.oauthClient ? { oauthClient: record.oauthClient } : {}),
     ...(tokens.tokenExpiresAt ? { tokenExpiresAt: tokens.tokenExpiresAt } : {}),
     ...(tokens.refreshToken ?? record.refreshToken
       ? { refreshToken: tokens.refreshToken ?? record.refreshToken }

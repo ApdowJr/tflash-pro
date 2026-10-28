@@ -103,7 +103,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   readonly canRetry: boolean;
   readonly onRetry: () => void;
 }) {
-  const { t, settings, selection, eveHeaders, turnContext, recordChatActivity, oauthJustConnected } = useAppSettings();
+  const { t, settings, selection, eveHeaders, turnContext, recordChatActivity, oauthJustConnected, oauthError } = useAppSettings();
   const controller = usePromptInputController();
   const [cancellationError, setCancellationError] = useState<string>();
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -170,9 +170,9 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   // Coming back from a provider's consent screen lands on the chat route, so
   // reopen Connections to show the grant that was just approved.
   useEffect(() => {
-    if (!oauthJustConnected) return;
+    if (!oauthJustConnected && !oauthError) return;
     openSettings("connections");
-  }, [oauthJustConnected, openSettings]);
+  }, [oauthJustConnected, oauthError, openSettings]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

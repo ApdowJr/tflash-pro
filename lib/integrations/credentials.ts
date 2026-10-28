@@ -1,16 +1,15 @@
 /**
  * Browser-supplied integration tokens.
  *
- * A developer can paste a GitHub/Vercel/Sentry token straight into
- * Settings → Connections. The `/api/integrations/connect` route validates it
- * against the service and returns an AES-GCM sealed token; the browser sends
- * that opaque string with every chat request, and only this module can open it.
+ * OAuth grants (and legacy personal tokens) are AES-GCM sealed on the server.
+ * The browser passes opaque records with chat requests; only the server opens
+ * them. Dynamically registered client secrets and refresh tokens stay sealed.
  *
  * Server-only.
  */
 import { isSealedToken, openJson, sealJson, type SealedEnvelope } from "@/lib/secrets";
 import { getIntegration, type IntegrationId } from "./catalog";
-import { ATTR_INTEGRATION_TOKENS, HEADER_INTEGRATION_TOKENS } from "./wire";
+import { ATTR_INTEGRATION_TOKENS, HEADER_INTEGRATION_TOKENS, type OAuthClientRegistration } from "./wire";
 
 export { ATTR_INTEGRATION_TOKENS, HEADER_INTEGRATION_TOKENS };
 
@@ -27,6 +26,7 @@ export type SealedIntegrationToken = SealedEnvelope & {
   readonly tokenExpiresAt?: number;
   /** Present when the provider supports refreshing without a new consent. */
   readonly refreshToken?: string;
+  readonly oauthClient?: OAuthClientRegistration;
 };
 
 export async function sealIntegrationToken(input: {
@@ -36,6 +36,7 @@ export async function sealIntegrationToken(input: {
   readonly label?: string;
   readonly tokenExpiresAt?: number;
   readonly refreshToken?: string;
+  readonly oauthClient?: OAuthClientRegistration;
   /** Envelope lifetime; refreshed grants outlive a pasted token. */
   readonly ttlMs?: number;
 }): Promise<{ token: string; expiresAt: number }> {
@@ -47,6 +48,7 @@ export async function sealIntegrationToken(input: {
       label: input.label ?? "Connected in this browser",
       ...(input.tokenExpiresAt ? { tokenExpiresAt: input.tokenExpiresAt } : {}),
       ...(input.refreshToken ? { refreshToken: input.refreshToken } : {}),
+      ...(input.oauthClient ? { oauthClient: input.oauthClient } : {}),
     },
     input.ttlMs ?? TOKEN_TTL_MS,
   );

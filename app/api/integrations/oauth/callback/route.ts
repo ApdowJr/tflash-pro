@@ -25,30 +25,31 @@ export async function GET(request: Request): Promise<Response> {
   };
   try {
     const integration = getIntegration(state.integrationId);
-    if (!integration) return finish(backToApp(request, { oauth: "unknown" }));
-    if (params.get("error")) return finish(backToApp(request, { integration: integration.id, oauth: "denied" }));
+    if (!integration) return finish(backToApp(request, { oauth: "unknown" }, state.returnTo));
+    if (params.get("error")) return finish(backToApp(request, { integration: integration.id, oauth: "denied" }, state.returnTo));
     const code = params.get("code");
-    if (!code) return finish(backToApp(request, { integration: integration.id, oauth: "missing_code" }));
-    const { tokens } = await exchangeCode({ integrationId: integration.id, code, redirectUri: callbackUrl(request), ...(state.verifier ? { verifier: state.verifier } : {}) });
-    if (!tokens) return finish(backToApp(request, { integration: integration.id, oauth: "exchange" }));
+    if (!code) return finish(backToApp(request, { integration: integration.id, oauth: "missing_code" }, state.returnTo));
+    const { tokens } = await exchangeCode({ integrationId: integration.id, code, redirectUri: callbackUrl(request), ...(state.client ? { client: state.client } : {}), ...(state.verifier ? { verifier: state.verifier } : {}) });
+    if (!tokens) return finish(backToApp(request, { integration: integration.id, oauth: "exchange" }, state.returnTo));
 
     const sealed = await sealIntegrationToken({
       integrationId: integration.id, ownerId: principal.id, token: tokens.accessToken,
-      label: `Authorized ${new Date().toLocaleDateString("en", { month: "short", day: "numeric" })}`,
+      label: "Authorized",
+      ...(state.client ? { oauthClient: state.client } : {}),
       ...(tokens.tokenExpiresAt ? { tokenExpiresAt: tokens.tokenExpiresAt } : {}),
       ...(tokens.refreshToken ? { refreshToken: tokens.refreshToken } : {}),
       ttlMs: tokens.refreshToken ? REFRESHABLE_TTL_MS : STATIC_TTL_MS,
     });
     const handoff = await sealJson({
-      integrationId: integration.id, ownerId: principal.id, token: sealed.token, expiresAt: sealed.expiresAt,
+      integrationId: integration.id, ownerId: principal.id, token: sealed.token, grantExpiresAt: sealed.expiresAt,
       ...(tokens.tokenExpiresAt ? { tokenExpiresAt: tokens.tokenExpiresAt } : {}),
-      refreshable: Boolean(tokens.refreshToken), label: tokens.scope ? `Authorized · ${tokens.scope}` : "Authorized",
+      refreshable: Boolean(tokens.refreshToken), label: "Authorized",
     }, OAUTH_HANDOFF_TTL_MS);
-    const response = backToApp(request, { integration: integration.id, connected: "1" });
+    const response = backToApp(request, { integration: integration.id, connected: "1" }, state.returnTo);
     const secure = callbackUrl(request).startsWith("https://") ? "; Secure" : "";
     response.headers.append("set-cookie", `${OAUTH_HANDOFF_COOKIE}=${handoff.token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(OAUTH_HANDOFF_TTL_MS / 1000)}${secure}`);
     return finish(response);
   } catch {
-    return backToApp(request, { oauth: "misconfigured" });
+    return finish(backToApp(request, { integration: state.integrationId, oauth: "misconfigured" }, state.returnTo));
   }
 }

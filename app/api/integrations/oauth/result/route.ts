@@ -8,6 +8,7 @@ export const dynamic = "force-dynamic";
 type Handoff = {
   readonly v: 1;
   readonly expiresAt: number;
+  readonly grantExpiresAt?: number;
   readonly integrationId: string;
   readonly ownerId: string;
   readonly token: string;
@@ -57,7 +58,7 @@ export async function GET(request: Request): Promise<Response> {
       connected: true,
       integrationId: handoff.integrationId,
       token: handoff.token,
-      expiresAt: handoff.expiresAt,
+      expiresAt: handoff.grantExpiresAt ?? handoff.expiresAt,
       ...(handoff.tokenExpiresAt ? { tokenExpiresAt: handoff.tokenExpiresAt } : {}),
       refreshable: handoff.refreshable === true,
       label: handoff.label ?? "Authorized",
