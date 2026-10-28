@@ -164,6 +164,35 @@ model running on your laptop — use a tunnel or a hosted endpoint in production
 
 ---
 
+## 🩺 Deployment health
+
+`GET /api/health` answers "why is this deployment unhappy?" without opening a
+dashboard, and never returns a secret:
+
+```bash
+curl -s https://your-deployment/api/health | jq
+{
+  "ok": true,
+  "version": "1a2b3c4",
+  "environment": "production",
+  "auth": { "configured": false, "missing": ["BETTER_AUTH_SECRET", "..."] },
+  "providers": { "serverKeys": [] },
+  "integrations": { "connectAvailable": true, "oauthApps": [] }
+}
+```
+
+Two failure modes that used to take the whole site down are now visible states:
+
+| Symptom | Cause | What happens now |
+| --- | --- | --- |
+| Every page 500s | no auth credentials | workspace renders in guest mode + notice |
+| Sign-in fails, page renders | request host not trusted | session lookup degrades to "signed out"; `/api/auth/*` returns the host it rejected |
+
+If you serve a custom domain, list it in `ALLOWED_HOSTS` (comma-separated) —
+Vercel's `*.vercel.app` hosts are trusted automatically.
+
+---
+
 ## 🔐 Security notes
 
 - Browser tokens are AES-GCM encrypted but stateless: anyone holding one can use that
@@ -171,8 +200,13 @@ model running on your laptop — use a tunnel or a hosted endpoint in production
   on shared machines.
 - The provider/model headers are validated against the server catalog; invalid values fall
   back to the default Gateway model. Only authenticated callers get selection attributes.
-- Production requires `BETTER_AUTH_SECRET`, `VERCEL_APP_CLIENT_ID`, and
-  `VERCEL_APP_CLIENT_SECRET`; see `lib/auth.ts`.
+- Accounts need `BETTER_AUTH_SECRET`, `VERCEL_APP_CLIENT_ID`, and
+  `VERCEL_APP_CLIENT_SECRET`. Without them the app still serves: visitors get
+  the workspace in bring-your-own-key mode, with a one-time notice, and
+  `/api/auth/*` answers 503 naming what is missing. See `lib/auth.ts`.
+- Guest mode never spends the operator's provider keys: the eve channel accepts
+  an anonymous caller only when the request carries a sealed provider key of its
+  own. Add the auth variables to close guest access entirely.
 - Review eve's [responsible use](https://eve.dev/docs) notes before exposing the agent to
   sensitive data: tools, MCP connections, and sandboxes have their own permission model.
 

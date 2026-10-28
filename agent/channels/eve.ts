@@ -1,6 +1,7 @@
 import { eveChannel } from "eve/channels/eve";
 import { localDev, type AuthFn, vercelOidc } from "eve/channels/auth";
-import { auth } from "@/lib/auth";
+import { auth, authConfigured } from "@/lib/auth";
+import { HEADER_TOKEN } from "@/lib/providers/selection";
 import {
   HEADER_INTEGRATION_TOKENS,
   ATTR_INTEGRATION_TOKENS,
@@ -13,7 +14,12 @@ import {
 } from "@/lib/providers/selection";
 
 const betterAuthSession: AuthFn<Request> = async (request) => {
-  const session = await auth.api.getSession({ headers: request.headers });
+  // A broken/absent session must fall through to the other authenticators
+  // instead of failing the whole request with a 500.
+  const session = await auth.api.getSession({ headers: request.headers }).catch((error: unknown) => {
+    console.error("[auth] session lookup failed:", error);
+    return null;
+  });
   if (!session) return null;
 
   const attributes: Record<string, string> = {
@@ -57,10 +63,38 @@ const withModelSelection =
     };
   };
 
+/**
+ * Bring-your-own-key guest access, used only when the deployment has no account
+ * system at all (`authConfigured === false`).
+ *
+ * The request must carry a sealed provider key of its own — that is the whole
+ * point: an anonymous caller can never spend the operator's server keys. The
+ * principal id is derived from that sealed key, so it is stable for a browser
+ * without identifying a person.
+ */
+const byokGuest: AuthFn<Request> = async (request) => {
+  if (authConfigured) return null;
+  const sealed = request.headers.get(HEADER_TOKEN);
+  if (!sealed) return null;
+
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(sealed));
+  const id = Array.from(new Uint8Array(digest).slice(0, 8), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+
+  return {
+    attributes: {},
+    authenticator: "guest:byok",
+    principalId: `guest-${id}`,
+    principalType: "anonymous",
+  };
+};
+
 export default eveChannel({
   auth: [
     withModelSelection(betterAuthSession),
     withModelSelection(vercelOidc()),
+    withModelSelection(byokGuest),
     withModelSelection(localDev()),
   ],
 });
