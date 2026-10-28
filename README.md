@@ -38,7 +38,7 @@ Design tokens live in `app/globals.css` (`--brand`, `--brand-tile`, `--brand-bol
 | **Providers** | 15 built-in providers + custom OpenAI-compatible endpoints. OpenRouter is a first-class citizen. |
 | **BYOK** | Paste an API key in **Settings → Providers**. It is validated by a live `/models` call, then sealed with AES-GCM on the server; only an opaque token is kept in the browser. |
 | **Server keys** | Set any `*_API_KEY` in the environment for an operator-wide connection. Keys never reach the browser. |
-| **Integrations (MCP)** | GitHub, Linear, Notion, Sentry, Supabase, Neon, Vercel, PostHog, Stripe and Resend ship as MCP connections, each with an approval gate matched to its blast radius. See [docs/integrations.md](docs/integrations.md). |
+| **Integrations (MCP)** | GitHub, Linear, Notion, Sentry, Supabase, Neon, Vercel, PostHog, Stripe and Resend ship as MCP connections, each with an approval gate matched to its blast radius. Paste a token per service in **Settings → Connections**, or use Vercel Connect. See [docs/integrations.md](docs/integrations.md). |
 | **Live model catalog** | Models (context length, pricing, vision flags) are fetched from each provider's `/models` endpoint, with a built-in fallback list when offline. |
 | **Per-request switching** | The chosen provider/model is sent on every eve request and resolved at runtime with `defineDynamic` + AI SDK `LanguageModel`. No redeploy needed. |
 | **Chat** | Streaming messages, reasoning blocks, tool calls, approvals/questions (HITL), attachments, cancellation, steering, resumable `/s/:id` sessions. |
@@ -93,6 +93,11 @@ Ten developer tools are wired up out of the box. Open **Settings → Connections
 to see which ones are live, what each is allowed to do, and the environment
 variable (or Vercel Connect connector) each one needs.
 
+**Fastest path:** click a row, paste a token, press **Connect**. The token is
+verified against the service, sealed with AES-256-GCM and kept in this browser
+only — the model never sees it, and it is sent back sealed with each chat
+request. Expires after 7 days, or immediately when you press **Disconnect**.
+
 ```bash
 # recommended: per-user OAuth through Vercel Connect
 vercel link
@@ -104,6 +109,7 @@ vercel env pull
 echo "GITHUB_MCP_TOKEN=ghp_..." >> .env.local
 ```
 
+Precedence: browser token → Vercel Connect connector → server env var.
 Approval tiers: read-only tools run silently, write tools ask once per session,
 and money/database/email tools ask on every call. Full guide, including how to
 add your own service: [docs/integrations.md](docs/integrations.md).

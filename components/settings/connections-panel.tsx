@@ -12,9 +12,14 @@ import {
   ExternalLinkIcon,
   GitBranchIcon,
   ListChecksIcon,
+  EyeIcon,
+  EyeOffIcon,
+  KeyRoundIcon,
+  Loader2Icon,
   MailIcon,
   ShieldCheckIcon,
   TerminalIcon,
+  Trash2Icon,
   TriangleAlertIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -25,7 +30,9 @@ import {
   type IntegrationId,
   type IntegrationInfo,
 } from "@/lib/integrations/catalog";
+import type { IntegrationTokenRecord } from "./app-settings";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { useAppSettings } from "./app-settings";
 
@@ -42,7 +49,7 @@ const ICONS: Record<IntegrationId, typeof DatabaseIcon> = {
   resend: MailIcon,
 };
 
-type Status = {
+type ServerStatus = {
   readonly connected: boolean;
   readonly mode: "connect" | "token" | "project-connect" | "none";
 };
@@ -55,8 +62,8 @@ const CONNECT_COMMAND = "vercel connect create github --name t-flash && vercel e
  * settings page, not a marketplace.
  */
 export function ConnectionsPanel({ className }: { readonly className?: string }) {
-  const { t, settings } = useAppSettings();
-  const [statuses, setStatuses] = useState<Readonly<Record<string, Status>>>({});
+  const { t, settings, connectIntegration, disconnectIntegration } = useAppSettings();
+  const [statuses, setStatuses] = useState<Readonly<Record<string, ServerStatus>>>({});
   const [connectAvailable, setConnectAvailable] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [copied, setCopied] = useState<string>();
@@ -69,7 +76,7 @@ export function ConnectionsPanel({ className }: { readonly className?: string })
         if (!response.ok) return;
         const payload = (await response.json()) as IntegrationsStatusResponse;
         if (cancelled) return;
-        const next: Record<string, Status> = {};
+        const next: Record<string, ServerStatus> = {};
         for (const item of payload.integrations) {
           next[item.id] = { connected: item.connected, mode: item.mode };
         }
@@ -93,7 +100,12 @@ export function ConnectionsPanel({ className }: { readonly className?: string })
     [],
   );
 
-  const connectedCount = Object.values(statuses).filter((status) => status.connected).length;
+  const connectedCount =
+    INTEGRATIONS.filter(
+      (integration) =>
+        Boolean(settings.integrationTokens[integration.id]) ||
+        statuses[integration.id]?.connected === true,
+    ).length;
 
   const copy = (value: string) => {
     void navigator.clipboard.writeText(value).then(() => {
@@ -175,6 +187,9 @@ export function ConnectionsPanel({ className }: { readonly className?: string })
                     current === integration.id ? null : integration.id,
                   )
                 }
+                onDisconnect={() => disconnectIntegration(integration.id)}
+                onToken={(record) => connectIntegration(integration.id, record)}
+                sealedToken={settings.integrationTokens[integration.id]?.token}
                 status={statuses[integration.id]}
               />
             ))}
@@ -192,22 +207,77 @@ export function ConnectionsPanel({ className }: { readonly className?: string })
 function ConnectionRow({
   integration,
   status,
+  sealedToken,
   isOpen,
   copied,
   onToggle,
   onCopy,
+  onToken,
+  onDisconnect,
 }: {
   readonly integration: IntegrationInfo;
-  readonly status?: Status;
+  readonly status?: ServerStatus;
+  readonly sealedToken?: string;
   readonly isOpen: boolean;
   readonly copied?: string;
   readonly onToggle: () => void;
   readonly onCopy: (value: string) => void;
+  readonly onToken: (record: IntegrationTokenRecord) => void;
+  readonly onDisconnect: () => void;
 }) {
   const { t, settings } = useAppSettings();
   const Icon = ICONS[integration.id];
-  const connected = status?.connected ?? false;
+  const browserConnected = Boolean(sealedToken);
+  const connected = browserConnected || (status?.connected ?? false);
   const mode = status?.mode ?? "none";
+  const [tokenDraft, setTokenDraft] = useState("");
+  const [showToken, setShowToken] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string }>();
+  const [canForce, setCanForce] = useState(false);
+
+  const saveToken = async (force = false) => {
+    const token = tokenDraft.trim();
+    if (token.length === 0) return;
+    setPending(true);
+    setMessage(undefined);
+    setCanForce(false);
+    try {
+      const response = await fetch("/api/integrations/connect", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ integrationId: integration.id, token, force }),
+      });
+      const payload = (await response.json()) as {
+        ok?: boolean;
+        message?: string;
+        token?: string;
+        expiresAt?: number;
+        verified?: boolean;
+        canForce?: boolean;
+      };
+      if (!response.ok || !payload.ok || !payload.token) {
+        setCanForce(payload.canForce === true);
+        setMessage({ kind: "error", text: payload.message ?? t("tokenInvalid") });
+        return;
+      }
+      onToken({
+        token: payload.token,
+        label: payload.verified ? t("tokenConnected") : t("tokenSaved"),
+        connectedAt: Date.now(),
+        ...(payload.expiresAt ? { expiresAt: payload.expiresAt } : {}),
+      });
+      setTokenDraft("");
+      setMessage({
+        kind: "ok",
+        text: payload.verified ? t("tokenConnected") : t("tokenSaved"),
+      });
+    } catch {
+      setMessage({ kind: "error", text: t("connectionFailed") });
+    } finally {
+      setPending(false);
+    }
+  };
 
   return (
     <div
@@ -236,7 +306,11 @@ function ConnectionRow({
                   : "bg-muted text-muted-foreground",
               )}
             >
-              {connected ? t(accessLabelKey(mode)) : t("integrationNotConnected")}
+              {browserConnected
+                ? t("integrationBrowser")
+                : connected
+                  ? t(accessLabelKey(mode))
+                  : t("integrationNotConnected")}
             </span>
             <span className="rounded-full border border-border/70 px-1.5 py-0 text-[10px] text-muted-foreground">
               {t(approvalLabelKey(integration.access))}
@@ -263,6 +337,95 @@ function ConnectionRow({
             <p className="rounded-md bg-muted/60 px-2.5 py-1.5 text-[11px] text-muted-foreground">
               {integration.note[settings.language]}
             </p>
+          ) : null}
+
+          {integration.probe ? (
+            <div className="space-y-2 border-t border-border/60 pt-2.5">
+              <p className="flex items-center gap-1.5 font-medium text-[11px] text-muted-foreground">
+                <KeyRoundIcon className="size-3" />
+                {t("connectWithToken")}
+              </p>
+              {sealedToken ? (
+                <div className="flex items-center gap-2">
+                  <p className="flex-1 text-[11px] text-emerald-700 dark:text-emerald-300">
+                    {t("integrationBrowser")}
+                  </p>
+                  <Button
+                    className="h-7 gap-1 px-2 text-[11px] text-muted-foreground"
+                    onClick={onDisconnect}
+                    size="sm"
+                    type="button"
+                    variant="ghost"
+                  >
+                    <Trash2Icon className="size-3" />
+                    {t("tokenDisconnect")}
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <div className="relative">
+                    <Input
+                      autoComplete="off"
+                      className="h-8 pr-9 font-mono text-[11px]"
+                      onChange={(event) => setTokenDraft(event.target.value)}
+                      placeholder={t("tokenPlaceholder")}
+                      type={showToken ? "text" : "password"}
+                      value={tokenDraft}
+                    />
+                    <button
+                      aria-label={showToken ? t("hideToken") : t("showToken")}
+                      className="absolute top-1/2 right-2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      onClick={() => setShowToken((value) => !value)}
+                      type="button"
+                    >
+                      {showToken ? (
+                        <EyeOffIcon className="size-3.5" />
+                      ) : (
+                        <EyeIcon className="size-3.5" />
+                      )}
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Button
+                      className="h-7 text-[11px]"
+                      disabled={pending || tokenDraft.trim().length === 0}
+                      onClick={() => void saveToken()}
+                      size="sm"
+                      type="button"
+                    >
+                      {pending ? <Loader2Icon className="size-3 animate-spin" /> : null}
+                      {pending ? t("checkingToken") : t("connect")}
+                    </Button>
+                    {canForce ? (
+                      <Button
+                        className="h-7 text-[11px]"
+                        disabled={pending}
+                        onClick={() => void saveToken(true)}
+                        size="sm"
+                        type="button"
+                        variant="outline"
+                      >
+                        {t("saveAnyway")}
+                      </Button>
+                    ) : null}
+                    <span className="text-[10px] text-muted-foreground/80">{t("tokenHint")}</span>
+                  </div>
+                </div>
+              )}
+              {message ? (
+                <p
+                  className={cn(
+                    "text-[11px]",
+                    message.kind === "ok"
+                      ? "text-emerald-700 dark:text-emerald-300"
+                      : "text-destructive",
+                  )}
+                  role={message.kind === "error" ? "alert" : undefined}
+                >
+                  {message.text}
+                </p>
+              ) : null}
+            </div>
           ) : null}
 
           <div className="space-y-1">
@@ -319,7 +482,7 @@ function approvalLabelKey(access: IntegrationInfo["access"]) {
   }
 }
 
-function accessLabelKey(mode: Status["mode"]) {
+function accessLabelKey(mode: ServerStatus["mode"]) {
   switch (mode) {
     case "connect":
       return "integrationViaConnect" as const;
@@ -328,6 +491,7 @@ function accessLabelKey(mode: Status["mode"]) {
     case "token":
       return "integrationViaToken" as const;
     case "none":
+    default:
       return "integrationNotConnected" as const;
   }
 }

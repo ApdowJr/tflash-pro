@@ -16,6 +16,7 @@ import {
   getProvider,
   type ModelInfo,
 } from "@/lib/providers/catalog";
+import { HEADER_INTEGRATION_TOKENS } from "@/lib/integrations/wire";
 import {
   HEADER_TOKEN,
   sanitizeSelection,
@@ -41,6 +42,14 @@ export type ConnectionRecord = {
   readonly source: "browser" | "server" | "keyless";
 };
 
+/** Sealed (opaque) integration token kept in this browser. */
+export type IntegrationTokenRecord = {
+  readonly token: string;
+  readonly label: string;
+  readonly connectedAt: number;
+  readonly expiresAt?: number;
+};
+
 export type ChatRecord = {
   readonly id: string;
   readonly title: string;
@@ -55,6 +64,7 @@ export type AppSettings = {
   readonly modelId: string;
   readonly contextWindow: number;
   readonly connections: Readonly<Record<string, ConnectionRecord>>;
+  readonly integrationTokens: Readonly<Record<string, IntegrationTokenRecord>>;
   readonly chats: readonly ChatRecord[];
 };
 
@@ -66,6 +76,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   modelId: defaultProvider().defaultModel,
   contextWindow: defaultProvider().contextWindow,
   connections: {},
+  integrationTokens: {},
   chats: [],
 };
 
@@ -85,6 +96,8 @@ type SettingsContextValue = {
   readonly update: (patch: Partial<AppSettings>) => void;
   readonly setModel: (providerId: string, modelId: string, contextWindow?: number) => void;
   readonly connect: (providerId: string, connection: ConnectionRecord) => void;
+  readonly connectIntegration: (integrationId: string, record: IntegrationTokenRecord) => void;
+  readonly disconnectIntegration: (integrationId: string) => void;
   readonly disconnect: (providerId: string) => void;
   readonly isConnected: (providerId: string) => boolean;
   readonly modelsFor: (providerId: string) => readonly ModelInfo[];
@@ -116,6 +129,10 @@ function readStoredSettings(): AppSettings {
         typeof parsed.contextWindow === "number" ? parsed.contextWindow : provider.contextWindow,
       connections:
         parsed.connections && typeof parsed.connections === "object" ? parsed.connections : {},
+      integrationTokens:
+        parsed.integrationTokens && typeof parsed.integrationTokens === "object"
+          ? parsed.integrationTokens
+          : {},
       chats: Array.isArray(parsed.chats) ? parsed.chats.slice(0, MAX_CHATS) : [],
     };
   } catch {
@@ -179,6 +196,24 @@ export function AppSettingsProvider({ children }: { readonly children: ReactNode
       ...current,
       connections: { ...current.connections, [providerId]: connection },
     }));
+  }, []);
+
+  const connectIntegration = useCallback(
+    (integrationId: string, record: IntegrationTokenRecord) => {
+      setSettings((current) => ({
+        ...current,
+        integrationTokens: { ...current.integrationTokens, [integrationId]: record },
+      }));
+    },
+    [],
+  );
+
+  const disconnectIntegration = useCallback((integrationId: string) => {
+    setSettings((current) => {
+      const integrationTokens = { ...current.integrationTokens };
+      delete integrationTokens[integrationId];
+      return { ...current, integrationTokens };
+    });
   }, []);
 
   const disconnect = useCallback((providerId: string) => {
@@ -305,7 +340,7 @@ export function AppSettingsProvider({ children }: { readonly children: ReactNode
   /** Stable function: the eve client re-resolves it before every request. */
   const eveHeaders = useCallback((): Record<string, string> => {
     const current = settingsRef.current;
-    return selectionToHeaders(
+    const headers = selectionToHeaders(
       sanitizeSelection({
         providerId: current.providerId,
         modelId: current.modelId,
@@ -313,6 +348,15 @@ export function AppSettingsProvider({ children }: { readonly children: ReactNode
         token: current.connections[current.providerId]?.token,
       }),
     );
+    const now = Date.now();
+    const sealed = Object.values(current.integrationTokens)
+      .filter((record) => !record.expiresAt || record.expiresAt > now)
+      .map((record) => record.token)
+      .filter((token) => typeof token === "string" && token.startsWith("v1."));
+    if (sealed.length > 0) {
+      headers[HEADER_INTEGRATION_TOKENS] = JSON.stringify(sealed);
+    }
+    return headers;
   }, []);
 
   const turnContext = useCallback(
@@ -335,6 +379,8 @@ export function AppSettingsProvider({ children }: { readonly children: ReactNode
     update,
     setModel,
     connect,
+    connectIntegration,
+    disconnectIntegration,
     disconnect,
     isConnected,
     modelsFor,

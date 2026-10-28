@@ -26,10 +26,33 @@ Approval comes from `access` in the catalog:
 
 ## Authorize a service
 
-Credentials never reach the browser or the model. There are two ways to give a
-connection a credential; the first one that resolves wins.
+Credentials never reach the model, and a pasted token never reaches the server's
+environment. There are three ways to give a connection a credential. The browser
+token wins, then Vercel Connect, then a server env var.
 
-### 1. Vercel Connect (recommended)
+### 1. Paste a token in Settings → Connections (quickest)
+
+Every connection row has a token field. Paste a GitHub PAT, a Vercel token, a
+Supabase access token, and the row flips to **Connected · this browser**.
+
+What happens on **Connect**:
+
+1. The token goes to `POST /api/integrations/connect` with the connection id.
+2. The route calls the service's own probe (`/user`, `/v2/user`, `/v1/projects`,
+   …) with the token. 401/403 means it is rejected; an unreachable service is not
+   a verdict, so the UI offers **Save anyway**.
+3. On success the token is sealed with AES-256-GCM (`lib/secrets.ts`, key derived
+   from `PROVIDER_KEYS_SECRET`) and stored in **this browser's** settings.
+
+From then on every chat request carries `x-tflash-integrations`: an array of
+sealed tokens (max 12). `agent/channels/eve.ts` copies that header into the
+session attributes, and only the server opens it, per connection, at call time.
+Sealed tokens expire after 7 days; **Disconnect** deletes the local copy.
+
+Nothing is written to the database, so two browsers in the same account are
+independent. That is the trade: no server-side vault, no cross-device sync.
+
+### 2. Vercel Connect
 
 ```bash
 vercel link
@@ -54,10 +77,10 @@ connection falls back to the project's own connector
 (`<service>/<VERCEL_PROJECT_ID>`), which Vercel Connect provisions or links on
 first use.
 
-### 2. Static token
+### 3. Static token on the server
 
 Simplest for one developer or a single-tenant deployment. Put a token in the
-matching variable and the connection is app-scoped immediately:
+matching variable and the connection is app-scoped for everyone:
 
 ```bash
 GITHUB_MCP_TOKEN=ghp_...
@@ -66,6 +89,7 @@ SENTRY_ACCESS_TOKEN=sntrys_...
 
 Full list in [`.env.example`](../.env.example). Tokens are read on the server per
 request, so rotating one is an env change plus a redeploy — not a migration.
+Use this for a shared deployment; use the paste flow for a personal one.
 
 ### Nothing configured
 
@@ -73,10 +97,22 @@ The connection still exists so the model can explain what is missing instead of
 guessing, but calls fail with the service's own 401. **Settings → Connections**
 shows which connections are live and which need a credential.
 
+### Precedence at call time
+
+`authResolverFor` in [`lib/integrations/connection.ts`](../lib/integrations/connection.ts)
+tries, in order:
+
+1. the sealed browser token for that connection (`credentialOwner: "user"`),
+2. `CONNECT_<ID>_CONNECTOR`, else the project connector,
+3. the static token env var (`credentialOwner: "app"`),
+4. a resolver that throws with a "Settings → Connections" hint, so the model
+   reports the missing credential instead of retrying.
+
 ## Add another service
 
 1. Add an entry to `INTEGRATIONS` in `lib/integrations/catalog.ts` (id, MCP URL,
-   docs link, `connectService`, token env vars, `access`).
+   docs link, `connectService`, token env vars, `access`, and a `probe` — the
+   tiny authenticated request used to validate a pasted token).
 2. Add the id to `IntegrationId`.
 3. Create `agent/connections/<id>.ts`:
 
@@ -98,3 +134,8 @@ icon for the settings panel in `components/settings/connections-panel.tsx`.
 - Supabase and Neon run SQL. Point them at a development project, not production.
 - Connections are only as private as the tokens behind them: on a shared
   deployment prefer Vercel Connect (per-user) over a shared server token.
+- Pasted tokens are sealed, not encrypted-at-rest-in-a-database: they live in one
+  browser's settings. Clearing site data disconnects them. Prefer the narrowest
+  token each service offers (GitHub fine-grained PAT, Vercel scoped token,
+  Stripe restricted key) — the probe only proves the token works, not that it is
+  minimal.

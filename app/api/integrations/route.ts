@@ -1,5 +1,5 @@
 import { INTEGRATIONS, integrationEnvKeys } from "@/lib/integrations/catalog";
-import { resolveIntegrationAuth } from "@/lib/integrations/connection";
+import { resolveIntegrationAuth, type ServerAuthMode } from "@/lib/integrations/connection";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,7 +12,8 @@ export const dynamic = "force-dynamic";
  */
 export type IntegrationStatusItem = {
   readonly id: string;
-  readonly mode: "connect" | "token" | "project-connect" | "none";
+  /** How the *server* authenticates this connection; the browser may add its own token. */
+  readonly mode: ServerAuthMode;
   readonly connected: boolean;
   /** Env vars the deployer can set for this integration. */
   readonly envKeys: readonly string[];

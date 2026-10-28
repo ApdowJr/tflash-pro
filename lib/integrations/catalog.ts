@@ -32,6 +32,16 @@ export type IntegrationId =
   | "stripe"
   | "resend";
 
+/** Cheap authenticated request used to prove a pasted token works. */
+export type IntegrationProbe = {
+  readonly url: string;
+  readonly method?: "GET" | "POST";
+  /** `bearer` sends `Authorization: Bearer <token>`; `raw` sends the token verbatim. */
+  readonly authorization?: "bearer" | "raw";
+  readonly headers?: Readonly<Record<string, string>>;
+  readonly body?: string;
+};
+
 export type IntegrationInfo = {
   readonly id: IntegrationId;
   readonly name: string;
@@ -51,6 +61,8 @@ export type IntegrationInfo = {
   /** Environment variable that flips the Connect credential to app scope. */
   readonly appScopeEnvKey: string;
   readonly access: IntegrationAccess;
+  /** Validation endpoint for a token pasted in the UI. Omitted when there is none. */
+  readonly probe?: IntegrationProbe;
   /** Allow-list of remote tool names. Omitted means "every tool the server publishes". */
   readonly tools?: readonly string[];
   readonly featured?: boolean;
@@ -76,6 +88,7 @@ export const INTEGRATIONS: readonly IntegrationInfo[] = [
     connectorEnvKey: "CONNECT_GITHUB_CONNECTOR",
     appScopeEnvKey: "CONNECT_GITHUB_APP_SCOPED",
     access: "write",
+    probe: { url: "https://api.github.com/user" },
     featured: true,
     note: {
       en: "The hosted GitHub MCP server wants either OAuth through Vercel Connect or a personal access token.",
@@ -99,6 +112,13 @@ export const INTEGRATIONS: readonly IntegrationInfo[] = [
     connectorEnvKey: "CONNECT_LINEAR_CONNECTOR",
     appScopeEnvKey: "CONNECT_LINEAR_APP_SCOPED",
     access: "write",
+    probe: {
+      url: "https://api.linear.app/graphql",
+      method: "POST",
+      authorization: "raw",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ query: "{ viewer { id name } }" }),
+    },
     featured: true,
   },
   {
@@ -118,6 +138,10 @@ export const INTEGRATIONS: readonly IntegrationInfo[] = [
     connectorEnvKey: "CONNECT_NOTION_CONNECTOR",
     appScopeEnvKey: "CONNECT_NOTION_APP_SCOPED",
     access: "write",
+    probe: {
+      url: "https://api.notion.com/v1/users/me",
+      headers: { "notion-version": "2022-06-28" },
+    },
     featured: true,
   },
   {
@@ -137,6 +161,7 @@ export const INTEGRATIONS: readonly IntegrationInfo[] = [
     connectorEnvKey: "CONNECT_SENTRY_CONNECTOR",
     appScopeEnvKey: "CONNECT_SENTRY_APP_SCOPED",
     access: "read",
+    probe: { url: "https://sentry.io/api/0/organizations/" },
     featured: true,
   },
   {
@@ -156,6 +181,7 @@ export const INTEGRATIONS: readonly IntegrationInfo[] = [
     connectorEnvKey: "CONNECT_SUPABASE_CONNECTOR",
     appScopeEnvKey: "CONNECT_SUPABASE_APP_SCOPED",
     access: "destructive",
+    probe: { url: "https://api.supabase.com/v1/projects" },
     featured: true,
   },
   {
@@ -175,6 +201,7 @@ export const INTEGRATIONS: readonly IntegrationInfo[] = [
     connectorEnvKey: "CONNECT_NEON_CONNECTOR",
     appScopeEnvKey: "CONNECT_NEON_APP_SCOPED",
     access: "destructive",
+    probe: { url: "https://console.neon.tech/api/v2/projects" },
   },
   {
     id: "vercel",
@@ -193,6 +220,7 @@ export const INTEGRATIONS: readonly IntegrationInfo[] = [
     connectorEnvKey: "CONNECT_VERCEL_CONNECTOR",
     appScopeEnvKey: "CONNECT_VERCEL_APP_SCOPED",
     access: "write",
+    probe: { url: "https://api.vercel.com/v2/user" },
     featured: true,
   },
   {
@@ -212,6 +240,7 @@ export const INTEGRATIONS: readonly IntegrationInfo[] = [
     connectorEnvKey: "CONNECT_POSTHOG_CONNECTOR",
     appScopeEnvKey: "CONNECT_POSTHOG_APP_SCOPED",
     access: "write",
+    probe: { url: "https://us.posthog.com/api/users/@me/" },
   },
   {
     id: "stripe",
@@ -230,6 +259,7 @@ export const INTEGRATIONS: readonly IntegrationInfo[] = [
     connectorEnvKey: "CONNECT_STRIPE_CONNECTOR",
     appScopeEnvKey: "CONNECT_STRIPE_APP_SCOPED",
     access: "destructive",
+    probe: { url: "https://api.stripe.com/v1/balance" },
     note: {
       en: "Use a restricted key in development. Every call asks for approval.",
       so: "Isticmaal fure xaddidan markaad horumarinayso. Wicitaan kastaa wuxuu rabaa ogolaansho.",
@@ -251,6 +281,7 @@ export const INTEGRATIONS: readonly IntegrationInfo[] = [
     connectorEnvKey: "CONNECT_RESEND_CONNECTOR",
     appScopeEnvKey: "CONNECT_RESEND_APP_SCOPED",
     access: "destructive",
+    probe: { url: "https://api.resend.com/domains" },
   },
 ];
 

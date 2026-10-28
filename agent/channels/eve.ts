@@ -2,6 +2,12 @@ import { eveChannel } from "eve/channels/eve";
 import { localDev, type AuthFn, vercelOidc } from "eve/channels/auth";
 import { auth } from "@/lib/auth";
 import {
+  HEADER_INTEGRATION_TOKENS,
+  ATTR_INTEGRATION_TOKENS,
+  sealedTokensFromHeader,
+  sealedTokensToAttribute,
+} from "@/lib/integrations/credentials";
+import {
   selectionFromHeaders,
   selectionToAttributes,
 } from "@/lib/providers/selection";
@@ -37,11 +43,16 @@ const withModelSelection =
   async (request) => {
     const result = await authenticate(request);
     if (!result) return result;
+    const integrationTokens = sealedTokensToAttribute(
+      // Still sealed: only the connection's auth resolver can open a token.
+      sealedTokensFromHeader(request.headers.get(HEADER_INTEGRATION_TOKENS)),
+    );
     return {
       ...result,
       attributes: {
         ...result.attributes,
         ...selectionToAttributes(selectionFromHeaders(request.headers)),
+        ...(integrationTokens ? { [ATTR_INTEGRATION_TOKENS]: integrationTokens } : {}),
       },
     };
   };
