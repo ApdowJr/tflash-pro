@@ -15,6 +15,8 @@ import {
 import { fetchLiveModels } from "../lib/providers/live-models.ts";
 import { safeLocalPath } from "../lib/security/redirect.ts";
 import { internalEveHeaders, internalOrigin } from "../lib/security/internal-origin.ts";
+import { OWNER_PROOF_HEADER as CLIENT_OWNER_PROOF_HEADER } from "../lib/security/chat-ownership-wire.ts";
+import { OWNER_PROOF_HEADER as SERVER_OWNER_PROOF_HEADER } from "../lib/security/chat-ownership.ts";
 
 // Tests are local and never require real Supabase or provider credentials.
 process.env.NODE_ENV = "production";
@@ -107,14 +109,20 @@ test("model discovery refuses endpoint redirects", async () => {
 
 test("provider keys are sealed and tampering is rejected", async () => {
   const key = "a-private-test-provider-key";
-  const { token, expiresAt } = await sealCredential({ providerId: "openrouter", apiKey: key });
+  const { token, expiresAt } = await sealCredential({ providerId: "openrouter", ownerId: "owner-a", apiKey: key });
   assert.equal(token.includes(key), false);
   assert.ok(expiresAt > Date.now());
-  assert.equal((await openCredential(token))?.apiKey, key);
+  assert.equal((await openCredential(token, "owner-a"))?.apiKey, key)
+  assert.equal(await openCredential(token, "owner-b"), null);
+  assert.equal(await openCredential(token), null);
+  await assert.rejects(
+    resolveCredential({ id: "openrouter", kind: "openai-compatible", baseURL: "https://openrouter.ai/api/v1" }, token, "owner-b"),
+    /belongs to another account/,
+  );
   const parts = token.split(".");
   // Flip a character in the authenticated ciphertext (not the padding bits).
   parts[2] = (parts[2][0] === "A" ? "B" : "A") + parts[2].slice(1);
-  assert.equal(await openCredential(parts.join(".")), null);
+  assert.equal(await openCredential(parts.join("."), "owner-a"), null);
 });
 
 test("a remembered custom URL can use a server key without sealing that key", async () => {
@@ -126,10 +134,10 @@ test("a remembered custom URL can use a server key without sealing that key", as
   process.env.CUSTOM_PROVIDER_API_KEY = "operator-only-key";
   try {
     const { token } = await sealCredential({
-      providerId: "custom", apiKey: "", baseURL: "https://custom.example.test/v1",
+      providerId: "custom", ownerId: "owner-a", apiKey: "", baseURL: "https://custom.example.test/v1",
     });
-    assert.equal((await openCredential(token))?.apiKey, "");
-    const resolved = await resolveCredential(provider, token);
+    assert.equal((await openCredential(token, "owner-a"))?.apiKey, "");
+    const resolved = await resolveCredential(provider, token, "owner-a");
     assert.equal(resolved.apiKey, "operator-only-key");
     assert.equal(resolved.baseURL, "https://custom.example.test/v1");
     assert.equal(resolved.source, "environment");
@@ -144,10 +152,15 @@ test("production rejects a weak provider encryption secret", async () => {
   process.env.PROVIDER_KEYS_SECRET = "too-short";
   try {
     await assert.rejects(
-      sealCredential({ providerId: "openrouter", apiKey: "test" }),
+      sealCredential({ providerId: "openrouter", ownerId: "owner-a", apiKey: "test" }),
       /at least 32 characters/,
     );
   } finally {
     process.env.PROVIDER_KEYS_SECRET = previous;
   }
+});
+
+
+test("client and server agree on the owner-proof header", () => {
+  assert.equal(CLIENT_OWNER_PROOF_HEADER, SERVER_OWNER_PROOF_HEADER);
 });

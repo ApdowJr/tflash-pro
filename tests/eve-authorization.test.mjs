@@ -8,15 +8,21 @@ registerHooks({
   resolve(specifier, context, nextResolve) {
     if (specifier === "eve/channels/eve") return { url: "data:text/javascript,export function eveChannel(options) { return options; }", shortCircuit: true };
     if (specifier === "eve/channels/auth") return { url: "data:text/javascript,export class ForbiddenError extends Error { constructor(options) { super(options.message); } }", shortCircuit: true };
+    if (specifier === "@/lib/auth-vercel") return { url: "data:text/javascript,export async function vercelPrincipal(headers) { return globalThis.__tflashVercelPrincipal(headers); }", shortCircuit: true };
     if (specifier === "@/lib/supabase/request") return { url: "data:text/javascript,export function requestSupabase(request) { return globalThis.__tflashRequestSupabase(request); }", shortCircuit: true };
     if (specifier.startsWith("@/")) return { url: new URL(`../${specifier.slice(2)}.ts`, import.meta.url).href, shortCircuit: true };
-    if (context.parentURL?.includes("/lib/providers/") && /^\.\//.test(specifier) && !/\.[cm]?[jt]s$/.test(specifier)) return nextResolve(`${specifier}.ts`, context);
+    if ((context.parentURL?.includes("/lib/providers/") || context.parentURL?.includes("/lib/integrations/")) && /^\.\//.test(specifier) && !/\.[cm]?[jt]s$/.test(specifier)) return nextResolve(`${specifier}.ts`, context);
     return nextResolve(specifier, context);
   },
 });
 const { default: channel } = await import("../agent/channels/eve.ts");
-const { CREATE_PROOF_HEADER, signChatCreation, signChatOwnership } = await import("../lib/security/chat-ownership.ts");
+const { CREATE_PROOF_HEADER, OWNER_PROOF_HEADER, signChatCreation, signChatOwnership } = await import("../lib/security/chat-ownership.ts");
 const authorize = channel.auth[0];
+const authorizeVercel = channel.auth[1];
+globalThis.__tflashVercelPrincipal = (headers) => {
+  const id = headers.get("cookie")?.match(/vercel=(alice|bob)/)?.[1];
+  return id ? { id: `vercel:${id}`, kind: "vercel", email: `${id}@example.test`, name: id } : null;
+};
 process.env.NODE_ENV = "production";
 process.env.TFLASH_SESSION_SECRET = "test-session-secret-only-0123456789abcdef";
 const rows = new Map([["session-a", { user_id: "user-a", owner_proof: signChatOwnership("user-a", "session-a") }]]);
@@ -47,10 +53,11 @@ test("Eve rejects anonymous sessions and requires a short-lived server creation 
   await assert.rejects(authorize(eveRequest("/eve/v1/session", "POST")), /Create a conversation/);
   await assert.rejects(authorize(eveRequest("/eve/v1/session", "GET", "user-a", { [CREATE_PROOF_HEADER]: signChatCreation("user-a") })), /Create a conversation/);
   await assert.rejects(authorize(eveRequest("/eve/v1/session", "POST", "user-b", { [CREATE_PROOF_HEADER]: signChatCreation("user-a") })), /Create a conversation/);
-  const principal = await authorize(eveRequest("/eve/v1/session", "POST", "user-a", { [CREATE_PROOF_HEADER]: signChatCreation("user-a"), "x-ururka-provider": "openrouter" }));
+  const principal = await authorize(eveRequest("/eve/v1/session", "POST", "user-a", { [CREATE_PROOF_HEADER]: signChatCreation("user-a"), "x-tflash-provider": "openrouter" }));
   assert.equal(principal.principalId, "user-a");
   assert.equal(principal.authenticator, "supabase");
   assert.equal(principal.attributes.email, "user-a@example.test");
+  assert.equal(principal.attributes["tflash:provider"], "openrouter");
   assert.ok(!JSON.stringify(principal.attributes).includes("user=user-a"));
 });
 
@@ -68,4 +75,21 @@ test("Eve checks ownership for turns, controls, streams and forged index rows", 
   rows.set("forged", { user_id: "user-b", owner_proof: signChatOwnership("user-a", "session-a") });
   await assert.rejects(authorize(eveRequest("/eve/v1/session/forged/stream", "GET", "user-b")), /Conversation not available/);
   await assert.rejects(authorize(eveRequest("/eve/v1/session/%ZZ/stream")), /Conversation not available/);
+});
+
+
+test("Vercel users need their own signed proof for every session route", async () => {
+  const request = (path, method, user, proof) => new Request(`https://app.example.test${path}`, {
+    method, headers: { cookie: `vercel=${user}`, ...(proof ? { [OWNER_PROOF_HEADER]: proof } : {}) },
+  });
+  assert.equal(await authorizeVercel(request("/eve/v1/info", "GET", "nobody")), null);
+  await assert.rejects(authorizeVercel(request("/eve/v1/session", "POST", "alice")), /Create a conversation/);
+  const create = new Request("https://app.example.test/eve/v1/session", { method: "POST", headers: { cookie: "vercel=alice", [CREATE_PROOF_HEADER]: signChatCreation("vercel:alice") } });
+  assert.equal((await authorizeVercel(create)).principalId, "vercel:alice");
+  const proof = signChatOwnership("vercel:alice", "v-session");
+  for (const [path, method] of [["/eve/v1/session/v-session", "POST"], ["/eve/v1/session/v-session/stream", "GET"], ["/eve/v1/session/v-session/reset", "POST"]]) {
+    assert.equal((await authorizeVercel(request(path, method, "alice", proof))).principalId, "vercel:alice");
+    await assert.rejects(authorizeVercel(request(path, method, "alice")), /Conversation not available/);
+    await assert.rejects(authorizeVercel(request(path, method, "bob", proof)), /Conversation not available/);
+  }
 });

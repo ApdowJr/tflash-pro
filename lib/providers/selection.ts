@@ -11,15 +11,15 @@ import {
   getProvider,
 } from "./catalog";
 
-export const HEADER_PROVIDER = "x-ururka-provider";
-export const HEADER_MODEL = "x-ururka-model";
-export const HEADER_CONTEXT = "x-ururka-context";
-export const HEADER_TOKEN = "x-ururka-token";
+export const HEADER_PROVIDER = "x-tflash-provider";
+export const HEADER_MODEL = "x-tflash-model";
+export const HEADER_CONTEXT = "x-tflash-context";
+export const HEADER_TOKEN = "x-tflash-token";
 
-export const ATTR_PROVIDER = "ururka:provider";
-export const ATTR_MODEL = "ururka:model";
-export const ATTR_CONTEXT = "ururka:context";
-export const ATTR_TOKEN = "ururka:token";
+export const ATTR_PROVIDER = "tflash:provider";
+export const ATTR_MODEL = "tflash:model";
+export const ATTR_CONTEXT = "tflash:context";
+export const ATTR_TOKEN = "tflash:token";
 
 export const MIN_CONTEXT_WINDOW = 4_096;
 export const MAX_CONTEXT_WINDOW = 4_000_000;

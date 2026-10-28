@@ -6,18 +6,22 @@ import { registerHooks } from "node:module";
 // fake Eve transport. These tests never contact Supabase or an AI provider.
 registerHooks({
   resolve(specifier, context, nextResolve) {
+    if (specifier === "@/lib/identity") return { url: "data:text/javascript,export async function currentPrincipal() { return globalThis.__tflashMockPrincipal(); }", shortCircuit: true };
     if (specifier === "@/lib/supabase/server") {
       return { url: "data:text/javascript,export async function serverSupabase() { return globalThis.__tflashMockSupabase(); }", shortCircuit: true };
     }
     if (specifier.startsWith("@/")) {
       return { url: new URL(`../${specifier.slice(2)}.ts`, import.meta.url).href, shortCircuit: true };
     }
+    if (context.parentURL?.includes("/lib/providers/") && /^\.\//.test(specifier) && !/\.[cm]?[jt]s$/.test(specifier)) {
+      return nextResolve(`${specifier}.ts`, context);
+    }
     return nextResolve(specifier, context);
   },
 });
 const { GET, POST } = await import("../app/api/chats/route.ts");
 const chatRoute = await import("../app/api/chats/[sessionId]/route.ts");
-const { CREATE_PROOF_HEADER, signChatOwnership, verifyChatCreation } = await import("../lib/security/chat-ownership.ts");
+const { CREATE_PROOF_HEADER, OWNER_PROOF_HEADER, signChatOwnership, verifyChatCreation } = await import("../lib/security/chat-ownership.ts");
 
 process.env.NODE_ENV = "production";
 process.env.TFLASH_SESSION_SECRET = "test-session-secret-only-0123456789abcdef";
@@ -25,6 +29,8 @@ process.env.TFLASH_INTERNAL_ORIGIN = "https://eve.example.test";
 process.env.VERCEL_AUTOMATION_BYPASS_SECRET = "server-only-test-bypass";
 
 let currentUser = null;
+let currentKind = "supabase";
+globalThis.__tflashMockPrincipal = () => currentUser ? { id: currentUser, kind: currentKind, name: "Test", email: "test@example.test" } : null;
 const rows = new Map();
 
 class Query {
@@ -82,7 +88,7 @@ test("creation, history, isolation, forgery checks, and best-effort deletion", a
     assert.equal(options.redirect, "error");
     if (String(url).endsWith("/eve/v1/session")) {
       assert.ok(verifyChatCreation("user-a", headers.get(CREATE_PROOF_HEADER)));
-      assert.equal(headers.get("x-ururka-provider"), "openrouter");
+      assert.equal(headers.get("x-tflash-provider"), "openrouter");
       assert.equal(headers.has("x-untrusted-header"), false);
       return Response.json({ sessionId: "session-a" });
     }
@@ -92,7 +98,7 @@ test("creation, history, isolation, forgery checks, and best-effort deletion", a
   };
   try {
     const created = await POST(jsonRequest("https://app.test/api/chats", "POST", {
-      cookie: "test-session-cookie", "x-ururka-provider": "openrouter", "x-untrusted-header": "do-not-forward",
+      cookie: "test-session-cookie", "x-tflash-provider": "openrouter", "x-untrusted-header": "do-not-forward",
       "x-vercel-protection-bypass": "client-bypass",
     }));
     assert.equal(created.status, 201);
@@ -133,6 +139,42 @@ test("invalid Eve session responses do not create index entries", async () => {
     assert.equal(result.status, 502);
     assert.equal(rows.size, 0);
   } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+
+test("Vercel chat proofs are issued to the authenticated owner and cannot cross accounts", async () => {
+  currentKind = "vercel";
+  currentUser = "vercel:alice";
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    const headers = new Headers(options.headers);
+    calls.push({ url: String(url), headers });
+    if (String(url).endsWith("/eve/v1/session")) {
+      assert.equal(verifyChatCreation("vercel:alice", headers.get(CREATE_PROOF_HEADER)), true);
+      return Response.json({ sessionId: "vercel-session" });
+    }
+    assert.equal(headers.get(OWNER_PROOF_HEADER), signChatOwnership("vercel:alice", "vercel-session"));
+    return Response.json({ ok: true });
+  };
+  try {
+    const response = await POST(jsonRequest("https://app.test/api/chats", "POST", { cookie: "better-auth-test" }));
+    assert.equal(response.status, 201);
+    const { sessionId, ownerProof } = await response.json();
+    assert.equal(sessionId, "vercel-session");
+    assert.equal(ownerProof, signChatOwnership("vercel:alice", sessionId));
+    assert.equal((await (await GET()).json()).storage, "browser");
+    assert.equal((await chatRoute.PATCH(jsonRequest("https://app.test/api/chats/vercel-session", "PATCH", {}, { title: "x" }), detail(sessionId))).status, 404);
+    currentUser = "vercel:bob";
+    assert.equal((await chatRoute.PATCH(jsonRequest("https://app.test/api/chats/vercel-session", "PATCH", { [OWNER_PROOF_HEADER]: ownerProof }, { title: "x" }), detail(sessionId))).status, 404);
+    currentUser = "vercel:alice";
+    assert.equal((await chatRoute.PATCH(jsonRequest("https://app.test/api/chats/vercel-session", "PATCH", { [OWNER_PROOF_HEADER]: ownerProof }, { title: "x" }), detail(sessionId))).status, 200);
+    assert.equal((await chatRoute.DELETE(jsonRequest("https://app.test/api/chats/vercel-session", "DELETE", { cookie: "better-auth-test", [OWNER_PROOF_HEADER]: ownerProof }), detail(sessionId))).status, 200);
+    assert.equal(calls.length, 2);
+  } finally {
+    currentKind = "supabase";
     globalThis.fetch = originalFetch;
   }
 });

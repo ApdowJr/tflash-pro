@@ -8,10 +8,13 @@
  * variables and never leave the server.
  */
 import type { ProviderInfo } from "./catalog";
+import { deploymentSecret } from "../security/deployment-secrets.mjs";
 
 export type SealedCredential = {
   readonly v: 1;
   readonly providerId: string;
+  /** Only this verified app identity can use the sealed credential. */
+  readonly ownerId: string;
   readonly apiKey: string;
   readonly baseURL?: string;
   readonly label: string;
@@ -31,7 +34,7 @@ const TOKEN_PREFIX = "v1";
 const encoder = new TextEncoder();
 
 function secretMaterial(): string {
-  const secret = process.env.PROVIDER_KEYS_SECRET || process.env.TFLASH_SESSION_SECRET;
+  const secret = deploymentSecret("credentials");
   if (process.env.NODE_ENV === "production" && (!secret || secret.length < 32)) {
     throw new Error("Set PROVIDER_KEYS_SECRET to a random value of at least 32 characters before connecting a provider.");
   }
@@ -67,6 +70,7 @@ function fromBase64Url(value: string): ArrayBuffer {
 
 export async function sealCredential(input: {
   readonly providerId: string;
+  readonly ownerId: string;
   readonly apiKey: string;
   readonly baseURL?: string;
   readonly label?: string;
@@ -76,6 +80,7 @@ export async function sealCredential(input: {
   const payload: SealedCredential = {
     v: 1,
     providerId: input.providerId,
+    ownerId: input.ownerId,
     apiKey: input.apiKey,
     label: input.label ?? "Connected in browser",
     issuedAt,
@@ -95,8 +100,11 @@ export async function sealCredential(input: {
 }
 
 /** Returns null for expired, tampered, or malformed tokens. */
-export async function openCredential(token: string | undefined): Promise<SealedCredential | null> {
-  if (!token || token.length > 4096) return null;
+export async function openCredential(
+  token: string | undefined,
+  ownerId: string | undefined,
+): Promise<SealedCredential | null> {
+  if (!ownerId || !token || token.length > 4096) return null;
   const parts = token.split(".");
   if (parts.length !== 3 || parts[0] !== TOKEN_PREFIX) return null;
   try {
@@ -109,6 +117,7 @@ export async function openCredential(token: string | undefined): Promise<SealedC
     if (
       payload.v !== 1 ||
       typeof payload.providerId !== "string" ||
+      payload.ownerId !== ownerId ||
       typeof payload.apiKey !== "string" ||
       typeof payload.expiresAt !== "number" ||
       payload.expiresAt <= Date.now()
@@ -186,8 +195,12 @@ export function hasEnvironmentKey(provider: ProviderInfo): boolean {
 export async function resolveCredential(
   provider: ProviderInfo,
   token?: string,
+  ownerId?: string,
 ): Promise<ResolvedCredential> {
-  const sealed = await openCredential(token);
+  const sealed = await openCredential(token, ownerId);
+  if (token && !sealed) {
+    throw new Error("The provider connection expired or belongs to another account. Reconnect it in Settings.");
+  }
   const envKey = environmentKey(provider);
   const envBaseURL = environmentBaseURL(provider);
   const candidateBaseURL = (sealed?.providerId === provider.id ? sealed.baseURL : undefined)

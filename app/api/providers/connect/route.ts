@@ -1,4 +1,4 @@
-import { currentUser } from "@/lib/supabase/server";
+import { currentPrincipal } from "@/lib/identity";
 import { getProvider } from "@/lib/providers/catalog";
 import { sealCredential, validateBaseURL } from "@/lib/providers/credentials";
 import { testConnection } from "@/lib/providers/live-models";
@@ -23,7 +23,8 @@ export type ConnectResponse = {
 };
 
 export async function POST(request: Request): Promise<Response> {
-  if (!await currentUser()) return Response.json({ ok: false, error: "Sign in to continue." }, { status: 401 });
+  const principal = await currentPrincipal();
+  if (!principal) return Response.json({ ok: false, error: "Sign in to continue." }, { status: 401 });
   if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) return Response.json({ ok: false, error: "Expected JSON." }, { status: 415 });
   let payload: Record<string, unknown>;
   try {
@@ -49,7 +50,7 @@ export async function POST(request: Request): Promise<Response> {
   const force = payload.force === true;
 
   try {
-    const credential = await credentialFromInput(provider, { apiKey, baseURL });
+    const credential = await credentialFromInput(provider, { apiKey, baseURL }, { ownerId: principal.id });
     if (provider.requiresKey && !credential.apiKey && credential.source === "none") {
       throw new ProviderInputError(`Add an API key for ${provider.name} first.`);
     }
@@ -94,6 +95,7 @@ export async function POST(request: Request): Promise<Response> {
 
     const sealed = await sealCredential({
       providerId: provider.id,
+      ownerId: principal.id,
       apiKey,
       label: `${provider.name} · connected in this browser`,
       ...(validatedBase ? { baseURL: validatedBase } : {}),

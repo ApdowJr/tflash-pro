@@ -16,13 +16,13 @@ export type ResolvedModel = {
   readonly contextWindow: number;
 };
 
-export async function resolveLanguageModel(selection: WireSelection): Promise<ResolvedModel> {
+export async function resolveLanguageModel(selection: WireSelection, ownerId?: string): Promise<ResolvedModel> {
   const provider = getProvider(selection.providerId);
   if (!provider || provider.kind === "gateway") {
     return { model: selection.modelId, contextWindow: selection.contextWindow };
   }
 
-  const credential = await resolveCredential(provider, selection.token);
+  const credential = await resolveCredential(provider, selection.token, ownerId);
   const apiKey = credential.apiKey || undefined;
   const baseURL = credential.baseURL;
   const modelId = selection.modelId;

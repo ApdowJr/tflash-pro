@@ -1,4 +1,4 @@
-import { currentUser } from "@/lib/supabase/server";
+import { currentPrincipal } from "@/lib/identity";
 import { getProvider } from "@/lib/providers/catalog";
 import { testConnection } from "@/lib/providers/live-models";
 import { credentialFromInput, errorResponse, ProviderInputError } from "@/lib/providers/route-helpers";
@@ -16,7 +16,8 @@ export type TestConnectionResponse = {
 };
 
 export async function POST(request: Request): Promise<Response> {
-  if (!await currentUser()) return Response.json({ ok: false, error: "Sign in to continue." }, { status: 401 });
+  const principal = await currentPrincipal();
+  if (!principal) return Response.json({ ok: false, error: "Sign in to continue." }, { status: 401 });
   if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) return Response.json({ ok: false, error: "Expected JSON." }, { status: 415 });
   let payload: Record<string, unknown>;
   try {
@@ -30,7 +31,7 @@ export async function POST(request: Request): Promise<Response> {
 
   const started = Date.now();
   try {
-    const credential = await credentialFromInput(provider, payload);
+    const credential = await credentialFromInput(provider, payload, { ownerId: principal.id });
     const result = await testConnection(provider, credential);
     const body: TestConnectionResponse = {
       ok: result.ok,

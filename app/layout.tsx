@@ -1,34 +1,65 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import "@fontsource-variable/dm-sans";
 import "@fontsource/dm-serif-display/400.css";
 import "@fontsource/dm-serif-display/400-italic.css";
 import "@fontsource/dm-mono/400.css";
 import "./globals.css";
 
+const DESCRIPTION =
+  "T Flash is a fast AI workspace: bring OpenRouter, OpenAI, Anthropic, Gemini, Groq or a local model, then switch between them mid-conversation.";
+
 export const metadata: Metadata = {
-  title: "Tflash — make space for better ideas",
-  description: "A thoughtful AI workspace. Bring your own models and get to work.",
-  applicationName: "Tflash",
+  title: {
+    default: "T Flash",
+    template: "%s · T Flash",
+  },
+  description: DESCRIPTION,
+  applicationName: "T Flash",
+  appleWebApp: {
+    capable: true,
+    title: "T Flash",
+  },
+  openGraph: {
+    description: DESCRIPTION,
+    title: "T Flash",
+    type: "website",
+  },
+  twitter: {
+    card: "summary",
+    description: DESCRIPTION,
+    title: "T Flash",
+  },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  // `cover` opts into env(safe-area-inset-*) on iOS so the composer and the
+  // sidebar clear the home indicator instead of sitting under it.
+  viewportFit: "cover",
+  // Keep the layout height in sync with the on-screen keyboard on Android.
+  interactiveWidget: "resizes-content",
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#f8f9f5" },
-    { media: "(prefers-color-scheme: dark)", color: "#161a17" },
+    { media: "(prefers-color-scheme: light)", color: "#fdfcfb" },
+    { media: "(prefers-color-scheme: dark)", color: "#1c1a18" },
   ],
 };
 
+// Applies the saved theme before hydration so the first paint never flashes.
 const THEME_SCRIPT = `(function(){try{var t=localStorage.getItem('tflash:theme');if(t==='dark'||t==='light'){document.documentElement.dataset.theme=t;document.documentElement.style.colorScheme=t;}}catch(e){}})();`;
 
 export default function RootLayout({ children }: { readonly children: ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <head><script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} /></head>
-      <body><TooltipProvider>{children}</TooltipProvider></body>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+      </head>
+      <body>
+        <TooltipProvider>
+          {children}
+        </TooltipProvider>
+      </body>
     </html>
   );
 }

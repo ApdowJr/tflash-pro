@@ -1,10 +1,13 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { deploymentSecret } from "./deployment-secrets.mjs";
 
 export const CREATE_PROOF_HEADER = "x-tflash-create-proof";
+/** Vercel-account chats keep their signed ownership proof in account-scoped browser storage. */
+export const OWNER_PROOF_HEADER = "x-tflash-owner-proof";
 
 /** Keep stable across all Next/eve instances. Never expose this secret. */
 function secret(): string {
-  const value = process.env.TFLASH_SESSION_SECRET || process.env.PROVIDER_KEYS_SECRET;
+  const value = deploymentSecret("session");
   if (value && value.length >= 32) return value;
   if (process.env.NODE_ENV !== "production") return "tflash-local-development-only-change-before-deploy";
   throw new Error("Set TFLASH_SESSION_SECRET to a random value of at least 32 characters.");

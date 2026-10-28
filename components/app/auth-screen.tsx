@@ -3,6 +3,7 @@
 import { ArrowLeftIcon, ArrowRightIcon, EyeIcon, EyeOffIcon, LoaderCircleIcon } from "lucide-react";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { browserSupabase } from "@/lib/supabase/browser";
+import { authClient } from "@/lib/auth-client";
 import { safeLocalPath } from "@/lib/security/redirect";
 import { Brand, BrandMark } from "./brand";
 
@@ -17,6 +18,9 @@ const words = {
     heroBody: "Think, write and build with the AI models you choose. All in one considered space.",
     storyFoot: "A workspace for curious minds",
     signIn: "Sign in",
+    vercelSignIn: "Continue with Vercel",
+    orEmail: "or use email",
+    vercelUnavailable: "Vercel sign-in is not configured on this deployment.",
     signUp: "Create account",
     welcome: "Welcome back.",
     welcomeBody: "Pick up where your ideas left off.",
@@ -61,6 +65,9 @@ const words = {
     heroBody: "Ku fikir, ku qor oo ku dhis model-ka AI ee aad doorato. Dhammaan hal goob oo deggan.",
     storyFoot: "Goob loogu talagalay dadka wax abuura",
     signIn: "Soo gal",
+    vercelSignIn: "Ku sii wad Vercel",
+    orEmail: "ama isticmaal email",
+    vercelUnavailable: "Vercel sign-in looma diyaarin noocan.",
     signUp: "Samee akoon",
     welcome: "Soo dhawoow.",
     welcomeBody: "Halkii aad ka joogtay ka sii wad.",
@@ -132,15 +139,15 @@ function AuthLayout({ children, language, onLanguageChange }: {
         <div aria-hidden="true" className="auth-art">
           <svg viewBox="0 0 500 410" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M68 210h364M250 28v356" stroke="#7b8a73" strokeOpacity=".24" strokeDasharray="3 8" />
-            <circle cx="250" cy="210" r="152" stroke="#d8e9cd" strokeOpacity=".15" />
-            <circle cx="250" cy="210" r="117" stroke="#d8e9cd" strokeOpacity=".13" />
-            <ellipse cx="250" cy="210" rx="187" ry="62" transform="rotate(-28 250 210)" stroke="#c9e49c" strokeOpacity=".48" />
-            <ellipse cx="250" cy="210" rx="187" ry="62" transform="rotate(28 250 210)" stroke="#c9e49c" strokeOpacity=".25" />
-            <path d="M122 313 378 108" stroke="#c9e49c" strokeOpacity=".22" />
-            <circle cx="115" cy="267" r="5" fill="#D2F377" />
-            <circle cx="390" cy="148" r="3.5" fill="#d8e9cd" />
-            <circle cx="250" cy="210" r="4" fill="#D2F377" />
-            <path d="M82 56h39M82 56v39M418 364h-39M418 364v-39" stroke="#d8e9cd" strokeOpacity=".22" />
+            <circle cx="250" cy="210" r="152" stroke="#f2e8d5" strokeOpacity=".15" />
+            <circle cx="250" cy="210" r="117" stroke="#f2e8d5" strokeOpacity=".13" />
+            <ellipse cx="250" cy="210" rx="187" ry="62" transform="rotate(-28 250 210)" stroke="#eac983" strokeOpacity=".48" />
+            <ellipse cx="250" cy="210" rx="187" ry="62" transform="rotate(28 250 210)" stroke="#eac983" strokeOpacity=".25" />
+            <path d="M122 313 378 108" stroke="#eac983" strokeOpacity=".22" />
+            <circle cx="115" cy="267" r="5" fill="#f3bd56" />
+            <circle cx="390" cy="148" r="3.5" fill="#f2e8d5" />
+            <circle cx="250" cy="210" r="4" fill="#f3bd56" />
+            <path d="M82 56h39M82 56v39M418 364h-39M418 364v-39" stroke="#f2e8d5" strokeOpacity=".22" />
           </svg>
           <span className="auth-art-note">T / 01<br />A SPACE TO THINK</span>
         </div>
@@ -193,7 +200,7 @@ function PasswordInput({ id, value, onChange, placeholder, autoComplete, label, 
   );
 }
 
-export function AuthScreen() {
+export function AuthScreen({ vercelAvailable }: { readonly vercelAvailable: boolean }) {
   const { language, changeLanguage, text } = useLanguage();
   const [mode, setMode] = useState<Mode>("signin");
   const [name, setName] = useState("");
@@ -241,6 +248,14 @@ export function AuthScreen() {
     finally { setPending(false); }
   }
 
+  async function signInWithVercel() {
+    setError(""); setPending(true);
+    try {
+      const result = await authClient.signIn.social({ provider: "vercel", callbackURL: safeNext() });
+      if (result.error) { setError(text.genericError); setPending(false); }
+    } catch { setError(text.genericError); setPending(false); }
+  }
+
   return (
     <AuthLayout language={language} onLanguageChange={changeLanguage}>
       <div className="auth-form-head">
@@ -252,6 +267,16 @@ export function AuthScreen() {
         <div className="auth-tabs" aria-label="Account options">
           <button aria-pressed={mode === "signin"} onClick={() => changeMode("signin")} type="button">{text.signIn}</button>
           <button aria-pressed={mode === "signup"} onClick={() => changeMode("signup")} type="button">{text.signUp}</button>
+        </div>
+      ) : null}
+      {mode !== "forgot" ? (
+        <div className="auth-social">
+          <button disabled={pending || !vercelAvailable} onClick={signInWithVercel} type="button">
+            <svg aria-hidden="true" width="13" height="12" viewBox="0 0 24 20"><path d="M12 0 24 20H0L12 0Z" fill="currentColor" /></svg>
+            {text.vercelSignIn}
+          </button>
+          {!vercelAvailable ? <p className="auth-social-unavailable">{text.vercelUnavailable}</p> : null}
+          <div><span>{text.orEmail}</span></div>
         </div>
       ) : null}
       <form className="auth-form" onSubmit={submit}>

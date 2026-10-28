@@ -1,91 +1,93 @@
 # Tflash
 
-Tflash waa goob wada hadal AI ah oo ku hadasha Soomaali iyo English. Waxaad ku geli kartaa akoonkaaga, waxaadna dooran kartaa OpenRouter, OpenAI, Anthropic, Gemini, ama provider kale oo aad ku kalsoon tahay.
+Tflash waa goob wada hadal AI ah oo ku hadasha Soomaali iyo English. Ku gal email iyo furahaaga ama Vercel, dabadeed dooro OpenRouter, OpenAI, Anthropic, Gemini, ama provider kale.
 
-Tflash is an Eve + Next.js workspace with email/password accounts, account-isolated conversation history, streaming chat, and per-turn model selection.
+Tflash is an Eve + Next.js workspace with streaming chat, per-turn model selection, two sign-in methods, and ten approval-gated MCP connections.
 
-## What is included
+## Get started
 
-- A responsive Tflash identity, sign-in, sign-up, email confirmation, and password recovery.
-- Supabase Auth and an RLS-protected conversation index. Eve session routes additionally check a server-signed user/session binding, including streams and controls.
-- OpenRouter and 14 other provider choices, including Vercel AI Gateway, OpenAI, Anthropic, Google, Groq, Mistral, DeepSeek, xAI, Together, Fireworks, Cerebras, Ollama, LM Studio, and a custom OpenAI-compatible endpoint.
-- Live model discovery with a built-in fallback catalog, provider connections, streaming messages, attachments, Markdown export, themes, keyboard shortcuts, and Somali/English UI.
-
-## Run locally
-
-Use **Node.js 24** and pnpm via Corepack. The package manager version is pinned in `package.json`; Vercel's install command and the CI workflow use the same frozen lockfile:
+Use **Node.js 24** and the pinned pnpm version through Corepack:
 
 ```bash
 corepack pnpm install --frozen-lockfile
 cp .env.example .env.local
-# Add stable local secrets to .env.local (see below).
+# Set local secrets and, if desired, Vercel login credentials.
 corepack pnpm dev
 ```
 
-Open <http://localhost:3000>. The sample public Supabase URL and publishable key point to the Tflash project; they may be replaced with another project's public values. `NEXT_PUBLIC_*` values are embedded at build time, so set them before building. Do not use a Supabase service-role or secret key in client-side variables.
+Open <http://localhost:3000>. The example Supabase URL and publishable key are public; `NEXT_PUBLIC_*` variables are embedded at build time. Never put a Supabase service-role key or other secret in a public variable.
 
-Generate **two independent secrets** locally, for example by running the following twice and putting the results in `.env.local` as `TFLASH_SESSION_SECRET` and `PROVIDER_KEYS_SECRET`:
+Generate two independent random values and keep them private and stable across all Next and Eve instances:
 
 ```bash
 node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
 ```
 
-Both should be at least 32 characters, private, and stable across all Next and Eve instances. Development has deliberately insecure fallback values if they are missing; production does not. If only one of the two is supplied, it is used as the fallback for the other. Changing the session secret invalidates existing ownership proofs, making indexed chats inaccessible; changing the provider secret invalidates saved provider connections.
+Set `TFLASH_SESSION_SECRET` (chat ownership proofs) and `PROVIDER_KEYS_SECRET` (provider/integration credential encryption) to values of at least 32 characters. If only one is set, it is the fallback for the other; separate values are recommended. Development-only fallback values are insecure, and production rejects missing or short secrets. Rotating the session secret invalidates existing chat proofs; rotating the credential secret invalidates saved connections and in-flight OAuth flows.
 
-Useful commands:
+For a **Git preview only**, `TFLASH_PREVIEW_USE_AUTH_SECRET=1` explicitly permits deriving separate, branch-specific preview keys from a sufficiently long `BETTER_AUTH_SECRET`. The branch name must be present in `VERCEL_GIT_COMMIT_REF`. This never applies to production. Changing the branch, root secret, or flag invalidates the preview's existing proofs and connections. Prefer dedicated secrets when preview data must persist independently.
 
 ```bash
-corepack pnpm test          # unit and local mock integration tests (no credentials)
+corepack pnpm test        # local unit and mock-service tests
 corepack pnpm typecheck
-corepack pnpm build         # Next production build, including type checks
-corepack pnpm build:eve     # Eve agent build
+corepack pnpm build       # Next production build
+corepack pnpm build:eve   # Eve agent build
 ```
 
-`.github/workflows/ci.yml` runs these checks with dummy credentials on pushes and pull requests. Its mock tests do not validate live Supabase, provider, or Vercel connectivity.
+CI runs these checks using dummy values. Passing them does not establish live Supabase, model-provider, OAuth, or sandbox connectivity. `/api/health` reports configuration without values; its `ready` flag checks required signing/encryption keys, not live services.
 
-## Supabase setup
+## Accounts and history
 
-The Tflash project already has the migration in `supabase/migrations/20261028000000_create_tflash_chats.sql`. For a different project, apply that migration once using the Supabase SQL Editor or your migration workflow. It creates the chat index, grants authenticated access, and enables user-specific RLS policies. Eve transcripts are stored by Eve's workflow world, not in this table.
+- **Supabase email/password:** sign-up, confirmation, and recovery use Supabase Auth. The `tflash_chats` index uses RLS and server-signed account/session ownership proofs. Titles sync with the account; Eve stores the actual transcripts separately.
+- **Vercel sign-in:** Better Auth uses the Vercel OAuth app. In its database-free configuration, the verified Vercel account ID provides a stable, namespaced identity. New chat titles and ownership proofs are stored in **this browser** under that identity. Clearing site data, switching browsers, or losing the session secret can make those chats inaccessible.
 
-1. Enable **Email** authentication and configure the confirmation policy under Supabase Auth. This app supports email/password; social sign-in is not configured.
-2. In **Auth → URL Configuration**, set the **Site URL** to your real production origin and allow each deployment callback (including its query string), for example `http://localhost:3000/auth/callback**` and `https://your-domain.example/auth/callback**`. Add the specific preview host separately when testing a preview; avoid a wildcard over hosts you do not control. An unlisted callback cannot complete sign-up or password recovery.
-3. The current project has email confirmation enabled. A user must open the confirmation link before signing in; finish a PKCE email flow in the browser that initiated it. Configure a production SMTP provider and appropriate rate limits before inviting a wider audience; the default email service is restricted.
-4. Set the public URL/key and both secrets in your hosting environment. Configure `APP_URL` as the public HTTPS origin. If internal Eve traffic uses a different trusted origin, set `TFLASH_INTERNAL_ORIGIN`; otherwise Vercel's deployment URL or `APP_URL` is used. Production internal origins must use HTTPS and must route `/eve/` to this app. Never derive the internal destination from an incoming Host header. For a deployment protected by Vercel Authentication, enable [Protection Bypass for Automation](https://vercel.com/docs/deployment-protection/methods-to-bypass-deployment-protection/protection-bypass-automation) and select a secret for the `VERCEL_AUTOMATION_BYPASS_SECRET` system environment variable. The app uses it only on server-side Next-to-Eve calls; never expose it to browsers. Redeploy after changing or rotating the secret.
+These are **separate accounts**, even when they have the same email; they are not automatically linked and do not share history. If both sessions exist, Supabase takes precedence. Sign-out attempts to end both sessions, verifies that neither remains active, and removes the current account's saved browser credentials. It retains Vercel browser-only chat history. Existing browser-local chat IDs from earlier versions have no ownership proof and are not automatically imported; do not assume they have been deleted or migrated.
 
-The index stores a title and session ID per account. A conversation is listed only after its first message has been titled. Deleting it removes the index entry and attempts to reset the Eve session; the app then denies ordinary access while that entry is absent. It is **not a guaranteed immediate erasure** of workflow events or sandbox files: configure retention and deletion for your Eve workflow world and sandbox separately. A signed-in owner has database access to their own index rows, so do not treat removal from the UI as cryptographic destruction of the underlying transcript.
+Deleting a chat removes the Supabase index entry or the local Vercel index and attempts an Eve reset. It is **not guaranteed irreversible erasure** of workflow events or sandbox files. Vercel proofs have no server-side revocation list; a retained proof can remain usable. A Supabase owner may reinsert their own signed row. Configure workflow and sandbox retention separately.
 
-## Connect a provider
+## Authentication setup
 
-For OpenRouter:
+### Supabase email/password
 
-1. Create a key at <https://openrouter.ai/keys>.
-2. Open **Providers → OpenRouter**, paste the key, test the connection, and connect.
-3. Open **Models**, choose a model, and send a message. You can change providers and models on subsequent turns.
+1. Apply `supabase/migrations/20261028000000_create_tflash_chats.sql` to your Supabase project if it has not already been applied. It creates the index and user-specific RLS policies; it does not store transcripts.
+2. Enable Email authentication and the desired confirmation policy. Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` before building.
+3. Under **Auth → URL Configuration**, set the production Site URL and allow each exact callback, including query strings, for example `http://localhost:3000/auth/callback**` and `https://your-domain.example/auth/callback**`. Add the exact preview host separately. Open confirmation/recovery links in the browser that started the flow so its PKCE verifier is available.
+4. Configure production SMTP, rate limits, and abuse controls before inviting users. Supabase's default email service is restricted.
 
-Alternatively set `OPENROUTER_API_KEY` on the server for an operator-wide connection. Other supported `*_API_KEY` variables are listed in `.env.example`. The provider/model headers are validated and resolved to the corresponding AI SDK model on the server; the UI does not just change the label. Operator-wide keys incur the operator's costs for any user who can access them. Before a public launch, add appropriate rate limits, quotas, monitoring, and abuse controls at your hosting edge.
+### Vercel sign-in
 
-Browser-supplied keys are sealed with AES-GCM on the server. The browser keeps an opaque token in account-scoped local storage; it expires after seven days and is removed on sign-out or when clearing local provider keys. It is still a bearer credential: anyone who obtains the token can use it until expiry, and clearing it locally does not revoke the underlying provider key. Rotate the provider key if it was exposed. Server-wide provider keys are never intentionally returned to the browser.
+Configure `VERCEL_APP_CLIENT_ID`, `VERCEL_APP_CLIENT_SECRET`, and a stable, random `BETTER_AUTH_SECRET`. Register each intended callback, e.g. `https://your-domain.example/api/auth/callback/vercel`, in the Vercel OAuth app. These credentials are distinct from the optional Vercel *integration* OAuth credentials. The login button is disabled if the Vercel login credentials are missing.
 
-### Custom and local endpoints
+Production Better Auth trusts only exact hosts from `APP_URL`, `BETTER_AUTH_URL`, `ALLOWED_HOSTS` (comma-separated), and Vercel's exposed deployment, branch, and production hosts. Add custom aliases explicitly when the platform does not expose them; wildcard hosts are not accepted in production. Local development also accepts localhost and the development preview domain.
 
-Custom, Ollama, and LM Studio base URLs are called **from the server**, not the user's browser. A deployed app cannot use a model on the user's laptop via `localhost`. In production, an operator must list each trusted exact `host[:port]` in `CUSTOM_PROVIDER_ALLOWED_HOSTS`, including the default local hosts if they are intended. An empty list denies customizable hosts. HTTPS is required except for an explicitly allowlisted loopback HTTP endpoint; credentials in URLs and metadata/internal hostnames are rejected. Requests to custom model endpoints and model discovery do not follow redirects. Only allow hosts and DNS you control and trust.
+### Hosting and origins
 
-## Tool safety
+Set `APP_URL` to the public HTTPS origin. Next calls Eve through `TFLASH_INTERNAL_ORIGIN`, Vercel's deployment URL, or `APP_URL`, in that order. The internal origin must be trusted HTTPS in production and route `/eve/` to this app; it is never chosen from an incoming Host header. On deployments protected by Vercel Authentication, enable [Protection Bypass for Automation](https://vercel.com/docs/deployment-protection/methods-to-bypass-deployment-protection/protection-bypass-automation) and expose `VERCEL_AUTOMATION_BYPASS_SECRET` to the server. It is never forwarded from the client or sent to the browser. Redeploy after changing it.
 
-Shell commands and every tool exposed by the Supabase, Vercel, and Resend MCP connections require a fresh in-chat approval before they run. Review the displayed parameters before approving. The MCP connections are user-scoped and require their own Vercel Connect setup; provider selection is separate and does not require these integrations. Local Eve self-modification is disabled so a chat user cannot edit the app's source through that development extension.
+Integration OAuth has a separate exact-origin allowlist: `APP_URL`, platform-provided Vercel hosts, and `OAUTH_ALLOWED_ORIGINS`. Register each integration app's exact `https://host/api/integrations/oauth/callback` URL. See [docs/integrations.md](docs/integrations.md) for credentials, precedence, and approvals.
 
-New production shell sandboxes use a deny-all network policy; provider requests and Eve's web tools run outside that shell sandbox. Local just-bash cannot enforce network isolation and is explicitly allowed network access during development. Existing sandboxes created before a policy change may keep their old policy until replaced. Other Eve tools can still access sandbox files or the network. Approvals are not a substitute for sandbox isolation, scoped credentials, monitoring, or a review of all enabled capabilities before public use.
+## Model providers
 
-## Deployment and storage
+Tflash supports OpenRouter and 14 other choices, including Vercel AI Gateway, OpenAI, Anthropic, Gemini, Groq, Mistral, DeepSeek, xAI, Together, Fireworks, Cerebras, Ollama, LM Studio, and custom OpenAI-compatible servers. The chosen provider and model are resolved to an actual AI SDK model on each turn.
 
-Eve needs a sandbox provider even for a chat turn. Local development can use the installed `just-bash` fallback when Docker is unavailable; it runs in the application process and does **not** provide network isolation. Production builds do not fall back to it: build on Vercel with Vercel Sandbox available, or build with a reachable Docker daemon / an explicitly configured production sandbox provider. A successful build without a provider is not proof that turns can run. Review Eve's sandbox security documentation before exposing tools to untrusted users.
+For OpenRouter, create a key at <https://openrouter.ai/keys>, add and test it in **Settings → Providers**, then choose a model. An operator may instead configure `OPENROUTER_API_KEY`; shared server keys can incur costs for any signed-in user. Add quotas, monitoring, and abuse controls before public use.
 
-On self-hosted installations, persist Eve's workflow storage (`.eve/.workflow-data` with the default local world) and use a workflow world appropriate to your scaling and retention needs. Preserve both `/eve/` and `/.well-known/workflow/` routes through a reverse proxy. Supabase stores only the conversation index; losing the workflow store loses the associated transcripts even if titles remain. See the Eve deployment and sandbox docs in `node_modules/eve/docs` for the hosting topology and limitations.
+Browser-supplied keys are encrypted server-side with AES-GCM. The browser keeps an opaque, account-bound token for up to seven days; a different signed-in account cannot use it. Signing out, clearing local keys, or clearing site data removes the local copy but does not revoke the provider key. Revoke or rotate the underlying key if compromised. Older unbound browser tokens must be reconnected. Server keys are not intentionally returned to the browser.
+
+Custom, Ollama, and LM Studio endpoints are reached **from the server**, not the user's laptop. In production each custom `host[:port]` must be explicitly listed in `CUSTOM_PROVIDER_ALLOWED_HOSTS`; an empty list denies custom endpoints. HTTPS is required except for an explicitly allowed loopback HTTP endpoint. Credential-bearing URLs, internal/metadata hostnames, and redirects are rejected. Only allow hosts and DNS you control.
+
+## Tools, sandbox, and storage
+
+Shell commands and **every** external MCP call require a fresh in-chat approval. Review the arguments before approving. MCP credentials are separate from model-provider keys. Local self-modification is disabled. Approvals do not replace scoped permissions, isolation, or monitoring.
+
+New production shell sandboxes use deny-all network egress; provider calls and Eve web tools run outside the shell. The local just-bash fallback does not enforce network isolation. Existing sandboxes may retain an old policy. Eve needs a real production sandbox provider: building successfully without Docker or Vercel Sandbox does not prove live turns will work.
+
+Persist Eve's workflow storage (or configure a suitable workflow world) and route both `/eve/` and `/.well-known/workflow/` through a self-hosted proxy. Losing workflow storage loses transcripts even when the Supabase index or browser titles remain. Consult `node_modules/eve/docs` for the deployment and sandbox model.
 
 ## Key files
 
-- `components/app/auth-screen.tsx`, `brand.tsx`, `workspace-shell.tsx` — account screens, identity, and workspace.
-- `lib/supabase/*`, `proxy.ts`, `app/auth/*` — Supabase clients, refresh, and callbacks.
-- `app/api/chats/*`, `lib/security/*`, `agent/channels/eve.ts` — conversation ownership and authenticated Eve routes.
-- `lib/providers/*`, `app/api/providers/*`, `agent/agent.ts` — provider credentials, discovery, and dynamic model routing.
-- `components/app/settings-provider.tsx`, `app/_components/agent-chat.tsx` — account-scoped settings, history, and chat UI.
+- `components/app/auth-screen.tsx`, `components/brand/` — sign-in and identity.
+- `lib/supabase/*`, `lib/auth*.ts`, `app/auth/*` — both account systems and callbacks.
+- `app/api/chats/*`, `lib/security/*`, `agent/channels/eve.ts` — ownership and protected Eve routes.
+- `lib/providers/*`, `app/api/providers/*`, `agent/agent.ts` — providers and dynamic model routing.
+- `lib/integrations/*`, `agent/connections/*`, `docs/integrations.md` — MCP connections and approval policy.

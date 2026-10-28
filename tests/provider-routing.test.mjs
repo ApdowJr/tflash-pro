@@ -15,6 +15,7 @@ registerHooks({
 });
 const { resolveLanguageModel } = await import("../lib/providers/runtime.ts");
 const { credentialFromInput } = await import("../lib/providers/route-helpers.ts");
+const { sealCredential } = await import("../lib/providers/credentials.ts");
 const { getProvider } = await import("../lib/providers/catalog.ts");
 
 process.env.NODE_ENV = "production";
@@ -54,4 +55,13 @@ test("switching providers routes actual SDK requests to the chosen endpoint and 
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+
+test("another account cannot use a saved provider key or fall back silently", async () => {
+  const { token } = await sealCredential({ providerId: "openrouter", ownerId: "owner-a", apiKey: "private-test-key" });
+  const provider = getProvider("openrouter");
+  assert.equal((await credentialFromInput(provider, { token }, { ownerId: "owner-a" })).apiKey, "private-test-key");
+  await assert.rejects(credentialFromInput(provider, { token }, { ownerId: "owner-b" }), /belongs to another account/);
+  await assert.rejects(resolveLanguageModel({ providerId: "openrouter", modelId: "test", contextWindow: 128000, token }, "owner-b"), /belongs to another account/);
 });

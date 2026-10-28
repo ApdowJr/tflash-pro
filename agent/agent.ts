@@ -32,10 +32,9 @@ export default defineAgent({
         };
       },
       "step.started": async (_event, ctx) => {
-        const selection = selectionFromAttributes(
-          ctx.session.auth.current?.attributes ?? ctx.session.auth.initiator?.attributes,
-        );
-        const resolved = await resolveLanguageModel(selection);
+        const auth = ctx.session.auth.current ?? ctx.session.auth.initiator;
+        const selection = selectionFromAttributes(auth?.attributes);
+        const resolved = await resolveLanguageModel(selection, auth?.principalId);
         return {
           model: resolved.model,
           modelContextWindowTokens: resolved.contextWindow,

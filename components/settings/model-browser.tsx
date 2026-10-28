@@ -20,7 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { ProviderBadge, StatusDot } from "./provider-badge";
-import { useAppSettings } from "./settings-provider";
+import { useAppSettings } from "./app-settings";
 
 export function ModelBrowser({
   onPick,
@@ -60,7 +60,7 @@ export function ModelBrowser({
 
   return (
     <div className={cn("flex min-h-0 flex-col gap-3", className)}>
-      <div className="ururka-scroll flex max-h-24 flex-wrap gap-1.5 overflow-y-auto">
+      <div className="tflash-scroll flex max-h-24 flex-wrap gap-1.5 overflow-y-auto">
         {PROVIDERS.map((item) => {
           const active = item.id === providerId;
           return (
@@ -68,8 +68,8 @@ export function ModelBrowser({
               className={cn(
                 "flex items-center gap-1.5 rounded-full border px-2 py-1 text-xs transition-colors",
                 active
-                  ? "border-foreground/20 bg-foreground text-background"
-                  : "bg-background text-muted-foreground hover:border-foreground/30 hover:text-foreground",
+                  ? "border-transparent bg-foreground text-background"
+                  : "border-border/70 bg-card/60 text-muted-foreground hover:border-border hover:text-foreground",
               )}
               key={item.id}
               onClick={() => setProviderId(item.id)}
@@ -123,7 +123,7 @@ export function ModelBrowser({
 
       {needsKey ? (
         <button
-          className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-left text-xs text-amber-700 hover:bg-amber-500/15 dark:text-amber-300"
+          className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-brand/35 bg-brand/8 px-3 py-2 text-left text-[12px] text-foreground/90 transition-colors hover:bg-brand/14"
           onClick={() => onConnectRequest?.()}
           type="button"
         >
@@ -139,7 +139,7 @@ export function ModelBrowser({
         </p>
       ) : null}
 
-      <div className="ururka-scroll min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
+      <div className="tflash-scroll min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
         {filtered.length === 0 ? (
           <p className="py-10 text-center text-muted-foreground text-sm">{t("noModels")}</p>
         ) : (
@@ -173,7 +173,7 @@ export function ModelBrowser({
                     {model.id}
                   </span>
                 </span>
-                <span className="flex shrink-0 items-center gap-1.5 pt-0.5 text-[11px] text-muted-foreground">
+                <span className="flex shrink-0 flex-col items-end gap-0.5 text-[11px] leading-tight text-muted-foreground sm:flex-row sm:items-center sm:gap-1.5 sm:pt-0.5">
                   {formatContext(model.contextWindow) !== "—" ? (
                     <span>{formatContext(model.contextWindow)}</span>
                   ) : null}
@@ -182,8 +182,10 @@ export function ModelBrowser({
                       {price} {t("input")}
                     </span>
                   ) : null}
-                  {active ? <CheckIcon className="size-3.5 text-emerald-600" /> : null}
                 </span>
+                {active ? (
+                  <CheckIcon className="mt-0.5 size-3.5 shrink-0 text-foreground" />
+                ) : null}
               </button>
             );
           })

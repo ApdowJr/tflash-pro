@@ -25,9 +25,13 @@ function asTrimmed(value: unknown): string | undefined {
 export async function credentialFromInput(
   provider: ProviderInfo,
   input: CredentialInput,
-  options: { readonly allowMissingKey?: boolean } = {},
+  options: { readonly allowMissingKey?: boolean; readonly ownerId?: string } = {},
 ): Promise<ResolvedCredential> {
-  const sealed = await openCredential(typeof input.token === "string" ? input.token : undefined);
+  const token = typeof input.token === "string" && input.token ? input.token : undefined;
+  const sealed = await openCredential(token, options.ownerId);
+  if (token && !sealed) {
+    throw new ProviderInputError("The provider connection expired or belongs to another account. Reconnect it in Settings.");
+  }
   const browserKey = asTrimmed(input.apiKey) ?? (sealed?.providerId === provider.id ? sealed.apiKey : undefined);
   const envKey = environmentKey(provider);
 
