@@ -1,5 +1,6 @@
 import { headers } from "next/headers";
-import { auth } from "@/lib/auth";
+import { auth, authConfigured, missingAuthEnv } from "@/lib/auth";
+import { AccountsUnavailable } from "@/components/auth/accounts-unavailable";
 import { SignIn } from "@/components/auth/sign-in";
 import { AgentChat } from "./agent-chat";
 
@@ -18,7 +19,26 @@ export async function AuthenticatedAgentChat({
     return <AgentChat sessionId={sessionId} sessionless={sessionless} />;
   }
 
-  const session = await auth.api.getSession({ headers: await headers() });
+  // No auth credentials on this deployment: serve the workspace instead of a
+  // 500, and say once what the operator has to set to turn accounts on.
+  if (!authConfigured) {
+    return (
+      <>
+        <AgentChat sessionId={sessionId} sessionless={sessionless} />
+        <AccountsUnavailable missing={missingAuthEnv()} />
+      </>
+    );
+  }
+
+  // A session lookup can fail for reasons that are not the visitor's fault
+  // (host not yet trusted, rotated secret, provider hiccup). Treat those as
+  // "not signed in" so the page still renders something real.
+  let session: Awaited<ReturnType<typeof auth.api.getSession>> = null;
+  try {
+    session = await auth.api.getSession({ headers: await headers() });
+  } catch (error) {
+    console.error("[auth] session lookup failed:", error);
+  }
   if (!session) return <SignIn />;
 
   return (
