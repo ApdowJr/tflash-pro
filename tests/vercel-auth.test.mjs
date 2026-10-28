@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { registerHooks } from "node:module";
-import { makeSignature, symmetricEncodeJWT } from "better-auth/crypto";
+import { makeSignature, symmetricDecodeJWT, symmetricEncodeJWT } from "better-auth/crypto";
 
 // Exercise Better Auth's real JWE cookies and getSession, without a live OAuth provider.
 registerHooks({ resolve(specifier, context, nextResolve) {
@@ -17,7 +17,7 @@ const { auth } = await import("../lib/auth.ts");
 const { vercelPrincipal } = await import("../lib/auth-vercel.ts");
 const context = await auth.$context;
 
-async function cookies({ userId, accountId = "stable-vercel-subject", accountUserId = userId, providerId = "vercel", chunked = false }) {
+async function cookies({ userId, accountId = "stable-vercel-subject", accountUserId = userId, providerId = "vercel", chunked = false, accountAgeSeconds = 3600 }) {
   const now = new Date();
   const expiry = new Date(now.getTime() + 60 * 60 * 1000);
   const token = `session-token-${userId}`;
@@ -25,7 +25,7 @@ async function cookies({ userId, accountId = "stable-vercel-subject", accountUse
   const user = { id: userId, name: "Test User", email: "test@example.test", emailVerified: true, createdAt: now, updatedAt: now };
   const session = { id: `session-${userId}`, token, userId, expiresAt: expiry, createdAt: now, updatedAt: now };
   const data = await symmetricEncodeJWT({ session, user, version: "1", updatedAt: Date.now() }, context.secretConfig, "better-auth-session", 3600);
-  const account = await symmetricEncodeJWT({ providerId, accountId, userId: accountUserId }, context.secretConfig, "better-auth-account", 3600);
+  const account = await symmetricEncodeJWT({ providerId, accountId, userId: accountUserId }, context.secretConfig, "better-auth-account", accountAgeSeconds);
   const accountName = context.authCookies.accountData.name;
   const accountParts = chunked
     ? [`${accountName}.0=${account.slice(0, 50)}`, `${accountName}.1=${account.slice(50)}`]
@@ -48,6 +48,9 @@ test("Vercel identities stay stable across stateless Better Auth logins", async 
 test("Vercel identities reject a mismatched, missing, or untrusted account cookie", async () => {
   assert.equal(await vercelPrincipal(await cookies({ userId: "user-1", accountUserId: "someone-else" })), null);
   assert.equal(await vercelPrincipal(await cookies({ userId: "user-1", providerId: "github" })), null);
+  // Past the auth library's clock tolerance, an expired account cookie must
+  // not remain usable even if the separately verified session is still valid.
+  assert.equal(await vercelPrincipal(await cookies({ userId: "user-1", accountAgeSeconds: -60 })), null);
   const headers = await cookies({ userId: "user-1" });
   headers.set("cookie", headers.get("cookie").replace(`${context.authCookies.accountData.name}=`, `${context.authCookies.accountData.name}=tampered`));
   assert.equal(await vercelPrincipal(headers), null);
@@ -81,9 +84,29 @@ test("the real Better Auth Vercel OAuth callback issues an account-bound session
         headers: { cookie: stateCookies },
       }));
       assert.equal(callback.status, 302, await callback.clone().text());
-      const cookies = callback.headers.getSetCookie()
-        .filter((cookie) => !/Max-Age=0(?:;|$)/i.test(cookie))
-        .map((cookie) => cookie.split(";", 1)[0]).join("; ");
+      const issuedCookies = callback.headers.getSetCookie()
+        .filter((cookie) => !/Max-Age=0(?:;|$)/i.test(cookie));
+      // The stable Vercel principal depends on the account cookie as well as
+      // the session. Verify the real callback does not revert to Better Auth's
+      // five-minute default for either one.
+      for (const name of [context.authCookies.sessionToken.name, context.authCookies.sessionData.name, context.authCookies.accountData.name]) {
+        const cookie = issuedCookies.find((entry) => entry.startsWith(`${name}=`));
+        assert.ok(cookie, `Missing ${name} cookie`);
+        assert.match(cookie, /;\s*Max-Age=28800(?:;|$)/i);
+        assert.match(cookie, /;\s*HttpOnly(?:;|$)/i);
+        assert.match(cookie, /;\s*Secure(?:;|$)/i);
+      }
+      for (const [name, salt] of [
+        [context.authCookies.sessionData.name, "better-auth-session"],
+        [context.authCookies.accountData.name, "better-auth-account"],
+      ]) {
+        const cookie = issuedCookies.find((entry) => entry.startsWith(`${name}=`));
+        const token = decodeURIComponent(cookie.split(";", 1)[0].slice(name.length + 1));
+        const payload = await symmetricDecodeJWT(token, context.secretConfig, salt);
+        assert.ok(payload, `Invalid ${name} JWE`);
+        assert.equal(payload.exp - payload.iat, 28800, `${name} JWE must match the session lifetime`);
+      }
+      const cookies = issuedCookies.map((cookie) => cookie.split(";", 1)[0]).join("; ");
       const principal = await vercelPrincipal(new Headers({ host: "app.example.test", "x-forwarded-proto": "https", cookie: cookies }));
       assert.ok(principal, `Callback did not create a valid principal: ${callback.headers.get("location")}`);
       return principal;
