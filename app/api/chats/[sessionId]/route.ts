@@ -33,18 +33,33 @@ export async function PATCH(request: Request, context: RouteContext): Promise<Re
   const { sessionId } = await context.params;
   const owned = await ownedChat(request, sessionId);
   if (!owned) return Response.json({ error: "Conversation not available." }, { status: 404 });
-  let body: { title?: unknown };
-  try { body = await request.json(); } catch { return Response.json({ error: "Invalid request." }, { status: 400 }); }
+  let body: { title?: unknown; activity?: unknown };
+  try {
+    const input: unknown = await request.json();
+    if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Invalid request");
+    body = input as { title?: unknown; activity?: unknown };
+  } catch { return Response.json({ error: "Invalid request." }, { status: 400 }); }
+  if (body.activity !== undefined && typeof body.activity !== "boolean") {
+    return Response.json({ error: "Invalid request." }, { status: 400 });
+  }
   const title = typeof body.title === "string" ? body.title.trim().slice(0, 120) : "";
   if (!title) return Response.json({ error: "A title is required." }, { status: 400 });
   // Vercel-account titles are saved in the account-scoped browser index.
   if (owned.kind === "vercel") return Response.json({ ok: true });
-  const { error } = await owned.supabase.from("tflash_chats")
-    .update({ title, updated_at: new Date().toISOString() })
-    .eq("session_id", sessionId).eq("user_id", owned.userId);
-  return error
-    ? Response.json({ error: "Could not update conversation." }, { status: 503 })
-    : Response.json({ ok: true });
+
+  // Sending a message may supply an initial title, but must never overwrite a
+  // name changed on this or another device. The null check is atomic in SQL.
+  if (body.activity === true) {
+    const { error } = await owned.supabase.from("tflash_chats")
+      .update({ title }).eq("session_id", sessionId).eq("user_id", owned.userId).is("title", null);
+    if (error) return Response.json({ error: "Could not update conversation." }, { status: 503 });
+  }
+  const { data, error } = await owned.supabase.from("tflash_chats")
+    .update(body.activity === true ? { updated_at: new Date().toISOString() } : { title, updated_at: new Date().toISOString() })
+    .eq("session_id", sessionId).eq("user_id", owned.userId).select("title").maybeSingle();
+  if (error) return Response.json({ error: "Could not update conversation." }, { status: 503 });
+  if (!data) return Response.json({ error: "Conversation not available." }, { status: 404 });
+  return Response.json({ ok: true, title: data.title });
 }
 
 export async function DELETE(request: Request, context: RouteContext): Promise<Response> {

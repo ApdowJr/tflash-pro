@@ -5,27 +5,28 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { browserSupabase } from "@/lib/supabase/browser";
 import { authClient } from "@/lib/auth-client";
 import { safeLocalPath } from "@/lib/security/redirect";
-import { Brand, BrandMark } from "./brand";
+import { Brand } from "./brand";
 
 type Language = "en" | "so";
 type Mode = "signin" | "signup" | "forgot";
 
 const words = {
   en: {
-    eyebrow: "A LITTLE MORE ROOM TO THINK",
-    hero: "Make space for",
-    heroEm: "better ideas.",
-    heroBody: "Think, write and build with the AI models you choose. All in one considered space.",
-    storyFoot: "A workspace for curious minds",
+    about: "About Tflash",
+    language: "Language",
+    accountOptions: "Account options",
+    hero: "One workspace",
+    heroEm: "for your AI models.",
+    heroBody: "Choose a provider, connect tools, and get to work.",
     signIn: "Sign in",
     vercelSignIn: "Continue with Vercel",
     orEmail: "or use email",
     vercelUnavailable: "Vercel sign-in is not configured on this deployment.",
     signUp: "Create account",
-    welcome: "Welcome back.",
-    welcomeBody: "Pick up where your ideas left off.",
-    create: "Let’s get started.",
-    createBody: "Create your account and make this space yours.",
+    welcome: "Sign in to Tflash.",
+    welcomeBody: "Choose a sign-in method.",
+    create: "Create your account.",
+    createBody: "Use email or continue with Vercel.",
     forgot: "Forgot password?",
     resetTitle: "Reset your password.",
     resetBody: "Enter your email and we’ll send you a reset link.",
@@ -50,7 +51,6 @@ const words = {
     shortPassword: "Use at least 8 characters for your password.",
     show: "Show password",
     hide: "Hide password",
-    footer: "Your models. Your ideas. Your space.",
     linkError: "That link has expired or could not be verified. Please request a new one.",
     genericError: "Something went wrong. Please try again.",
     passwordTitle: "Choose a new password.",
@@ -59,20 +59,21 @@ const words = {
     passwordDone: "Password updated. Taking you to your workspace…",
   },
   so: {
-    eyebrow: "MEEL AAD KU FIKIRTO",
-    hero: "Fikradahaaga sii",
-    heroEm: "meel ay ku koraan.",
-    heroBody: "Ku fikir, ku qor oo ku dhis model-ka AI ee aad doorato. Dhammaan hal goob oo deggan.",
-    storyFoot: "Goob loogu talagalay dadka wax abuura",
+    about: "Ku saabsan Tflash",
+    language: "Luqadda",
+    accountOptions: "Doorashooyinka akoonka",
+    hero: "Modelada AI.",
+    heroEm: "Hal goob.",
+    heroBody: "Dooro bixiye, ku xir qalabkaaga, kuna bilow shaqada.",
     signIn: "Soo gal",
     vercelSignIn: "Ku sii wad Vercel",
     orEmail: "ama isticmaal email",
     vercelUnavailable: "Vercel sign-in looma diyaarin noocan.",
     signUp: "Samee akoon",
-    welcome: "Soo dhawoow.",
-    welcomeBody: "Halkii aad ka joogtay ka sii wad.",
-    create: "Aan bilowno.",
-    createBody: "Samee akoon si aad u hesho goob kuu gaar ah.",
+    welcome: "Soo gal Tflash.",
+    welcomeBody: "Dooro habka aad ku soo galayso.",
+    create: "Samee akoon.",
+    createBody: "Isticmaal email ama Vercel.",
     forgot: "Ma illowday furaha?",
     resetTitle: "Dib u deji furaha.",
     resetBody: "Geli email-kaaga, waxaana kuu soo diri doonaa xiriir aad ku beddesho furaha.",
@@ -97,7 +98,6 @@ const words = {
     shortPassword: "Furahaagu ha ka koobnaado ugu yaraan 8 xaraf.",
     show: "Muuji furaha",
     hide: "Qari furaha",
-    footer: "Modeladaada. Fikradahaaga. Goobtaada.",
     linkError: "Xiriirkaas wuu dhacay ama lama xaqiijin. Fadlan mid cusub codso.",
     genericError: "Wax baa qaldamay. Fadlan isku day mar kale.",
     passwordTitle: "Dooro fure cusub.",
@@ -134,7 +134,7 @@ function AuthLayout({ children, language, onLanguageChange }: {
   const text = words[language];
   return (
     <main className="auth-shell">
-      <section className="auth-story" aria-label="About Tflash">
+      <section className="auth-story" aria-label={text.about}>
         <div className="auth-story-top"><Brand inverted /></div>
         <div aria-hidden="true" className="auth-art">
           <svg viewBox="0 0 500 410" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -149,27 +149,23 @@ function AuthLayout({ children, language, onLanguageChange }: {
             <circle cx="250" cy="210" r="4" fill="#f3bd56" />
             <path d="M82 56h39M82 56v39M418 364h-39M418 364v-39" stroke="#f2e8d5" strokeOpacity=".22" />
           </svg>
-          <span className="auth-art-note">T / 01<br />A SPACE TO THINK</span>
         </div>
         <div className="auth-story-copy">
-          <p className="auth-kicker"><span />{text.eyebrow}</p>
           <h1>{text.hero}<br /><em>{text.heroEm}</em></h1>
           <p className="auth-story-description">{text.heroBody}</p>
         </div>
-        <div className="auth-story-footer"><span>{text.storyFoot}</span><span>© {new Date().getFullYear()} TFLASH</span></div>
+        <div className="auth-story-footer">© {new Date().getFullYear()} Tflash</div>
       </section>
       <section className="auth-panel">
         <div className="auth-mobile-brand"><Brand /></div>
         <div className="auth-panel-top">
-          <span className="auth-panel-index">YOUR WORKSPACE / 01</span>
-          <div className="auth-language" aria-label="Language">
+          <div className="auth-language" aria-label={text.language}>
             <button aria-pressed={language === "en"} onClick={() => onLanguageChange("en")} type="button">EN</button>
             <span>/</span>
             <button aria-pressed={language === "so"} onClick={() => onLanguageChange("so")} type="button">SO</button>
           </div>
         </div>
         <div className="auth-panel-content">{children}</div>
-        <div className="auth-panel-footer"><BrandMark className="size-5" /><span>{text.footer}</span></div>
       </section>
     </main>
   );
@@ -259,12 +255,11 @@ export function AuthScreen({ vercelAvailable }: { readonly vercelAvailable: bool
   return (
     <AuthLayout language={language} onLanguageChange={changeLanguage}>
       <div className="auth-form-head">
-        <span className="auth-small-label">{mode === "forgot" ? "ACCOUNT RECOVERY" : "TFLASH / ACCOUNT"}</span>
         <h2>{mode === "signin" ? text.welcome : mode === "signup" ? text.create : text.resetTitle}</h2>
         <p>{mode === "signin" ? text.welcomeBody : mode === "signup" ? text.createBody : text.resetBody}</p>
       </div>
       {mode !== "forgot" ? (
-        <div className="auth-tabs" aria-label="Account options">
+        <div className="auth-tabs" aria-label={text.accountOptions}>
           <button aria-pressed={mode === "signin"} onClick={() => changeMode("signin")} type="button">{text.signIn}</button>
           <button aria-pressed={mode === "signup"} onClick={() => changeMode("signup")} type="button">{text.signUp}</button>
         </div>
@@ -325,7 +320,7 @@ export function ResetPasswordScreen() {
   }
   return (
     <AuthLayout language={language} onLanguageChange={changeLanguage}>
-      <div className="auth-form-head"><span className="auth-small-label">ACCOUNT RECOVERY</span><h2>{text.passwordTitle}</h2><p>{text.passwordBody}</p></div>
+      <div className="auth-form-head"><h2>{text.passwordTitle}</h2><p>{text.passwordBody}</p></div>
       <form className="auth-form auth-reset-form" onSubmit={submit}>
         <PasswordInput autoComplete="new-password" hideLabel={text.hide} id="new-password" label={text.newPassword} minLength={8} onChange={setPassword} placeholder={text.createPassword} showLabel={text.show} value={password} />
         <PasswordInput autoComplete="new-password" hideLabel={text.hide} id="confirm-password" label={text.confirm} minLength={8} onChange={setConfirm} placeholder={text.confirmPlaceholder} showLabel={text.show} value={confirm} />

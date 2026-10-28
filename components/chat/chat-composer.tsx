@@ -1,6 +1,6 @@
 "use client";
 
-import { FileIcon, PaperclipIcon, SquareIcon, WandSparklesIcon, XIcon } from "lucide-react";
+import { FileIcon, PaperclipIcon, SquareIcon, XIcon } from "lucide-react";
 import {
   PromptInput,
   PromptInputButton,
@@ -12,9 +12,7 @@ import {
   usePromptInputAttachments,
   usePromptInputController,
 } from "@/components/ai-elements/prompt-input";
-import { getPersona } from "@/components/settings/personas";
 import { useAppSettings } from "@/components/settings/app-settings";
-import { cn } from "@/lib/utils";
 
 /**
  * The composer is the one element people touch every turn, so it gets the
@@ -24,15 +22,11 @@ export function ChatComposer({
   isBusy,
   isResuming,
   onCancel,
-  onOpenModels,
-  onOpenPersona,
   onSubmit,
 }: {
   readonly isBusy: boolean;
   readonly isResuming: boolean;
   readonly onCancel: () => void;
-  readonly onOpenModels: () => void;
-  readonly onOpenPersona: () => void;
   readonly onSubmit: (message: PromptInputMessage) => Promise<void>;
 }) {
   const { t } = useAppSettings();
@@ -51,8 +45,6 @@ export function ChatComposer({
       />
       <PromptInputFooter className="flex-wrap border-t-0 px-2.5 pt-1.5 pb-2.5 pr-14">
         <PromptInputTools className="gap-1">
-          <ComposerModelButton onClick={onOpenModels} />
-          <ComposerPersonaButton onClick={onOpenPersona} />
           <ComposerAttachButton />
         </PromptInputTools>
         <span className="hidden pr-1 text-[11px] text-muted-foreground/60 md:inline">
@@ -72,6 +64,7 @@ export function ChatComposer({
 /** Pending files, shown above the textarea until the turn is sent. */
 function ComposerAttachments() {
   const attachments = usePromptInputAttachments();
+  const { t } = useAppSettings();
   if (attachments.files.length === 0) return null;
   return (
     <div className="flex flex-wrap gap-1.5 px-3 pt-3">
@@ -83,7 +76,7 @@ function ComposerAttachments() {
           <FileIcon className="size-3 shrink-0 text-muted-foreground" />
           <span className="truncate">{file.filename}</span>
           <button
-            aria-label={`Remove ${file.filename}`}
+            aria-label={`${t("removeAttachment")}: ${file.filename}`}
             className="flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
             onClick={() => attachments.remove(file.id)}
             type="button"
@@ -93,45 +86,6 @@ function ComposerAttachments() {
         </span>
       ))}
     </div>
-  );
-}
-
-function ComposerModelButton({ onClick }: { readonly onClick: () => void }) {
-  const { selection, t, isConnected } = useAppSettings();
-  return (
-    <PromptInputButton
-      className="h-8 max-w-[8.5rem] gap-1.5 rounded-full px-2 text-[11.5px] text-muted-foreground hover:text-foreground sm:max-w-[13rem]"
-      onClick={onClick}
-      size="sm"
-      tooltip={t("switchModel")}
-      type="button"
-    >
-      <span
-        aria-hidden="true"
-        className={cn(
-          "size-1.5 shrink-0 rounded-full",
-          isConnected(selection.providerId) ? "bg-emerald-500" : "bg-muted-foreground/40",
-        )}
-      />
-      <span className="truncate">{selection.modelId}</span>
-    </PromptInputButton>
-  );
-}
-
-function ComposerPersonaButton({ onClick }: { readonly onClick: () => void }) {
-  const { settings, t } = useAppSettings();
-  const persona = getPersona(settings.persona);
-  return (
-    <PromptInputButton
-      className="h-8 gap-1.5 rounded-full px-2 text-[11.5px] text-muted-foreground hover:text-foreground"
-      onClick={onClick}
-      size="sm"
-      tooltip={t("persona")}
-      type="button"
-    >
-      <WandSparklesIcon className="size-3" />
-      <span className="hidden sm:inline">{persona.label[settings.language]}</span>
-    </PromptInputButton>
   );
 }
 
@@ -164,6 +118,7 @@ function ComposerAction({
   readonly onCancel: () => void;
 }) {
   const attachments = usePromptInputAttachments();
+  const { t } = useAppSettings();
   const canSubmit = hasInputText || attachments.files.length > 0;
 
   if (!isBusy || canSubmit) {
@@ -177,7 +132,7 @@ function ComposerAction({
 
   return (
     <PromptInputButton
-      aria-label="Stop"
+      aria-label={t("stop")}
       className="absolute right-2 bottom-2 size-9 rounded-full border-border bg-card sm:right-2.5 sm:bottom-2.5 sm:size-8"
       onClick={onCancel}
       variant="outline"

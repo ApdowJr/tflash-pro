@@ -42,8 +42,9 @@ export function TopBar({
   readonly onOpenSettings: () => void;
   readonly onOpenModels: () => void;
 }) {
-  const { t, selection, isConnected } = useAppSettings();
+  const { t, selection, isConnected, modelsFor } = useAppSettings();
   const provider = getProvider(selection.providerId);
+  const modelName = modelsFor(selection.providerId).find((model) => model.id === selection.modelId)?.name ?? selection.modelId;
   const connected = isConnected(selection.providerId);
 
   return (
@@ -66,6 +67,7 @@ export function TopBar({
       </div>
 
       <button
+        aria-label={`${t("chooseModel")}: ${modelName}${provider ? ` · ${provider.name}` : ""}`}
         className="group flex h-9 min-w-0 max-w-[62vw] items-center gap-1.5 rounded-full border border-border/80 bg-card/70 pr-2 pl-2.5 text-[12px] transition-colors hover:border-border hover:bg-card sm:h-8 sm:max-w-none"
         onClick={onOpenModels}
         title={t("modelPickerHint")}
@@ -79,7 +81,7 @@ export function TopBar({
           )}
         />
         <span className="max-w-[7rem] truncate font-medium text-foreground sm:max-w-[13rem]">
-          {selection.modelId}
+          {modelName}
         </span>
         {provider ? (
           <span className="hidden truncate text-muted-foreground sm:inline">{provider.name}</span>

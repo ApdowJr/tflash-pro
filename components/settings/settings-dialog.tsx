@@ -2,18 +2,19 @@
 
 import {
   CheckCircle2Icon,
+  ChevronDownIcon,
   Settings2Icon,
   ExternalLinkIcon,
   EyeIcon,
   EyeOffIcon,
   KeyRoundIcon,
-  LayersIcon,
   Loader2Icon,
   LockKeyholeIcon,
   BoxesIcon,
   PaletteIcon,
   PlugZapIcon,
   RefreshCwIcon,
+  SearchIcon,
   ShieldCheckIcon,
   SlidersHorizontalIcon,
   SparklesIcon,
@@ -21,12 +22,13 @@ import {
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { PROVIDERS, type ProviderInfo } from "@/lib/providers/catalog";
-import { Badge } from "@/components/ui/badge";
+import { providerConnectionExpired } from "@/lib/providers/connection-state";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -34,12 +36,11 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { LANGUAGES, type Language } from "./i18n";
 import { ConnectionsPanel } from "./connections-panel";
-import { ModelBrowser } from "./model-browser";
 import { PERSONAS } from "./personas";
 import { ProviderBadge, StatusDot } from "./provider-badge";
 import { useAppSettings, type Theme } from "./app-settings";
 
-type Tab = "providers" | "connections" | "models" | "preferences";
+type Tab = "providers" | "connections" | "preferences";
 
 type ProviderStatus = {
   readonly kind: "idle" | "pending" | "ok" | "error";
@@ -51,15 +52,19 @@ export function SettingsDialog({
   open,
   onOpenChange,
   initialTab = "providers",
+  initialProvider,
 }: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly initialTab?: Tab;
+  readonly initialProvider?: string;
 }) {
   const { settings, t, connect, disconnect, isConnected, envConfigured, refreshStatus, loadModels, update, clearConnections } =
     useAppSettings();
   const [tab, setTab] = useState<Tab>(initialTab);
-  const [expanded, setExpanded] = useState<string | null>("openrouter");
+  const [expanded, setExpanded] = useState<string | null>(initialProvider ?? null);
+  const [providerQuery, setProviderQuery] = useState("");
+  const [clearDialogOpen, setClearDialogOpen] = useState(false);
   const [apiKey, setApiKey] = useState("");
   const [baseURL, setBaseURL] = useState("");
   const [showKey, setShowKey] = useState(false);
@@ -68,17 +73,20 @@ export function SettingsDialog({
   const setStatus = (id: string, status: ProviderStatus) =>
     setStatuses((current) => ({ ...current, [id]: status }));
 
-  // Keys are per-provider: never carry one provider's input into another card.
-  const toggleProvider = (id: string) => {
-    if (expanded === id) {
-      setExpanded(null);
-      return;
-    }
-    setExpanded(id);
+  // Never carry one provider's plaintext input into another card or reopening.
+  const clearProviderInput = () => {
     setApiKey("");
     setBaseURL("");
     setShowKey(false);
   };
+  const toggleProvider = (id: string) => {
+    clearProviderInput();
+    setExpanded(expanded === id ? null : id);
+  };
+  const filteredProviders = PROVIDERS.filter((provider) => {
+    const query = providerQuery.trim().toLowerCase();
+    return !query || provider.name.toLowerCase().includes(query) || provider.id.includes(query);
+  });
 
   async function testProvider(provider: ProviderInfo) {
     setStatus(provider.id, { kind: "pending", message: t("testing") });
@@ -90,7 +98,7 @@ export function SettingsDialog({
           providerId: provider.id,
           apiKey,
           baseURL: provider.customBaseURL ? baseURL : undefined,
-          token: settings.connections[provider.id]?.token,
+          token: apiKey.trim() || baseURL.trim() ? undefined : settings.connections[provider.id]?.token,
         }),
       });
       const payload = (await response.json()) as { message?: string; error?: string };
@@ -123,6 +131,7 @@ export function SettingsDialog({
         message?: string;
         error?: string;
         token?: string;
+        expiresAt?: number;
         modelCount?: number;
       };
       if (!response.ok) {
@@ -137,12 +146,15 @@ export function SettingsDialog({
         ...(payload.token ? { token: payload.token } : {}),
         label: payload.message ?? t("connected"),
         connectedAt: Date.now(),
+        ...(payload.expiresAt ? { expiresAt: payload.expiresAt } : {}),
         ...(provider.customBaseURL && baseURL ? { baseURL } : {}),
         ...(payload.modelCount !== undefined ? { modelCount: payload.modelCount } : {}),
         source: payload.token ? "browser" : envConfigured[provider.id] ? "server" : "keyless",
       });
       setStatus(provider.id, { kind: "ok", message: payload.message ?? t("connected") });
-      setApiKey("");
+      // Do not erase a different provider's newer input if this request was slow.
+      setApiKey((current) => current === apiKey ? "" : current);
+      setBaseURL((current) => current === baseURL ? "" : current);
       void refreshStatus();
       void loadModels(provider.id, true);
     } catch (error) {
@@ -156,29 +168,37 @@ export function SettingsDialog({
   const tabs: { id: Tab; label: string; icon: typeof PlugZapIcon }[] = [
     { id: "providers", label: t("providers"), icon: PlugZapIcon },
     { id: "connections", label: t("connections"), icon: BoxesIcon },
-    { id: "models", label: t("models"), icon: LayersIcon },
     { id: "preferences", label: t("preferences"), icon: SlidersHorizontalIcon },
   ];
 
   return (
-    <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="flex h-[min(88dvh,760px)] w-full max-w-4xl flex-col gap-0 overflow-hidden p-0 max-sm:h-[calc(100dvh-1.25rem)] max-sm:max-w-[calc(100%-1rem)]">
-        <DialogHeader className="shrink-0 gap-1 border-b border-border/70 px-4 py-3.5 pr-12 sm:px-6 sm:py-4">
+    <>
+    <Dialog onOpenChange={(nextOpen) => {
+      if (!nextOpen) {
+        clearProviderInput();
+        setExpanded(null);
+        setClearDialogOpen(false);
+      }
+      onOpenChange(nextOpen);
+    }} open={open}>
+      <DialogContent closeLabel={t("dismiss")} className="flex h-[min(88dvh,760px)] w-full flex-col gap-0 overflow-hidden p-0 max-sm:h-[calc(100dvh-1.25rem)] max-sm:max-w-[calc(100%-1rem)] sm:max-w-[min(56rem,calc(100%-2rem))]">
+        <DialogHeader className="shrink-0 gap-1 border-b border-border/70 px-4 py-3.5 pr-12 text-left sm:px-6 sm:py-4">
           <DialogTitle className="flex items-center gap-2 font-semibold text-[15px] tracking-[-0.01em]">
             <Settings2Icon className="size-4 text-muted-foreground" />
             {t("settings")}
           </DialogTitle>
           <DialogDescription className="text-pretty text-muted-foreground text-xs">
-            {t("providerHint")}
+            {t("settingsHint")}
           </DialogDescription>
         </DialogHeader>
 
         <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
-          <nav className="tflash-scroll flex shrink-0 gap-1 overflow-x-auto border-b p-2 sm:w-44 sm:flex-col sm:overflow-visible sm:border-r sm:border-b-0 sm:p-3">
+          <nav className="grid shrink-0 grid-cols-3 gap-1 border-b p-2 sm:flex sm:w-44 sm:flex-col sm:border-r sm:border-b-0 sm:p-3">
             {tabs.map(({ id, label, icon: Icon }) => (
               <button
+                aria-pressed={tab === id}
                 className={cn(
-                  "flex shrink-0 items-center gap-2 rounded-md px-2.5 py-2 text-left text-[13px] transition-colors",
+                  "flex min-w-0 items-center justify-center gap-2 rounded-md px-1 py-2 text-center text-xs transition-colors min-[360px]:text-[13px] sm:justify-start sm:px-2.5 sm:text-left sm:text-[13px]",
                   tab === id
                     ? "bg-accent font-medium text-foreground"
                     : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
@@ -187,8 +207,8 @@ export function SettingsDialog({
                 onClick={() => setTab(id)}
                 type="button"
               >
-                <Icon className="size-4" />
-                {label}
+                <Icon className="hidden size-4 shrink-0 sm:block" />
+                <span className="truncate">{label}</span>
               </button>
             ))}
             <div className="mt-auto hidden px-3 pt-4 text-[10px] text-muted-foreground sm:block">
@@ -200,16 +220,31 @@ export function SettingsDialog({
           <div className="tflash-scroll tf-safe-bottom min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
             {tab === "providers" ? (
               <div className="space-y-3">
-                <div className="flex items-start gap-2 rounded-lg border border-border/70 bg-muted/40 px-3 py-2.5 text-muted-foreground text-xs">
-                  <SparklesIcon className="mt-0.5 size-3.5 shrink-0" />
-                  <span className="text-pretty">{t("openRouterTip")}</span>
+                <div className="relative">
+                  <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    aria-label={t("searchProviders")}
+                    className="pl-9"
+                    onChange={(event) => {
+                      setProviderQuery(event.target.value);
+                      setExpanded(null);
+                      clearProviderInput();
+                    }}
+                    placeholder={t("searchProviders")}
+                    type="search"
+                    value={providerQuery}
+                  />
                 </div>
-                <div className="grid gap-3 lg:grid-cols-2">
-                  {PROVIDERS.map((provider) => {
+                {filteredProviders.length === 0 ? (
+                  <p className="py-8 text-center text-sm text-muted-foreground">{t("noProviders")}</p>
+                ) : null}
+                <div className="grid gap-2 lg:grid-cols-2 lg:items-start">
+                  {filteredProviders.map((provider) => {
                     const connected = isConnected(provider.id);
                     const isOpen = expanded === provider.id;
                     const status = statuses[provider.id] ?? { kind: "idle" as const };
                     const connection = settings.connections[provider.id];
+                    const expired = providerConnectionExpired(connection);
                     return (
                       <div
                         className={cn(
@@ -219,37 +254,24 @@ export function SettingsDialog({
                         key={provider.id}
                       >
                         <button
-                          className="flex w-full items-start gap-3 p-3 text-left"
+                          aria-controls={isOpen ? `provider-details-${provider.id}` : undefined}
+                          aria-expanded={isOpen}
+                          className="flex w-full items-center gap-2.5 p-3 text-left"
                           onClick={() => toggleProvider(provider.id)}
                           type="button"
                         >
                           <ProviderBadge provider={provider} />
-                          <span className="min-w-0 flex-1">
-                            <span className="flex flex-wrap items-center gap-1.5">
-                              <span className="font-medium text-sm">{provider.name}</span>
-                              {provider.featured ? (
-                                <Badge
-                                  className="rounded-full border-border/70 px-1.5 py-0 text-[10px] font-medium text-muted-foreground"
-                                  variant="outline"
-                                >
-                                  Popular
-                                </Badge>
-                              ) : null}
-                            </span>
-                            <span className="mt-0.5 block text-muted-foreground text-xs">
-                              {provider.tagline}
-                            </span>
-                          </span>
-                          <span className="flex shrink-0 items-center gap-1.5 pt-0.5 text-[11px] text-muted-foreground">
+                          <span className="min-w-0 flex-1 truncate font-medium text-sm">{provider.name}</span>
+                          <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
                             <StatusDot active={connected} />
-                            <span className="hidden sm:inline">
-                              {connected ? t("connected") : t("notConnected")}
-                            </span>
+                            <span className="sr-only sm:not-sr-only">{expired ? t("expired") : connected ? t("connected") : t("notConnected")}</span>
                           </span>
+                          <ChevronDownIcon className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform", isOpen && "rotate-180")} />
                         </button>
 
                         {isOpen ? (
-                          <div className="space-y-2.5 border-t px-3 pt-3 pb-3">
+                          <div className="space-y-2.5 border-t px-3 pt-3 pb-3" id={`provider-details-${provider.id}`}>
+                            {expired ? <p className="rounded-md bg-muted px-2.5 py-2 text-xs text-muted-foreground">{t("providerExpired")}</p> : null}
                             {provider.kind === "gateway" ? (
                               <p className="rounded-md bg-muted/60 px-2.5 py-2 text-muted-foreground text-xs">
                                 {t("gatewayHint")}
@@ -281,7 +303,7 @@ export function SettingsDialog({
                                         value={apiKey}
                                       />
                                       <button
-                                        aria-label={showKey ? "Hide key" : "Show key"}
+                                        aria-label={showKey ? t("hideKey") : t("showKey")}
                                         className="absolute top-1/2 right-2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                                         onClick={() => setShowKey((value) => !value)}
                                         type="button"
@@ -311,6 +333,7 @@ export function SettingsDialog({
                                       placeholder={provider.baseURL}
                                       value={baseURL}
                                     />
+                                    <p className="text-xs text-muted-foreground">{t("customProviderNote")}</p>
                                   </div>
                                 ) : null}
 
@@ -422,17 +445,15 @@ export function SettingsDialog({
                   <ShieldCheckIcon className="mt-0.5 size-3.5 shrink-0" />
                   {t("keyStoredNote")}
                 </p>
+                {Object.keys(settings.connections).length > 0 ? (
+                  <Button className="h-8 text-xs" onClick={() => setClearDialogOpen(true)} size="sm" type="button" variant="outline">
+                    <Trash2Icon className="size-3" /> {t("clearProviders")}
+                  </Button>
+                ) : null}
               </div>
             ) : null}
 
             {tab === "connections" ? <ConnectionsPanel /> : null}
-
-            {tab === "models" ? (
-              <ModelBrowser
-                className="min-h-[420px]"
-                onConnectRequest={() => setTab("providers")}
-              />
-            ) : null}
 
             {tab === "preferences" ? (
               <div className="space-y-5">
@@ -500,24 +521,6 @@ export function SettingsDialog({
                 <div className="space-y-2 border-t pt-4">
                   <p className="font-medium text-[13px]">{t("shortcuts")}</p>
                   <p className="text-muted-foreground text-xs">{t("shortcutHint")}</p>
-                  <Button
-                    className="h-8 text-xs"
-                    onClick={() => {
-                      clearConnections();
-                      setStatus("local", { kind: "ok", message: settings.language === "so" ? "Furayaasha browser-ka waa la saaray." : "Browser provider keys cleared." });
-                    }}
-                    size="sm"
-                    type="button"
-                    variant="outline"
-                  >
-                    <Trash2Icon className="size-3" />
-                    {t("clearData")}
-                  </Button>
-                  {statuses.local?.message ? (
-                    <p className="text-emerald-600 text-xs dark:text-emerald-400">
-                      {statuses.local.message}
-                    </p>
-                  ) : null}
                 </div>
               </div>
             ) : null}
@@ -525,6 +528,19 @@ export function SettingsDialog({
         </div>
       </DialogContent>
     </Dialog>
+    <Dialog onOpenChange={setClearDialogOpen} open={clearDialogOpen}>
+      <DialogContent closeLabel={t("dismiss")}>
+        <DialogHeader>
+          <DialogTitle>{t("clearProviders")}</DialogTitle>
+          <DialogDescription>{t("clearProvidersHint")}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button onClick={() => setClearDialogOpen(false)} type="button" variant="outline">{t("cancel")}</Button>
+          <Button onClick={() => { clearConnections(); setClearDialogOpen(false); }} type="button" variant="destructive">{t("remove")}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
 

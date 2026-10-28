@@ -29,7 +29,7 @@ import { sessionTitle } from "@/lib/chat-history";
 import { OWNER_PROOF_HEADER } from "@/lib/security/chat-ownership-wire";
 import { AgentMessage } from "./agent-message";
 
-const DEFAULT_AGENT_NAME = "t-flash";
+const DEFAULT_AGENT_NAME = "Tflash";
 
 type ReadySession = { readonly id: string; readonly resume: boolean; readonly proof?: string };
 
@@ -103,13 +103,15 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   readonly canRetry: boolean;
   readonly onRetry: () => void;
 }) {
-  const { t, settings, selection, eveHeaders, turnContext, addChat, oauthJustConnected } = useAppSettings();
+  const { t, settings, selection, eveHeaders, turnContext, recordChatActivity, oauthJustConnected } = useAppSettings();
   const controller = usePromptInputController();
   const [cancellationError, setCancellationError] = useState<string>();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<
-    "providers" | "connections" | "models" | "preferences"
+    "providers" | "connections" | "preferences"
   >("providers");
+  const [settingsProvider, setSettingsProvider] = useState<string>();
+  const [settingsInstance, setSettingsInstance] = useState(0);
   const [modelsOpen, setModelsOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const hasSubmittedMessage = useRef(false);
@@ -144,7 +146,8 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   const hasConversationContent = sessionless || !isEmpty || errorMessage !== undefined;
   const showConversationLayout = isResuming || hasConversationContent;
   const activeSessionId = sessionId ?? agent.session?.sessionId;
-  const title = sessionTitle(agent.data.messages, t("newChat"));
+  const title = settings.chats.find((chat) => chat.id === activeSessionId)?.title ??
+    sessionTitle(agent.data.messages, t("newChat"));
   const canRespond = (requestId: string) =>
     !isResuming && agent.data.inputs[requestId]?.status === "open";
   const questionsFor = (callId: string) =>
@@ -155,8 +158,10 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   const startNewChat = () => window.location.assign("/");
 
   const openSettings = useCallback(
-    (tab: "providers" | "connections" | "models" | "preferences" = "providers") => {
+    (tab: "providers" | "connections" | "preferences" = "providers", providerId?: string) => {
       setSettingsTab(tab);
+      setSettingsProvider(providerId);
+      setSettingsInstance((instance) => instance + 1);
       setSettingsOpen(true);
     },
     [],
@@ -171,11 +176,14 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      const overlayOpen = Boolean(document.querySelector(
+        '[data-slot="dialog-content"][data-state="open"], [data-slot="dropdown-menu-content"][data-state="open"]',
+      ));
       if (event.key === "Escape") {
-        setSidebarOpen(false);
+        if (!overlayOpen) setSidebarOpen(false);
         return;
       }
-      if (!(event.metaKey || event.ctrlKey)) return;
+      if (overlayOpen || !(event.metaKey || event.ctrlKey)) return;
       if (event.key.toLowerCase() === "k") {
         event.preventDefault();
         setModelsOpen(true);
@@ -184,8 +192,9 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
         startNewChat();
       }
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    // Capture before a dialog handles Escape and changes its own open state.
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
@@ -200,13 +209,13 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
           .map((part) => (part.type === "text" ? part.text : ""))
           .join("\n\n")
           .trim();
-        return `## ${message.role === "user" ? "You" : "T Flash"}\n\n${content}`;
+        return `## ${message.role === "user" ? "You" : "Tflash"}\n\n${content}`;
       }),
     ].join("\n\n---\n\n");
     const url = URL.createObjectURL(new Blob([markdown], { type: "text/markdown" }));
     const link = document.createElement("a");
     link.href = url;
-    link.download = `t-flash-chat-${Date.now()}.md`;
+    link.download = `tflash-chat-${Date.now()}.md`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -227,9 +236,9 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
     const title = settings.chats.find((chat) => chat.id === sessionId)?.title ||
       (firstText?.type === "text" ? firstText.text : "") || text || t("attach");
     try {
-      await addChat(sessionId, title);
+      await recordChatActivity(sessionId, title);
     } catch (error) {
-      setCancellationError(toErrorMessage(error));
+      setCancellationError(t("historySaveFailed"));
       throw error; // Keep the draft when history could not be saved.
     }
     hasSubmittedMessage.current = true;
@@ -267,7 +276,6 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
         activeChatId={activeSessionId}
         onClose={() => setSidebarOpen(false)}
         onNewChat={startNewChat}
-        onOpenConnections={() => openSettings("connections")}
         onOpenSettings={() => openSettings("providers")}
         open={sidebarOpen}
       />
@@ -326,10 +334,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
           </Conversation>
         ) : (
           <div className="tflash-scroll min-h-0 flex-1 overflow-y-auto">
-            <EmptyState
-              onOpenConnections={() => openSettings("connections")}
-              onOpenSettings={() => openSettings("providers")}
-            />
+            <EmptyState />
           </div>
         )}
 
@@ -344,8 +349,6 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
               isBusy={isBusy}
               isResuming={isResuming || !sessionId}
               onCancel={requestCancellation}
-              onOpenModels={() => setModelsOpen(true)}
-              onOpenPersona={() => openSettings("preferences")}
               onSubmit={handleSubmit}
             />
             <p className="mt-2 text-center text-[10.5px] text-muted-foreground/55">
@@ -357,13 +360,14 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
 
       <ModelPicker
         onOpenChange={setModelsOpen}
-        onOpenSettings={() => openSettings("providers")}
+        onOpenSettings={(providerId) => openSettings("providers", providerId)}
         open={modelsOpen}
       />
       <SettingsDialog
-        // Remount when the requested tab changes so the dialog opens there.
+        // Open each request at the intended tab/provider, without stale inputs.
         initialTab={settingsTab}
-        key={settingsTab}
+        initialProvider={settingsProvider}
+        key={settingsInstance}
         onOpenChange={setSettingsOpen}
         open={settingsOpen}
       />

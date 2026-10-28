@@ -7,28 +7,28 @@ import "@fontsource/dm-mono/400.css";
 import "./globals.css";
 
 const DESCRIPTION =
-  "T Flash is a fast AI workspace: bring OpenRouter, OpenAI, Anthropic, Gemini, Groq or a local model, then switch between them mid-conversation.";
+  "A focused AI workspace for chat and your connected tools.";
 
 export const metadata: Metadata = {
   title: {
-    default: "T Flash",
-    template: "%s · T Flash",
+    default: "Tflash",
+    template: "%s · Tflash",
   },
   description: DESCRIPTION,
-  applicationName: "T Flash",
+  applicationName: "Tflash",
   appleWebApp: {
     capable: true,
-    title: "T Flash",
+    title: "Tflash",
   },
   openGraph: {
     description: DESCRIPTION,
-    title: "T Flash",
+    title: "Tflash",
     type: "website",
   },
   twitter: {
     card: "summary",
     description: DESCRIPTION,
-    title: "T Flash",
+    title: "Tflash",
   },
 };
 

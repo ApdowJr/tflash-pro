@@ -17,6 +17,7 @@ import {
   type ModelInfo,
 } from "@/lib/providers/catalog";
 import { OWNER_PROOF_HEADER } from "@/lib/security/chat-ownership-wire";
+import { providerConnectionExpired } from "@/lib/providers/connection-state";
 import { HEADER_INTEGRATION_TOKENS } from "@/lib/integrations/wire";
 import {
   HEADER_TOKEN,
@@ -36,6 +37,7 @@ export type ConnectionRecord = {
   readonly token?: string;
   readonly label: string;
   readonly connectedAt: number;
+  readonly expiresAt?: number;
   readonly baseURL?: string;
   readonly modelCount?: number;
   readonly source: "browser" | "server" | "keyless";
@@ -118,11 +120,12 @@ type SettingsContextValue = {
   readonly oauthJustConnected?: string;
   readonly clearOAuthNotice: () => void;
   readonly refreshStatus: () => Promise<void>;
-  readonly addChat: (id: string, title: string) => Promise<void>;
+  readonly recordChatActivity: (id: string, initialTitle: string) => Promise<void>;
+  readonly renameChat: (id: string, title: string) => Promise<void>;
   readonly removeChat: (id: string) => Promise<void>;
   readonly refreshChats: () => Promise<void>;
   readonly registerChatProof: (id: string, proof: string) => void;
-  readonly historyError?: string;
+  readonly historyError?: "historyLoadFailed";
   readonly clearConnections: () => void;
   /** Remove locally stored provider and integration credentials on sign-out. */
   readonly clearLocalCredentials: () => void;
@@ -164,9 +167,13 @@ export function AppSettingsProvider({ children, userId, accountKind }: { readonl
   const [envConfigured, setEnvConfigured] = useState<Readonly<Record<string, boolean>>>({});
   const [liveModels, setLiveModels] = useState<Readonly<Record<string, readonly ModelInfo[]>>>({});
   const [modelsState, setModelsState] = useState<Readonly<Record<string, ModelsState>>>({});
-  const [historyError, setHistoryError] = useState<string>();
+  const [historyError, setHistoryError] = useState<"historyLoadFailed">();
   const [oauthError, setOauthError] = useState<string>();
   const [oauthJustConnected, setOauthJustConnected] = useState<string>();
+  const chatOperations = useRef(new Map<string, Promise<void>>());
+  const historyRevision = useRef(0);
+  const historyRefreshSequence = useRef(0);
+  const modelRequests = useRef(new Map<string, { token?: string }>());
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
@@ -318,7 +325,14 @@ export function AppSettingsProvider({ children, userId, accountKind }: { readonl
   }, []);
 
   const isConnected = useCallback(
-    (providerId: string) => Boolean(settings.connections[providerId]) || envConfigured[providerId] === true,
+    (providerId: string) => {
+      const connection = settings.connections[providerId];
+      // An expired browser token still takes precedence on the server, so do
+      // not show an environment key as usable until the user disconnects it.
+      if (providerConnectionExpired(connection)) return false;
+      if (connection?.source === "server") return envConfigured[providerId] === true;
+      return Boolean(connection) || envConfigured[providerId] === true;
+    },
     [settings.connections, envConfigured],
   );
 
@@ -329,14 +343,20 @@ export function AppSettingsProvider({ children, userId, accountKind }: { readonl
 
   const refreshChats = useCallback(async () => {
     if (accountKind === "vercel") return;
+    const revision = historyRevision.current;
+    const request = ++historyRefreshSequence.current;
     try {
       const response = await fetch("/api/chats", { cache: "no-store" });
       if (!response.ok) throw new Error("Could not load conversations.");
       const data = (await response.json()) as { chats: ChatRecord[] };
+      // A slow refresh must not restore a chat that was renamed or removed.
+      if (revision !== historyRevision.current || request !== historyRefreshSequence.current) return;
       setSettings((current) => ({ ...current, chats: (data.chats ?? []).slice(0, MAX_CHATS) }));
       setHistoryError(undefined);
     } catch {
-      setHistoryError("Could not load conversations. Please try again.");
+      if (revision === historyRevision.current && request === historyRefreshSequence.current) {
+        setHistoryError("historyLoadFailed");
+      }
     }
   }, [accountKind]);
 
@@ -344,43 +364,69 @@ export function AppSettingsProvider({ children, userId, accountKind }: { readonl
     if (hydrated) void refreshChats();
   }, [hydrated, refreshChats]);
 
-  const addChat = useCallback(async (id: string, title: string) => {
-    const safeTitle = title.trim().slice(0, 120) || "New conversation";
-    try {
-      const response = await fetch(`/api/chats/${encodeURIComponent(id)}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json", ...(accountKind === "vercel" ? { [OWNER_PROOF_HEADER]: settingsRef.current.chatProofs[id] ?? "" } : {}) },
-        body: JSON.stringify({ title: safeTitle }),
-      });
-      if (!response.ok) throw new Error("Could not save conversation.");
-      setSettings((current) => ({
-        ...current,
-        chats: [{ id, title: safeTitle, updatedAt: Date.now() }, ...current.chats.filter((chat) => chat.id !== id)].slice(0, MAX_CHATS),
-      }));
-      setHistoryError(undefined);
-    } catch {
-      setHistoryError("Could not save the conversation. Please try again.");
-      throw new Error("Could not save the conversation. Please try again.");
-    }
-  }, [accountKind]);
+  // Serialize changes to a single chat so a message, rename, and removal in
+  // this tab cannot complete out of order. Different chats remain independent.
+  const withChatLock = useCallback((id: string, action: () => Promise<void>) => {
+    const previous = chatOperations.current.get(id);
+    const operation = (previous ? previous.catch(() => {}) : Promise.resolve()).then(action);
+    chatOperations.current.set(id, operation);
+    const cleanup = () => {
+      if (chatOperations.current.get(id) === operation) chatOperations.current.delete(id);
+    };
+    void operation.then(cleanup, cleanup);
+    return operation;
+  }, []);
 
-  const removeChat = useCallback(async (id: string) => {
-    try {
-      const response = await fetch(`/api/chats/${encodeURIComponent(id)}`, {
-        method: "DELETE", headers: { "content-type": "application/json", ...(accountKind === "vercel" ? { [OWNER_PROOF_HEADER]: settingsRef.current.chatProofs[id] ?? "" } : {}) },
-      });
-      if (!response.ok) throw new Error("Could not remove conversation.");
-      setSettings((current) => {
-        const chatProofs = { ...current.chatProofs };
-        delete chatProofs[id];
-        return { ...current, chatProofs, chats: current.chats.filter((chat) => chat.id !== id) };
-      });
-      setHistoryError(undefined);
-    } catch {
-      setHistoryError("Could not remove the conversation. Please try again.");
-      throw new Error("Could not remove the conversation. Please try again.");
-    }
-  }, [accountKind]);
+  // Vercel's only history/proof index is browser storage. Commit it before an
+  // action resolves, because removing the active chat immediately navigates.
+  const commitChatSettings = useCallback((apply: (current: AppSettings) => AppSettings) => {
+    const next = apply(settingsRef.current);
+    if (accountKind === "vercel") window.localStorage.setItem(storageKey, JSON.stringify(next));
+    historyRevision.current += 1;
+    settingsRef.current = next;
+    setSettings(apply);
+  }, [accountKind, storageKey]);
+
+  const updateChat = useCallback((id: string, title: string, activity: boolean) => withChatLock(id, async () => {
+    const safeTitle = title.trim().slice(0, 120) || "New conversation";
+    const response = await fetch(`/api/chats/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", ...(accountKind === "vercel" ? { [OWNER_PROOF_HEADER]: settingsRef.current.chatProofs[id] ?? "" } : {}) },
+      body: JSON.stringify({ title: safeTitle, ...(activity ? { activity: true } : {}) }),
+    });
+    if (!response.ok) throw new Error("Could not save conversation.");
+    const result = await response.json() as { title?: unknown };
+    const updatedAt = Date.now();
+    commitChatSettings((current) => {
+      // Vercel's index is browser-only; Supabase returns the authoritative
+      // title, including a rename that may have happened on another device.
+      const currentTitle = current.chats.find((chat) => chat.id === id)?.title;
+      const savedTitle = accountKind === "vercel" && activity
+        ? currentTitle ?? safeTitle
+        : typeof result.title === "string" ? result.title : safeTitle;
+      return {
+        ...current,
+        chats: [{ id, title: savedTitle, updatedAt }, ...current.chats.filter((chat) => chat.id !== id)].slice(0, MAX_CHATS),
+      };
+    });
+  }), [accountKind, commitChatSettings, withChatLock]);
+
+  const recordChatActivity = useCallback((id: string, initialTitle: string) =>
+    updateChat(id, initialTitle, true), [updateChat]);
+  const renameChat = useCallback((id: string, title: string) =>
+    updateChat(id, title, false), [updateChat]);
+
+  const removeChat = useCallback((id: string) => withChatLock(id, async () => {
+    const response = await fetch(`/api/chats/${encodeURIComponent(id)}`, {
+      method: "DELETE", headers: { "content-type": "application/json", ...(accountKind === "vercel" ? { [OWNER_PROOF_HEADER]: settingsRef.current.chatProofs[id] ?? "" } : {}) },
+    });
+    if (!response.ok) throw new Error("Could not remove conversation.");
+    commitChatSettings((current) => {
+      const chatProofs = { ...current.chatProofs };
+      delete chatProofs[id];
+      return { ...current, chatProofs, chats: current.chats.filter((chat) => chat.id !== id) };
+    });
+  }), [accountKind, commitChatSettings, withChatLock]);
 
   const clearConnections = useCallback(() => update({ connections: {} }), [update]);
 
@@ -412,52 +458,55 @@ export function AppSettingsProvider({ children, userId, accountKind }: { readonl
     void refreshStatus();
   }, [refreshStatus]);
 
-  const loadModels = useCallback(
-    async (providerId: string, force = false) => {
-      const provider = getProvider(providerId);
-      if (!provider) return;
-      if (!force && (liveModels[providerId] || modelsState[providerId]?.loading)) return;
-      const token = settingsRef.current.connections[providerId]?.token;
+  const loadModels = useCallback(async (providerId: string, force = false) => {
+    const provider = getProvider(providerId);
+    if (!provider) return;
+    const token = settingsRef.current.connections[providerId]?.token;
+    const previous = modelRequests.current.get(providerId);
+    // One automatic attempt per credential, even offline; Refresh retries.
+    if (!force && previous && previous.token === token) return;
+    const request = { token };
+    modelRequests.current.set(providerId, request);
+    setModelsState((current) => ({ ...current, [providerId]: { loading: true, source: "static" } }));
+    try {
+      const response = await fetch(`/api/providers/models?provider=${encodeURIComponent(providerId)}`, {
+        cache: "no-store",
+        headers: token ? { [HEADER_TOKEN]: token } : {},
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const payload = (await response.json()) as {
+        models?: ModelInfo[];
+        source?: "live" | "static";
+        error?: string;
+      };
+      // Ignore an old response if a newer credential/refresh is in flight.
+      if (modelRequests.current.get(providerId) !== request) return;
+      setLiveModels((current) => ({ ...current, [providerId]: payload.models ?? provider.models }));
       setModelsState((current) => ({
         ...current,
-        [providerId]: { loading: true, source: "static" },
+        [providerId]: {
+          loading: false,
+          source: payload.source ?? "static",
+          ...(payload.error ? { error: payload.error } : {}),
+        },
       }));
-      try {
-        const response = await fetch(
-          `/api/providers/models?provider=${encodeURIComponent(providerId)}`,
-          {
-            cache: "no-store",
-            headers: token ? { [HEADER_TOKEN]: token } : {},
-          },
-        );
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const payload = (await response.json()) as {
-          models?: ModelInfo[];
-          source?: "live" | "static";
-          error?: string;
-        };
-        setLiveModels((current) => ({ ...current, [providerId]: payload.models ?? [] }));
-        setModelsState((current) => ({
-          ...current,
-          [providerId]: {
-            loading: false,
-            source: payload.source ?? "static",
-            ...(payload.error ? { error: payload.error } : {}),
-          },
-        }));
-      } catch (error) {
-        setModelsState((current) => ({
-          ...current,
-          [providerId]: {
-            loading: false,
-            source: "static",
-            error: error instanceof Error ? error.message : "Could not load models.",
-          },
-        }));
-      }
-    },
-    [liveModels, modelsState],
-  );
+    } catch (error) {
+      if (modelRequests.current.get(providerId) !== request) return;
+      setLiveModels((current) => {
+        const next = { ...current };
+        delete next[providerId];
+        return next;
+      });
+      setModelsState((current) => ({
+        ...current,
+        [providerId]: {
+          loading: false,
+          source: "static",
+          error: error instanceof Error ? error.message : "Could not load models.",
+        },
+      }));
+    }
+  }, []);
 
   const modelsFor = useCallback(
     (providerId: string): readonly ModelInfo[] =>
@@ -611,7 +660,8 @@ export function AppSettingsProvider({ children, userId, accountKind }: { readonl
     ...(oauthJustConnected ? { oauthJustConnected } : {}),
     clearOAuthNotice,
     refreshStatus,
-    addChat,
+    recordChatActivity,
+    renameChat,
     removeChat,
     refreshChats,
     registerChatProof,

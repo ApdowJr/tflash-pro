@@ -41,6 +41,8 @@ CI runs these checks using dummy values. Passing them does not establish live Su
 - **Supabase email/password:** new accounts are confirmed through an emailed link. Opening that link in the same browser completes confirmation and signs the user in; password recovery also uses a link. The `tflash_chats` index uses RLS and server-signed account/session ownership proofs. Titles sync with the account; Eve stores the actual transcripts separately.
 - **Vercel sign-in:** Better Auth uses the Vercel OAuth app. In its database-free configuration, the verified Vercel account ID provides a stable, namespaced identity. New chat titles and ownership proofs are stored in **this browser** under that identity. Clearing site data, switching browsers, or losing the session secret can make those chats inaccessible.
 
+Search, rename, or remove a conversation from its sidebar menu. Renaming a Supabase conversation syncs its title with the account; Vercel titles remain browser-local. Removal asks for confirmation.
+
 These are **separate accounts**, even when they have the same email; they are not automatically linked and do not share history. If both sessions exist, Supabase takes precedence. Sign-out attempts to end both sessions, verifies that neither remains active, and removes the current account's saved browser credentials. It retains Vercel browser-only chat history. Existing browser-local chat IDs from earlier versions have no ownership proof and are not automatically imported; do not assume they have been deleted or migrated.
 
 Deleting a chat removes the Supabase index entry or the local Vercel index and attempts an Eve reset. It is **not guaranteed irreversible erasure** of workflow events or sandbox files. Vercel proofs have no server-side revocation list; a retained proof can remain usable. A Supabase owner may reinsert their own signed row. Configure workflow and sandbox retention separately.
@@ -71,7 +73,7 @@ Integration OAuth has a separate exact-origin allowlist: `APP_URL`, platform-pro
 
 Tflash supports OpenRouter and 14 other choices, including Vercel AI Gateway, OpenAI, Anthropic, Gemini, Groq, Mistral, DeepSeek, xAI, Together, Fireworks, Cerebras, Ollama, LM Studio, and custom OpenAI-compatible servers. The chosen provider and model are resolved to an actual AI SDK model on each turn.
 
-For OpenRouter, create a key at <https://openrouter.ai/keys>, add and test it in **Settings → Providers**, then choose a model. An operator may instead configure `OPENROUTER_API_KEY`; shared server keys can incur costs for any signed-in user. Add quotas, monitoring, and abuse controls before public use.
+Choose a provider and model from the selector in the top bar. For OpenRouter, create a key at <https://openrouter.ai/keys> and add and test it in **Settings → Providers**. An operator may instead configure `OPENROUTER_API_KEY`; shared server keys can incur costs for any signed-in user. Add quotas, monitoring, and abuse controls before public use.
 
 Browser-supplied keys are encrypted server-side with AES-GCM. The browser keeps an opaque, account-bound token for up to seven days; a different signed-in account cannot use it. Signing out, clearing local keys, or clearing site data removes the local copy but does not revoke the provider key. Revoke or rotate the underlying key if compromised. Older unbound browser tokens must be reconnected. Server keys are not intentionally returned to the browser.
 

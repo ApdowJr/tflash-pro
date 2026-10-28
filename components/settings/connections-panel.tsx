@@ -19,7 +19,6 @@ import {
   Loader2Icon,
   MailIcon,
   ShieldCheckIcon,
-  TerminalIcon,
   Trash2Icon,
   TriangleAlertIcon,
 } from "lucide-react";
@@ -51,8 +50,6 @@ const ICONS: Record<IntegrationId, typeof DatabaseIcon> = {
 };
 
 type Status = IntegrationsStatusResponse["integrations"][number];
-
-const CONNECT_COMMAND = "vercel connect create github --name t-flash && vercel env pull";
 
 function usableRecord(record: IntegrationTokenRecord | undefined): boolean {
   if (!record || typeof record.token !== "string" || !record.token.startsWith("v1.")) return false;
@@ -90,7 +87,6 @@ export function ConnectionsPanel({ className }: { readonly className?: string })
   const { t, settings, disconnectIntegration, oauthError, oauthJustConnected, clearOAuthNotice } =
     useAppSettings();
   const [statuses, setStatuses] = useState<Readonly<Record<string, Status>>>({});
-  const [connectAvailable, setConnectAvailable] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [copied, setCopied] = useState<string>();
 
@@ -105,7 +101,6 @@ export function ConnectionsPanel({ className }: { readonly className?: string })
         const next: Record<string, Status> = {};
         for (const item of payload.integrations) next[item.id] = item;
         setStatuses(next);
-        setConnectAvailable(payload.integrations.some((item) => item.connectAvailable));
       } catch {
         // Offline: the catalog still renders, just without live status.
       }
@@ -186,50 +181,9 @@ export function ConnectionsPanel({ className }: { readonly className?: string })
             {t("connectionsIntro")}
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <span
-            className={cn(
-              "inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px]",
-              connectAvailable
-                ? "border-emerald-500/30 bg-emerald-500/8 text-emerald-700 dark:text-emerald-300"
-                : "border-border/70 bg-card text-muted-foreground",
-            )}
-          >
-            <span
-              aria-hidden="true"
-              className={cn(
-                "size-1.5 rounded-full",
-                connectAvailable ? "bg-emerald-500" : "bg-muted-foreground/40",
-              )}
-            />
-            {connectAvailable ? t("connectReady") : t("connectUnavailable")}
-          </span>
-          <span className="text-[11px] text-muted-foreground">
-            {configuredCount}/{INTEGRATIONS.length} {t("connectionsActive")}
-          </span>
-        </div>
-        {connectAvailable ? null : (
-          <div className="flex items-center gap-2 rounded-lg border border-border/70 bg-card px-2.5 py-1.5">
-            <TerminalIcon className="size-3.5 shrink-0 text-muted-foreground" />
-            <code className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">
-              {CONNECT_COMMAND}
-            </code>
-            <Button
-              aria-label={t("copy")}
-              className="size-6 shrink-0 text-muted-foreground"
-              onClick={() => copy(CONNECT_COMMAND)}
-              size="icon-sm"
-              type="button"
-              variant="ghost"
-            >
-              {copied === CONNECT_COMMAND ? (
-                <CheckIcon className="size-3" />
-              ) : (
-                <CopyIcon className="size-3" />
-              )}
-            </Button>
-          </div>
-        )}
+        <p className="text-[11px] text-muted-foreground">
+          {configuredCount}/{INTEGRATIONS.length} {t("connectionsActive")}
+        </p>
       </div>
 
       {groups.map((group) => (
