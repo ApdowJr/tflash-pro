@@ -31,11 +31,11 @@ const TOKEN_PREFIX = "v1";
 const encoder = new TextEncoder();
 
 function secretMaterial(): string {
-  const secret =
-    process.env.PROVIDER_KEYS_SECRET ??
-    process.env.BETTER_AUTH_SECRET ??
-    "ururka-local-development-only";
-  return `ururka:provider-credentials:v1:${secret}`;
+  const secret = process.env.PROVIDER_KEYS_SECRET || process.env.TFLASH_SESSION_SECRET;
+  if (process.env.NODE_ENV === "production" && (!secret || secret.length < 32)) {
+    throw new Error("Set PROVIDER_KEYS_SECRET to a random value of at least 32 characters before connecting a provider.");
+  }
+  return `ururka:provider-credentials:v1:${secret || "ururka-local-development-only"}`;
 }
 
 async function encryptionKey(): Promise<CryptoKey> {
@@ -143,9 +143,24 @@ export function validateBaseURL(raw: string | undefined, provider: ProviderInfo)
     return null;
   }
   if (!provider.customBaseURL) return null;
+  // Browser-supplied endpoints must be explicitly trusted by the operator in
+  // production. Otherwise an account could probe private infrastructure via
+  // the connection test or the model runtime (SSRF).
+  if (process.env.NODE_ENV === "production") {
+    const allowed = (process.env.CUSTOM_PROVIDER_ALLOWED_HOSTS || "")
+      .split(",").map((entry) => entry.trim().toLowerCase()).filter(Boolean);
+    if (!allowed.includes(url.host.toLowerCase())) return null;
+  }
   url.hash = "";
   url.search = "";
   return url.toString().replace(/\/$/, "");
+}
+
+/** Fixed provider URLs are trusted by the catalog. Every customizable URL,
+ * including local defaults, must pass the operator's production allowlist. */
+export function approvedBaseURL(raw: string | undefined, provider: ProviderInfo): string | null {
+  if (!provider.customBaseURL) return raw === provider.baseURL ? provider.baseURL : null;
+  return validateBaseURL(raw, provider);
 }
 
 export function environmentKey(provider: ProviderInfo): string | undefined {
@@ -160,7 +175,7 @@ export function environmentBaseURL(provider: ProviderInfo): string | undefined {
 }
 
 export function hasEnvironmentKey(provider: ProviderInfo): boolean {
-  if (provider.kind === "gateway") return true;
+  if (provider.kind === "gateway") return Boolean(process.env.AI_GATEWAY_API_KEY || process.env.VERCEL);
   return environmentKey(provider) !== undefined || environmentBaseURL(provider) !== undefined;
 }
 
@@ -173,21 +188,31 @@ export async function resolveCredential(
   token?: string,
 ): Promise<ResolvedCredential> {
   const sealed = await openCredential(token);
+  const envKey = environmentKey(provider);
+  const envBaseURL = environmentBaseURL(provider);
+  const candidateBaseURL = (sealed?.providerId === provider.id ? sealed.baseURL : undefined)
+    ?? envBaseURL
+    ?? provider.baseURL;
+  const baseURL = approvedBaseURL(candidateBaseURL, provider);
+  if (!baseURL) {
+    throw new Error("This custom provider host is not allowed. Ask the operator to configure CUSTOM_PROVIDER_ALLOWED_HOSTS.");
+  }
+
   if (sealed && sealed.providerId === provider.id) {
     return {
-      apiKey: sealed.apiKey,
-      baseURL: validateBaseURL(sealed.baseURL, provider) ?? provider.baseURL,
-      source: "browser",
+      // A token can carry only a custom URL while the key remains on the
+      // server; never copy an operator-owned key into a browser token.
+      apiKey: sealed.apiKey || envKey || "",
+      baseURL,
+      source: sealed.apiKey ? "browser" : envKey ? "environment" : "browser",
       label: sealed.label,
     };
   }
 
-  const envKey = environmentKey(provider);
-  const envBaseURL = environmentBaseURL(provider);
   if (envKey || envBaseURL) {
     return {
       apiKey: envKey ?? "",
-      baseURL: envBaseURL ?? provider.baseURL,
+      baseURL,
       source: "environment",
       label: "Configured on server",
     };
@@ -196,7 +221,7 @@ export async function resolveCredential(
   if (!provider.requiresKey && provider.kind !== "gateway") {
     return {
       apiKey: "",
-      baseURL: provider.baseURL,
+      baseURL,
       source: "none",
       label: "No key required",
     };

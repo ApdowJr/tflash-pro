@@ -1,10 +1,10 @@
 /** Helpers shared by the provider API routes. Server-only. */
 import type { ProviderInfo } from "./catalog";
 import {
+  approvedBaseURL,
   environmentBaseURL,
   environmentKey,
   openCredential,
-  validateBaseURL,
   type ResolvedCredential,
 } from "./credentials";
 
@@ -31,17 +31,20 @@ export async function credentialFromInput(
   const browserKey = asTrimmed(input.apiKey) ?? (sealed?.providerId === provider.id ? sealed.apiKey : undefined);
   const envKey = environmentKey(provider);
 
-  const explicitBase = typeof input.baseURL === "string" ? input.baseURL : undefined;
+  const explicitBase = typeof input.baseURL === "string" && input.baseURL.trim()
+    ? input.baseURL.trim()
+    : undefined;
   const candidateBase =
     explicitBase ??
     (sealed?.providerId === provider.id ? sealed.baseURL : undefined) ??
     environmentBaseURL(provider) ??
     provider.baseURL;
-  const baseURL = validateBaseURL(candidateBase, provider) ??
-    (candidateBase === provider.baseURL ? provider.baseURL : null);
+  const baseURL = approvedBaseURL(candidateBase, provider);
 
   if (!baseURL) {
-    throw new ProviderInputError("Invalid endpoint URL. Use an https URL (or http for localhost).");
+    throw new ProviderInputError(
+      "Invalid or unapproved endpoint URL. Custom hosts must be listed in CUSTOM_PROVIDER_ALLOWED_HOSTS in production.",
+    );
   }
 
   if (provider.kind === "gateway") {

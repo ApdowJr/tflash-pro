@@ -25,8 +25,8 @@ import {
 import { translate, type Language, type TranslationKey, type Translator } from "./i18n";
 import { clientContextFor, type PersonaId } from "./personas";
 
-const STORAGE_KEY = "ururka:settings:v1";
-const MAX_CHATS = 30;
+const STORAGE_KEY = "tflash:settings:v1";
+const MAX_CHATS = 100;
 
 export type Theme = "system" | "light" | "dark";
 
@@ -90,18 +90,21 @@ type SettingsContextValue = {
   readonly loadModels: (providerId: string, force?: boolean) => Promise<void>;
   readonly envConfigured: Readonly<Record<string, boolean>>;
   readonly refreshStatus: () => Promise<void>;
-  readonly addChat: (id: string, title: string) => void;
-  readonly removeChat: (id: string) => void;
-  readonly clearChats: () => void;
+  readonly addChat: (id: string, title: string) => Promise<void>;
+  readonly removeChat: (id: string) => Promise<void>;
+  readonly refreshChats: () => Promise<void>;
+  readonly historyError?: string;
+  readonly clearConnections: () => void;
 };
 
 const SettingsContext = createContext<SettingsContextValue | null>(null);
 
-function readStoredSettings(): AppSettings {
+function readStoredSettings(storageKey: string): AppSettings {
   if (typeof window === "undefined") return DEFAULT_SETTINGS;
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return DEFAULT_SETTINGS;
+    const raw = window.localStorage.getItem(storageKey);
+    const language = window.localStorage.getItem("tflash:language") === "so" ? "so" : "en";
+    if (!raw) return { ...DEFAULT_SETTINGS, language };
     const parsed = JSON.parse(raw) as Partial<AppSettings>;
     const provider = getProvider(parsed.providerId) ?? defaultProvider();
     return {
@@ -113,35 +116,47 @@ function readStoredSettings(): AppSettings {
         typeof parsed.contextWindow === "number" ? parsed.contextWindow : provider.contextWindow,
       connections:
         parsed.connections && typeof parsed.connections === "object" ? parsed.connections : {},
-      chats: Array.isArray(parsed.chats) ? parsed.chats.slice(0, MAX_CHATS) : [],
+      // Titles and session IDs come from the authenticated Supabase account,
+      // not shared browser storage.
+      chats: [],
     };
   } catch {
     return DEFAULT_SETTINGS;
   }
 }
 
-export function AppSettingsProvider({ children }: { readonly children: ReactNode }) {
+export function AppSettingsProvider({ children, userId }: { readonly children: ReactNode; readonly userId: string }) {
+  const storageKey = `${STORAGE_KEY}:${userId}`;
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [hydrated, setHydrated] = useState(false);
   const [envConfigured, setEnvConfigured] = useState<Readonly<Record<string, boolean>>>({});
   const [liveModels, setLiveModels] = useState<Readonly<Record<string, readonly ModelInfo[]>>>({});
   const [modelsState, setModelsState] = useState<Readonly<Record<string, ModelsState>>>({});
+  const [historyError, setHistoryError] = useState<string>();
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
   useEffect(() => {
-    setSettings(readStoredSettings());
+    setSettings(readStoredSettings(storageKey));
     setHydrated(true);
-  }, []);
+  }, [storageKey]);
 
   useEffect(() => {
     if (!hydrated) return;
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+      // Keep encrypted provider credentials scoped to this account. Chat
+      // titles are retrieved from Supabase rather than persisted locally.
+      window.localStorage.setItem(storageKey, JSON.stringify({ ...settings, chats: [] }));
+      window.localStorage.setItem("tflash:theme", settings.theme);
+      window.localStorage.setItem("tflash:language", settings.language);
     } catch {
       // Storage may be unavailable (private mode); settings stay in memory.
     }
-  }, [settings, hydrated]);
+  }, [settings, hydrated, storageKey]);
+
+  useEffect(() => {
+    document.documentElement.lang = settings.language;
+  }, [settings.language]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -190,24 +205,57 @@ export function AppSettingsProvider({ children }: { readonly children: ReactNode
     [settings.connections, envConfigured],
   );
 
-  const addChat = useCallback((id: string, title: string) => {
-    setSettings((current) => {
-      const without = current.chats.filter((chat) => chat.id !== id);
-      return {
+  const refreshChats = useCallback(async () => {
+    try {
+      const response = await fetch("/api/chats", { cache: "no-store" });
+      if (!response.ok) throw new Error("Could not load conversations.");
+      const data = (await response.json()) as { chats: ChatRecord[] };
+      setSettings((current) => ({ ...current, chats: (data.chats ?? []).slice(0, MAX_CHATS) }));
+      setHistoryError(undefined);
+    } catch {
+      setHistoryError("Could not load conversations. Please try again.");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (hydrated) void refreshChats();
+  }, [hydrated, refreshChats]);
+
+  const addChat = useCallback(async (id: string, title: string) => {
+    const safeTitle = title.trim().slice(0, 120) || "New conversation";
+    try {
+      const response = await fetch(`/api/chats/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title: safeTitle }),
+      });
+      if (!response.ok) throw new Error("Could not save conversation.");
+      setSettings((current) => ({
         ...current,
-        chats: [{ id, title: title.slice(0, 80) || "New conversation", updatedAt: Date.now() }, ...without].slice(
-          0,
-          MAX_CHATS,
-        ),
-      };
-    });
+        chats: [{ id, title: safeTitle, updatedAt: Date.now() }, ...current.chats.filter((chat) => chat.id !== id)].slice(0, MAX_CHATS),
+      }));
+      setHistoryError(undefined);
+    } catch {
+      setHistoryError("Could not save the conversation. Please try again.");
+      throw new Error("Could not save the conversation. Please try again.");
+    }
   }, []);
 
-  const removeChat = useCallback((id: string) => {
-    setSettings((current) => ({ ...current, chats: current.chats.filter((chat) => chat.id !== id) }));
+  const removeChat = useCallback(async (id: string) => {
+    try {
+      const response = await fetch(`/api/chats/${encodeURIComponent(id)}`, {
+        method: "DELETE", headers: { "content-type": "application/json" },
+      });
+      if (!response.ok) throw new Error("Could not remove conversation.");
+      setSettings((current) => ({ ...current, chats: current.chats.filter((chat) => chat.id !== id) }));
+      setHistoryError(undefined);
+    } catch {
+      setHistoryError("Could not remove the conversation. Please try again.");
+      throw new Error("Could not remove the conversation. Please try again.");
+    }
   }, []);
 
-  const clearChats = useCallback(() => update({ chats: [] }), [update]);
+  const clearConnections = useCallback(() => update({ connections: {} }), [update]);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -340,7 +388,9 @@ export function AppSettingsProvider({ children }: { readonly children: ReactNode
     refreshStatus,
     addChat,
     removeChat,
-    clearChats,
+    refreshChats,
+    historyError,
+    clearConnections,
   };
 
   return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;

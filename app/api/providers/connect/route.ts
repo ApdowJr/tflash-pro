@@ -1,3 +1,4 @@
+import { currentUser } from "@/lib/supabase/server";
 import { getProvider } from "@/lib/providers/catalog";
 import { sealCredential, validateBaseURL } from "@/lib/providers/credentials";
 import { testConnection } from "@/lib/providers/live-models";
@@ -22,6 +23,8 @@ export type ConnectResponse = {
 };
 
 export async function POST(request: Request): Promise<Response> {
+  if (!await currentUser()) return Response.json({ ok: false, error: "Sign in to continue." }, { status: 401 });
+  if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) return Response.json({ ok: false, error: "Expected JSON." }, { status: 415 });
   let payload: Record<string, unknown>;
   try {
     payload = (await request.json()) as Record<string, unknown>;
@@ -64,8 +67,9 @@ export async function POST(request: Request): Promise<Response> {
       return Response.json(body, { status: 400, headers: { "cache-control": "no-store" } });
     }
 
-    // Never seal an operator-owned environment key into a browser token.
-    if (!apiKey && credential.source === "environment") {
+    // A server key needs no token unless a custom URL must be remembered.
+    // In that case seal only the URL, never the operator-owned key.
+    if (!apiKey && credential.source === "environment" && !validatedBase) {
       const body: ConnectResponse = {
         ok: true,
         providerId: provider.id,
@@ -90,7 +94,7 @@ export async function POST(request: Request): Promise<Response> {
 
     const sealed = await sealCredential({
       providerId: provider.id,
-      apiKey: apiKey || credential.apiKey,
+      apiKey,
       label: `${provider.name} · connected in this browser`,
       ...(validatedBase ? { baseURL: validatedBase } : {}),
     });

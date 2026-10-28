@@ -1,145 +1,91 @@
-# Ururka Agent / وکیل • Soomaali
+# Tflash
 
-**Ururka Agent** waa chat-app casri ah oo ku dhisan [eve](https://eve.dev) + Next.js 16.
-Waxa ugu weyn ee lagu daray: **waxaad ku xiri kartaa provider kasta** — [OpenRouter](https://openrouter.ai/),
-OpenAI, Anthropic, Google Gemini, Groq, Mistral, DeepSeek, xAI, Together, Fireworks,
-Cerebras, Ollama, LM Studio, ama endpoint kasta oo OpenAI-compatible ah — adigoo furaha
-gelinaya UI-ga ama environment variable ahaan. Model-ka waxaa la beddelaa wada hadalka dhexdiisa.
+Tflash waa goob wada hadal AI ah oo ku hadasha Soomaali iyo English. Waxaad ku geli kartaa akoonkaaga, waxaadna dooran kartaa OpenRouter, OpenAI, Anthropic, Gemini, ama provider kale oo aad ku kalsoon tahay.
 
-A modern, multi-provider AI workspace built with the eve agent framework.
+Tflash is an Eve + Next.js workspace with email/password accounts, account-isolated conversation history, streaming chat, and per-turn model selection.
 
----
+## What is included
 
-## ✨ Features
+- A responsive Tflash identity, sign-in, sign-up, email confirmation, and password recovery.
+- Supabase Auth and an RLS-protected conversation index. Eve session routes additionally check a server-signed user/session binding, including streams and controls.
+- OpenRouter and 14 other provider choices, including Vercel AI Gateway, OpenAI, Anthropic, Google, Groq, Mistral, DeepSeek, xAI, Together, Fireworks, Cerebras, Ollama, LM Studio, and a custom OpenAI-compatible endpoint.
+- Live model discovery with a built-in fallback catalog, provider connections, streaming messages, attachments, Markdown export, themes, keyboard shortcuts, and Somali/English UI.
 
-| Area | What you get |
-| --- | --- |
-| **Providers** | 15 built-in providers + custom OpenAI-compatible endpoints. OpenRouter is a first-class citizen. |
-| **BYOK** | Paste an API key in **Settings → Providers**. It is validated by a live `/models` call, then sealed with AES-GCM on the server; only an opaque token is kept in the browser. |
-| **Server keys** | Set any `*_API_KEY` in the environment for an operator-wide connection. Keys never reach the browser. |
-| **Live model catalog** | Models (with context length, pricing, vision flags) are fetched from each provider's `/models` endpoint, with a built-in fallback list when offline. |
-| **Per-request switching** | The chosen provider/model is sent on every eve request and resolved at runtime with `defineDynamic` + AI SDK `LanguageModel`. No redeploy needed. |
-| **Chat UI** | Streaming messages, reasoning blocks, tool calls, approvals/questions (HITL), file attachments, cancellation, steering, resumable `/s/:id` sessions. |
-| **Modern extras** | Searchable model picker (⌘K), bilingual UI (Soomaali/English), light/dark/system theme, assistant personas via ephemeral `clientContext`, local chat history, Markdown export, copy buttons, keyboard shortcuts. |
-| **Auth** | Better Auth (Vercel social) + `vercelOidc()` + `localDev()`; provider selection is only attached to authenticated principals. |
+## Run locally
 
----
-
-## 🚀 Getting started
+Use **Node.js 24** and pnpm via Corepack. The package manager version is pinned in `package.json`; Vercel's install command and the CI workflow use the same frozen lockfile:
 
 ```bash
-corepack pnpm install          # or: pnpm install
-cp .env.example .env.local     # optional — only for server-wide keys / auth
-pnpm dev                      # Next.js + eve dev server, http://localhost:3000
+corepack pnpm install --frozen-lockfile
+cp .env.example .env.local
+# Add stable local secrets to .env.local (see below).
+corepack pnpm dev
 ```
 
-Other commands:
+Open <http://localhost:3000>. The sample public Supabase URL and publishable key point to the Tflash project; they may be replaced with another project's public values. `NEXT_PUBLIC_*` values are embedded at build time, so set them before building. Do not use a Supabase service-role or secret key in client-side variables.
+
+Generate **two independent secrets** locally, for example by running the following twice and putting the results in `.env.local` as `TFLASH_SESSION_SECRET` and `PROVIDER_KEYS_SECRET`:
 
 ```bash
-pnpm dev:eve        # eve interactive TUI (chat with the agent in a terminal)
-pnpm typecheck      # tsc --noEmit
-pnpm build          # production Next.js build (also compiles eve sources)
-pnpm build:eve      # compile the eve agent only
-pnpm deploy         # deploy to Vercel (eve deploy)
+node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
 ```
 
-Open the app, click the model chip (or press **⌘K**), choose a provider, then open
-**Settings → Providers** to connect it.
+Both should be at least 32 characters, private, and stable across all Next and Eve instances. Development has deliberately insecure fallback values if they are missing; production does not. If only one of the two is supplied, it is used as the fallback for the other. Changing the session secret invalidates existing ownership proofs, making indexed chats inaccessible; changing the provider secret invalidates saved provider connections.
 
-### Connect OpenRouter (example)
+Useful commands:
+
+```bash
+corepack pnpm test          # unit and local mock integration tests (no credentials)
+corepack pnpm typecheck
+corepack pnpm build         # Next production build, including type checks
+corepack pnpm build:eve     # Eve agent build
+```
+
+`.github/workflows/ci.yml` runs these checks with dummy credentials on pushes and pull requests. Its mock tests do not validate live Supabase, provider, or Vercel connectivity.
+
+## Supabase setup
+
+The Tflash project already has the migration in `supabase/migrations/20261028000000_create_tflash_chats.sql`. For a different project, apply that migration once using the Supabase SQL Editor or your migration workflow. It creates the chat index, grants authenticated access, and enables user-specific RLS policies. Eve transcripts are stored by Eve's workflow world, not in this table.
+
+1. Enable **Email** authentication and configure the confirmation policy under Supabase Auth. This app supports email/password; social sign-in is not configured.
+2. In **Auth → URL Configuration**, set the **Site URL** to your real production origin and allow each deployment callback (including its query string), for example `http://localhost:3000/auth/callback**` and `https://your-domain.example/auth/callback**`. Add the specific preview host separately when testing a preview; avoid a wildcard over hosts you do not control. An unlisted callback cannot complete sign-up or password recovery.
+3. The current project has email confirmation enabled. A user must open the confirmation link before signing in; finish a PKCE email flow in the browser that initiated it. Configure a production SMTP provider and appropriate rate limits before inviting a wider audience; the default email service is restricted.
+4. Set the public URL/key and both secrets in your hosting environment. Configure `APP_URL` as the public HTTPS origin. If internal Eve traffic uses a different trusted origin, set `TFLASH_INTERNAL_ORIGIN`; otherwise Vercel's deployment URL or `APP_URL` is used. Production internal origins must use HTTPS and must route `/eve/` to this app. Never derive the internal destination from an incoming Host header. For a deployment protected by Vercel Authentication, enable [Protection Bypass for Automation](https://vercel.com/docs/deployment-protection/methods-to-bypass-deployment-protection/protection-bypass-automation) and select a secret for the `VERCEL_AUTOMATION_BYPASS_SECRET` system environment variable. The app uses it only on server-side Next-to-Eve calls; never expose it to browsers. Redeploy after changing or rotating the secret.
+
+The index stores a title and session ID per account. A conversation is listed only after its first message has been titled. Deleting it removes the index entry and attempts to reset the Eve session; the app then denies ordinary access while that entry is absent. It is **not a guaranteed immediate erasure** of workflow events or sandbox files: configure retention and deletion for your Eve workflow world and sandbox separately. A signed-in owner has database access to their own index rows, so do not treat removal from the UI as cryptographic destruction of the underlying transcript.
+
+## Connect a provider
+
+For OpenRouter:
 
 1. Create a key at <https://openrouter.ai/keys>.
-2. In the app: **Settings → Providers → OpenRouter** → paste key → **Test** → **Connect**.
-   The model list refreshes live from `https://openrouter.ai/api/v1/models`.
-3. Pick any model in **Models** (⌘K) and start chatting.
+2. Open **Providers → OpenRouter**, paste the key, test the connection, and connect.
+3. Open **Models**, choose a model, and send a message. You can change providers and models on subsequent turns.
 
-Prefer configuration instead? Add to `.env.local`:
+Alternatively set `OPENROUTER_API_KEY` on the server for an operator-wide connection. Other supported `*_API_KEY` variables are listed in `.env.example`. The provider/model headers are validated and resolved to the corresponding AI SDK model on the server; the UI does not just change the label. Operator-wide keys incur the operator's costs for any user who can access them. Before a public launch, add appropriate rate limits, quotas, monitoring, and abuse controls at your hosting edge.
 
-```bash
-OPENROUTER_API_KEY=sk-or-v1-...
-```
+Browser-supplied keys are sealed with AES-GCM on the server. The browser keeps an opaque token in account-scoped local storage; it expires after seven days and is removed on sign-out or when clearing local provider keys. It is still a bearer credential: anyone who obtains the token can use it until expiry, and clearing it locally does not revoke the underlying provider key. Rotate the provider key if it was exposed. Server-wide provider keys are never intentionally returned to the browser.
 
-Restart the dev server. The provider now shows **Server key** for everyone.
+### Custom and local endpoints
 
----
+Custom, Ollama, and LM Studio base URLs are called **from the server**, not the user's browser. A deployed app cannot use a model on the user's laptop via `localhost`. In production, an operator must list each trusted exact `host[:port]` in `CUSTOM_PROVIDER_ALLOWED_HOSTS`, including the default local hosts if they are intended. An empty list denies customizable hosts. HTTPS is required except for an explicitly allowlisted loopback HTTP endpoint; credentials in URLs and metadata/internal hostnames are rejected. Requests to custom model endpoints and model discovery do not follow redirects. Only allow hosts and DNS you control and trust.
 
-## 🔌 How provider routing works
+## Tool safety
 
-```
-Browser (model picker)                 Server (eve)
-──────────────────────                ──────────────────────────────────────
-x-ururka-provider: openrouter   ──▶   agent/channels/eve.ts
-x-ururka-model:    openai/...         authenticates, validates against the
-x-ururka-context:  128000             allowlisted catalog, stores the choice
-x-ururka-token:    v1.<sealed>        in session auth attributes
-                                             │
-                                             ▼
-                                      agent/agent.ts  (defineDynamic)
-                                      session.started → Gateway model id (serializable)
-                                      step.started    → live AI SDK LanguageModel
-                                             │
-                                             ▼
-                                      lib/providers/runtime.ts
-                                      createOpenAICompatible / createOpenAI /
-                                      createAnthropic / createGoogleGenerativeAI
-```
+Shell commands and every tool exposed by the Supabase, Vercel, and Resend MCP connections require a fresh in-chat approval before they run. Review the displayed parameters before approving. The MCP connections are user-scoped and require their own Vercel Connect setup; provider selection is separate and does not require these integrations. Local Eve self-modification is disabled so a chat user cannot edit the app's source through that development extension.
 
-- `session.started` must return a **string** (eve serializes it); `step.started` may return
-  a live provider object. Both pass an explicit `modelContextWindowTokens`, so no AI Gateway
-  metadata lookup is needed for direct providers.
-- Direct providers use their real SDKs; everything else uses
-  `@ai-sdk/openai-compatible` with `includeUsage: true`.
-- The browser never receives a plaintext server key. Browser keys are encrypted with
-  `PROVIDER_KEYS_SECRET` (fallback `BETTER_AUTH_SECRET`) and expire after 7 days.
+New production shell sandboxes use a deny-all network policy; provider requests and Eve's web tools run outside that shell sandbox. Local just-bash cannot enforce network isolation and is explicitly allowed network access during development. Existing sandboxes created before a policy change may keep their old policy until replaced. Other Eve tools can still access sandbox files or the network. Approvals are not a substitute for sandbox isolation, scoped credentials, monitoring, or a review of all enabled capabilities before public use.
 
-### Adding another provider
+## Deployment and storage
 
-Add one entry to `lib/providers/catalog.ts` (id, name, `baseURL`, `modelsPath`, `envKey`,
-default model, fallback models). That is enough — the UI, API routes, validation, and
-runtime model factory all read from that catalog.
+Eve needs a sandbox provider even for a chat turn. Local development can use the installed `just-bash` fallback when Docker is unavailable; it runs in the application process and does **not** provide network isolation. Production builds do not fall back to it: build on Vercel with Vercel Sandbox available, or build with a reachable Docker daemon / an explicitly configured production sandbox provider. A successful build without a provider is not proof that turns can run. Review Eve's sandbox security documentation before exposing tools to untrusted users.
 
-### Custom endpoints
+On self-hosted installations, persist Eve's workflow storage (`.eve/.workflow-data` with the default local world) and use a workflow world appropriate to your scaling and retention needs. Preserve both `/eve/` and `/.well-known/workflow/` routes through a reverse proxy. Supabase stores only the conversation index; losing the workflow store loses the associated transcripts even if titles remain. See the Eve deployment and sandbox docs in `node_modules/eve/docs` for the hosting topology and limitations.
 
-Choose **Custom endpoint**, **Ollama**, or **LM Studio** in Settings and set a base URL.
-Only `https://` URLs (plus `http://localhost` in development) are accepted; credentials in
-URLs and cloud metadata addresses are rejected. Note that a deployed server cannot reach a
-model running on your laptop — use a tunnel or a hosted endpoint in production.
+## Key files
 
----
-
-## 🔐 Security notes
-
-- Browser tokens are AES-GCM encrypted but stateless: anyone holding one can use that
-  connection until it expires. Use short-lived keys, rotate them, and click **Disconnect**
-  on shared machines.
-- The provider/model headers are validated against the server catalog; invalid values fall
-  back to the default Gateway model. Only authenticated callers get selection attributes.
-- Production requires `BETTER_AUTH_SECRET`, `VERCEL_APP_CLIENT_ID`, and
-  `VERCEL_APP_CLIENT_SECRET`; see `lib/auth.ts`.
-- Review eve's [responsible use](https://eve.dev/docs) notes before exposing the agent to
-  sensitive data: tools, MCP connections, and sandboxes have their own permission model.
-
----
-
-## 📁 Key files
-
-```
-agent/agent.ts                  dynamic per-request model selection
-agent/channels/eve.ts           auth + provider headers → session attributes
-agent/instructions.md           agent identity (Somali/English aware)
-lib/providers/catalog.ts        provider + fallback model registry
-lib/providers/selection.ts      header/attribute validation contract
-lib/providers/credentials.ts    AES-GCM sealing + env key resolution
-lib/providers/live-models.ts    /models discovery and connection tests
-lib/providers/runtime.ts        AI SDK LanguageModel factory
-app/api/providers/*             status, models, test, connect routes
-components/app/*                settings, model browser, header, empty state, i18n
-app/_components/agent-chat.tsx  chat shell and eve hook wiring
-```
-
----
-
-## 🧰 Stack
-
-Next.js 16 · React 19 · Tailwind CSS 4 · shadcn/Radix UI · AI Elements · eve 0.83 ·
-AI SDK 7 · Better Auth · Zod · TypeScript 6 · Vercel AI Gateway.
+- `components/app/auth-screen.tsx`, `brand.tsx`, `workspace-shell.tsx` — account screens, identity, and workspace.
+- `lib/supabase/*`, `proxy.ts`, `app/auth/*` — Supabase clients, refresh, and callbacks.
+- `app/api/chats/*`, `lib/security/*`, `agent/channels/eve.ts` — conversation ownership and authenticated Eve routes.
+- `lib/providers/*`, `app/api/providers/*`, `agent/agent.ts` — provider credentials, discovery, and dynamic model routing.
+- `components/app/settings-provider.tsx`, `app/_components/agent-chat.tsx` — account-scoped settings, history, and chat UI.

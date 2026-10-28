@@ -1,6 +1,7 @@
 {
   "name": "ururka-lps-agent",
   "version": "0.0.0",
+  "packageManager": "pnpm@12.15.0",
   "type": "module",
   "imports": {
     "#*": "./agent/*",
@@ -15,13 +16,17 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "build:eve": "eve build",
     "dev:eve": "eve dev",
-    "start:eve": "eve start"
+    "start:eve": "eve start",
+    "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "4.0.89",
     "@ai-sdk/google": "4.0.106",
     "@ai-sdk/openai": "4.0.103",
     "@ai-sdk/openai-compatible": "3.0.79",
+    "@fontsource-variable/dm-sans": "5.3.0",
+    "@fontsource/dm-mono": "5.3.0",
+    "@fontsource/dm-serif-display": "5.3.0",
     "@radix-ui/react-use-controllable-state": "1.2.2",
     "@shadcn/react": "0.3.1",
     "@shikijs/core": "3.23.0",
@@ -31,10 +36,11 @@
     "@streamdown/code": "1.1.1",
     "@streamdown/math": "1.0.2",
     "@streamdown/mermaid": "1.0.2",
+    "@supabase/ssr": "0.12.7",
+    "@supabase/supabase-js": "2.118.0",
     "@tailwindcss/postcss": "4.3.0",
     "@vercel/connect": "0.4.2",
     "ai": "7.0.153",
-    "better-auth": "1.6.26",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "cmdk": "1.1.1",
@@ -57,6 +63,7 @@
     "@types/node": "24.13.2",
     "@types/react": "19.2.15",
     "@types/react-dom": "19.2.3",
+    "just-bash": "3.6.0",
     "typescript": "6.0.3"
   },
   "engines": {

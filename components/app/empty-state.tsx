@@ -1,138 +1,69 @@
 "use client";
 
-import {
-  ArrowUpRightIcon,
-  BlocksIcon,
-  KeyRoundIcon,
-  LanguagesIcon,
-  SparklesIcon,
-  ZapIcon,
-} from "lucide-react";
+import { ArrowRightIcon, BookOpenIcon, Code2Icon, LightbulbIcon, PenLineIcon, PlugIcon } from "lucide-react";
+import type { ReactNode } from "react";
 import { usePromptInputController } from "@/components/ai-elements/prompt-input";
 import { getProvider } from "@/lib/providers/catalog";
-import { cn } from "@/lib/utils";
-import { ProviderBadge, StatusDot } from "./provider-badge";
+import { StatusDot } from "./provider-badge";
 import { useAppSettings } from "./settings-provider";
 
 const SUGGESTIONS = [
-  { key: "suggestion1" as const, icon: BlocksIcon },
-  { key: "suggestion2" as const, icon: LanguagesIcon },
-  { key: "suggestion3" as const, icon: ZapIcon },
-  { key: "suggestion4" as const, icon: SparklesIcon },
+  { key: "suggestion1" as const, icon: BookOpenIcon, label: ["Learn something", "Wax baro"] },
+  { key: "suggestion2" as const, icon: PenLineIcon, label: ["Make a plan", "Qorshee"] },
+  { key: "suggestion3" as const, icon: Code2Icon, label: ["Work through code", "Xalli koodh"] },
+  { key: "suggestion4" as const, icon: LightbulbIcon, label: ["Find the essence", "Soo koob"] },
 ];
 
 export function EmptyState({
-  onOpenSettings,
-  onOpenModels,
+  composer, onOpenSettings, onOpenModels, preparing, preparationError, onRetry,
 }: {
+  readonly composer: ReactNode;
   readonly onOpenSettings: () => void;
   readonly onOpenModels: () => void;
+  readonly preparing: boolean;
+  readonly preparationError?: string;
+  readonly onRetry: () => void;
 }) {
-  const { t, selection, isConnected, settings, envConfigured } = useAppSettings();
+  const { t, selection, isConnected, settings } = useAppSettings();
   const controller = usePromptInputController();
   const provider = getProvider(selection.providerId);
-  const hasConnection =
-    Object.keys(settings.connections).length > 0 ||
-    Object.entries(envConfigured).some(
-      ([id, configured]) => id !== "gateway" && configured,
-    ) ||
-    (selection.providerId !== "gateway" && isConnected(selection.providerId));
-
+  const connected = isConnected(selection.providerId);
+  const so = settings.language === "so";
   const choose = (text: string) => {
     controller.textInput.setInput(text);
-    window.setTimeout(() => {
-      const textarea = document.querySelector<HTMLTextAreaElement>(
-        '[data-slot="input-group-control"]',
-      );
-      textarea?.focus();
-    }, 0);
+    window.setTimeout(() => document.querySelector<HTMLTextAreaElement>('[data-slot="input-group-control"]')?.focus(), 0);
   };
 
   return (
-    <div className="ururka-rise relative mx-auto flex w-full max-w-3xl flex-col items-center gap-8 px-4 pt-24 pb-8 text-center sm:pt-28">
-      <div aria-hidden="true" className="ururka-grid pointer-events-none absolute inset-0 -z-10" />
-
-      <div className="flex flex-col items-center gap-4">
-        <span className="relative flex size-14 items-center justify-center rounded-2xl bg-foreground text-background shadow-lg">
-          <svg className="size-8" fill="none" viewBox="0 0 24 24">
-            <path
-              d="M4 18V7.5L12 4l8 3.5V18l-8 3-8-3Z"
-              stroke="currentColor"
-              strokeLinejoin="round"
-              strokeWidth="1.4"
-            />
-            <path d="M4 7.5 12 11l8-3.5M12 11v10" stroke="currentColor" strokeWidth="1.4" />
-          </svg>
-        </span>
-        <div className="space-y-1.5">
-          <h1 className="font-semibold text-3xl tracking-tight sm:text-4xl">{t("welcome")}</h1>
-          <p className="mx-auto max-w-lg text-muted-foreground text-sm sm:text-base">
-            {t("subtitle")}
-          </p>
+    <div className="home-content ururka-rise">
+      <div className="home-overline"><span><i />{so ? "GOOBTAADA FIKRADAHA" : "YOUR SPACE TO THINK"}</span><span>01 / TFLASH</span></div>
+      <div className="home-heading">
+        <h1>{so ? "Fikradahaaga" : "Good ideas"}<br /><em>{so ? "halkan ka bilow." : "start here."}</em></h1>
+        <p>{so ? "Weydii, qor, qorshee ama wax cusub baro. Maxaan maanta ka shaqaynaynaa?" : "Ask, write, plan or learn something new. What shall we work on today?"}</p>
+      </div>
+      <div className="home-composer">
+        {composer}
+        <div className="home-composer-meta">
+          <span>{preparationError ? (so ? "Wada hadalka lama diyaarin." : "Couldn’t prepare your conversation.") : preparing ? (so ? "Goobtaada waa la diyaarinayaa…" : "Preparing your workspace…") : (so ? "Enter si aad u dirto · Shift + Enter si aad sadar cusub u bilowdo" : "Enter to send · Shift + Enter for a new line")}</span>
+          {preparationError ? <button onClick={onRetry} type="button">{so ? "Mar kale isku day" : "Try again"} <ArrowRightIcon size={13} /></button> : null}
         </div>
       </div>
-
-      <div className="flex flex-wrap items-center justify-center gap-2">
-        <button
-          className="flex items-center gap-2 rounded-full border bg-card px-3 py-1.5 text-xs shadow-sm transition-colors hover:border-foreground/30"
-          onClick={onOpenModels}
-          type="button"
-        >
-          {provider ? <ProviderBadge provider={provider} size="sm" /> : null}
-          <StatusDot active={isConnected(selection.providerId)} />
-          <span className="max-w-[14rem] truncate font-medium">{selection.modelId}</span>
-          <span className="text-muted-foreground">· {t("models")}</span>
-          <ArrowUpRightIcon className="size-3 text-muted-foreground" />
-        </button>
-        <button
-          className={cn(
-            "flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs shadow-sm transition-colors hover:border-foreground/30",
-            hasConnection ? "bg-card" : "border-amber-500/40 bg-amber-500/5",
-          )}
-          onClick={onOpenSettings}
-          type="button"
-        >
-          <KeyRoundIcon className="size-3 text-muted-foreground" />
-          {hasConnection ? t("connectionReady") : t("needsKey")}
-          <ArrowUpRightIcon className="size-3 text-muted-foreground" />
-        </button>
-      </div>
-
-      {!hasConnection ? (
-        <button
-          className="flex max-w-xl items-center gap-2 rounded-xl border border-amber-500/35 bg-amber-500/8 px-3.5 py-2.5 text-left text-xs text-amber-800 transition-colors hover:bg-amber-500/15 dark:text-amber-200"
-          onClick={onOpenSettings}
-          type="button"
-        >
-          <KeyRoundIcon className="size-3.5 shrink-0" />
-          <span>{t("demoHint")}</span>
-          <span className="shrink-0 font-semibold underline underline-offset-2">
-            {t("connectNow")} →
-          </span>
-        </button>
-      ) : null}
-
-      <div className="w-full max-w-2xl space-y-2.5 text-left">
-        <p className="px-1 font-medium text-muted-foreground text-xs uppercase tracking-wider">
-          {t("startWith")}
-        </p>
-        <div className="grid gap-2 sm:grid-cols-2">
-          {SUGGESTIONS.map(({ key, icon: Icon }) => (
-            <button
-              className="group flex items-center gap-3 rounded-xl border bg-card/70 px-3.5 py-3 text-left text-sm shadow-sm transition-all hover:-translate-y-0.5 hover:border-foreground/25 hover:shadow-md"
-              key={key}
-              onClick={() => choose(t(key))}
-              type="button"
-            >
-              <Icon className="size-4 shrink-0 text-indigo-500" />
-              <span className="min-w-0 flex-1 truncate">{t(key)}</span>
-              <ArrowUpRightIcon className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+      <div className="home-suggestions">
+        <div className="home-suggestions-heading"><span>{so ? "AMA HALKAN KA BILOW" : "OR START WITH SOMETHING"}</span><span>{so ? "DOORO MID" : "PICK A PROMPT"}</span></div>
+        <div className="home-suggestion-grid">
+          {SUGGESTIONS.map(({ key, icon: Icon, label }) => (
+            <button disabled={preparing} key={key} onClick={() => choose(t(key))} type="button">
+              <span className="home-suggestion-icon"><Icon size={17} /></span>
+              <span className="home-suggestion-copy"><strong>{label[so ? 1 : 0]}</strong><small>{t(key)}</small></span>
+              <ArrowRightIcon className="home-suggestion-arrow" size={15} />
             </button>
           ))}
         </div>
       </div>
-
-      <p className="text-[11px] text-muted-foreground/80">{t("poweredBy")} · {t("shortcutHint")}</p>
+      <div className="home-status">
+        <button onClick={connected ? onOpenModels : onOpenSettings} type="button"><StatusDot active={connected} /><span>{provider?.name}</span><strong>{connected ? (so ? "Wuu diyaar yahay" : "Ready") : (so ? "Ku xir provider" : "Connect provider")}</strong><ArrowRightIcon size={13} /></button>
+        <span className="home-status-note"><PlugIcon size={13} />{so ? "Modelkaaga, doorashadaada." : "Your models, your choice."}</span>
+      </div>
     </div>
   );
 }

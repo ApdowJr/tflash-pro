@@ -30,8 +30,8 @@ export async function resolveLanguageModel(selection: WireSelection): Promise<Re
   const providerHeaders: Record<string, string> =
     provider.id === "openrouter"
       ? {
-          "HTTP-Referer": process.env.APP_URL ?? "https://ururka.local",
-          "X-Title": "Ururka Agent",
+          ...(process.env.APP_URL ? { "HTTP-Referer": process.env.APP_URL } : {}),
+          "X-Title": "Tflash",
         }
       : {};
 
@@ -52,6 +52,10 @@ export async function resolveLanguageModel(selection: WireSelection): Promise<Re
         baseURL,
         apiKey,
         headers: providerHeaders,
+        // A custom host may not redirect server requests to an unapproved host.
+        ...(provider.customBaseURL
+          ? { fetch: (input, init) => fetch(input, { ...init, redirect: "error" }) }
+          : {}),
         // Ask OpenAI-compatible servers to report token usage while streaming.
         includeUsage: true,
       })(modelId);
