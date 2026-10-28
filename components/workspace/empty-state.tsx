@@ -7,9 +7,11 @@ import {
   LanguagesIcon,
   KeyRoundIcon,
   ListChecksIcon,
+  WrenchIcon,
 } from "lucide-react";
 import { usePromptInputController } from "@/components/ai-elements/prompt-input";
 import { useAppSettings } from "@/components/settings/app-settings";
+import { INTEGRATIONS } from "@/lib/integrations/catalog";
 import { cn } from "@/lib/utils";
 
 const SUGGESTIONS = [
@@ -24,8 +26,10 @@ const SUGGESTIONS = [
  * connection — no badges, mascots, or decorative gradients.
  */
 export function EmptyState({
+  onOpenConnections,
   onOpenSettings,
 }: {
+  readonly onOpenConnections: () => void;
   readonly onOpenSettings: () => void;
 }) {
   const { t, settings, envConfigured, selection, isConnected } = useAppSettings();
@@ -73,6 +77,35 @@ export function EmptyState({
             </button>
           ))}
         </div>
+      </div>
+
+      <div className="space-y-2">
+        <p className="flex items-center gap-1.5 font-medium text-[11px] text-muted-foreground uppercase tracking-[0.1em]">
+          <WrenchIcon className="size-3" />
+          {t("toolsTitle")}
+        </p>
+        <button
+          className="flex w-full flex-wrap items-center gap-1.5 rounded-xl border border-border/70 bg-card/60 px-3 py-2.5 text-left transition-colors hover:border-border hover:bg-card"
+          onClick={onOpenConnections}
+          type="button"
+        >
+          {[...INTEGRATIONS]
+            .sort((a, b) => Number(Boolean(b.featured)) - Number(Boolean(a.featured)))
+            .slice(0, 6)
+            .map((integration) => (
+              <span
+                className="rounded-full border border-border/70 bg-background px-2 py-0.5 text-[11px] text-muted-foreground"
+                key={integration.id}
+              >
+                {integration.name}
+              </span>
+            ))}
+          <span className="ml-auto flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
+            {t("connections")}
+            <ArrowRightIcon className="size-3" />
+          </span>
+        </button>
+        <p className="px-1 text-[11px] text-muted-foreground/75">{t("toolsHint")}</p>
       </div>
 
       {hasConnection ? (

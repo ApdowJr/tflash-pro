@@ -9,6 +9,7 @@ import {
   Settings2Icon,
   SunIcon,
   Trash2Icon,
+  WrenchIcon,
   XIcon,
 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -38,6 +39,7 @@ export function Sidebar({
   open,
   onClose,
   onNewChat,
+  onOpenConnections,
   onOpenSettings,
 }: {
   readonly account?: Account;
@@ -45,6 +47,7 @@ export function Sidebar({
   readonly open: boolean;
   readonly onClose: () => void;
   readonly onNewChat: () => void;
+  readonly onOpenConnections: () => void;
   readonly onOpenSettings: () => void;
 }) {
   const { settings, t, removeChat, update } = useAppSettings();
@@ -166,6 +169,14 @@ export function Sidebar({
         </nav>
 
         <div className="shrink-0 border-t border-border/70 p-2">
+          <button
+            className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            onClick={onOpenConnections}
+            type="button"
+          >
+            <WrenchIcon className="size-4" />
+            {t("connections")}
+          </button>
           <button
             className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             onClick={onOpenSettings}

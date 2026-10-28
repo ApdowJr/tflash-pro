@@ -10,6 +10,7 @@ import {
   LayersIcon,
   Loader2Icon,
   LockKeyholeIcon,
+  BoxesIcon,
   PaletteIcon,
   PlugZapIcon,
   RefreshCwIcon,
@@ -32,12 +33,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { LANGUAGES, type Language } from "./i18n";
+import { ConnectionsPanel } from "./connections-panel";
 import { ModelBrowser } from "./model-browser";
 import { PERSONAS } from "./personas";
 import { ProviderBadge, StatusDot } from "./provider-badge";
 import { useAppSettings, type Theme } from "./app-settings";
 
-type Tab = "providers" | "models" | "preferences";
+type Tab = "providers" | "connections" | "models" | "preferences";
 
 type ProviderStatus = {
   readonly kind: "idle" | "pending" | "ok" | "error";
@@ -153,6 +155,7 @@ export function SettingsDialog({
 
   const tabs: { id: Tab; label: string; icon: typeof PlugZapIcon }[] = [
     { id: "providers", label: t("providers"), icon: PlugZapIcon },
+    { id: "connections", label: t("connections"), icon: BoxesIcon },
     { id: "models", label: t("models"), icon: LayersIcon },
     { id: "preferences", label: t("preferences"), icon: SlidersHorizontalIcon },
   ];
@@ -419,6 +422,8 @@ export function SettingsDialog({
                 </p>
               </div>
             ) : null}
+
+            {tab === "connections" ? <ConnectionsPanel /> : null}
 
             {tab === "models" ? (
               <ModelBrowser

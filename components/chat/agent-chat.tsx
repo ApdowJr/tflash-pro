@@ -59,9 +59,9 @@ function ChatSession({
   const controller = usePromptInputController();
   const [cancellationError, setCancellationError] = useState<string>();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<"providers" | "models" | "preferences">(
-    "providers",
-  );
+  const [settingsTab, setSettingsTab] = useState<
+    "providers" | "connections" | "models" | "preferences"
+  >("providers");
   const [modelsOpen, setModelsOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const hasSubmittedMessage = useRef(false);
@@ -146,10 +146,13 @@ function ChatSession({
     setCancellationError(undefined);
   };
 
-  const openSettings = useCallback((tab: "providers" | "models" | "preferences" = "providers") => {
-    setSettingsTab(tab);
-    setSettingsOpen(true);
-  }, []);
+  const openSettings = useCallback(
+    (tab: "providers" | "connections" | "models" | "preferences" = "providers") => {
+      setSettingsTab(tab);
+      setSettingsOpen(true);
+    },
+    [],
+  );
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -244,6 +247,7 @@ function ChatSession({
         activeChatId={activeSessionId}
         onClose={() => setSidebarOpen(false)}
         onNewChat={startNewChat}
+        onOpenConnections={() => openSettings("connections")}
         onOpenSettings={() => openSettings("providers")}
         open={sidebarOpen}
       />
@@ -302,7 +306,10 @@ function ChatSession({
           </Conversation>
         ) : (
           <div className="tflash-scroll min-h-0 flex-1 overflow-y-auto">
-            <EmptyState onOpenSettings={() => openSettings("providers")} />
+            <EmptyState
+              onOpenConnections={() => openSettings("connections")}
+              onOpenSettings={() => openSettings("providers")}
+            />
           </div>
         )}
 

@@ -38,6 +38,7 @@ Design tokens live in `app/globals.css` (`--brand`, `--brand-tile`, `--brand-bol
 | **Providers** | 15 built-in providers + custom OpenAI-compatible endpoints. OpenRouter is a first-class citizen. |
 | **BYOK** | Paste an API key in **Settings → Providers**. It is validated by a live `/models` call, then sealed with AES-GCM on the server; only an opaque token is kept in the browser. |
 | **Server keys** | Set any `*_API_KEY` in the environment for an operator-wide connection. Keys never reach the browser. |
+| **Integrations (MCP)** | GitHub, Linear, Notion, Sentry, Supabase, Neon, Vercel, PostHog, Stripe and Resend ship as MCP connections, each with an approval gate matched to its blast radius. Paste a token per service in **Settings → Connections**, or use Vercel Connect. See [docs/integrations.md](docs/integrations.md). |
 | **Live model catalog** | Models (context length, pricing, vision flags) are fetched from each provider's `/models` endpoint, with a built-in fallback list when offline. |
 | **Per-request switching** | The chosen provider/model is sent on every eve request and resolved at runtime with `defineDynamic` + AI SDK `LanguageModel`. No redeploy needed. |
 | **Chat** | Streaming messages, reasoning blocks, tool calls, approvals/questions (HITL), attachments, cancellation, steering, resumable `/s/:id` sessions. |
@@ -83,6 +84,35 @@ OPENROUTER_API_KEY=sk-or-v1-...
 ```
 
 Restart the dev server. The provider now shows **Server key** for everyone.
+
+---
+
+## 🧰 Integrations (MCP tools)
+
+Ten developer tools are wired up out of the box. Open **Settings → Connections**
+to see which ones are live, what each is allowed to do, and the environment
+variable (or Vercel Connect connector) each one needs.
+
+**Fastest path:** click a row, paste a token, press **Connect**. The token is
+verified against the service, sealed with AES-256-GCM and kept in this browser
+only — the model never sees it, and it is sent back sealed with each chat
+request. Expires after 7 days, or immediately when you press **Disconnect**.
+
+```bash
+# recommended: per-user OAuth through Vercel Connect
+vercel link
+vercel connect create github --name t-flash
+vercel connect attach <connector-uid> --yes
+vercel env pull
+
+# or the simplest path for a single developer: a static token
+echo "GITHUB_MCP_TOKEN=ghp_..." >> .env.local
+```
+
+Precedence: browser token → Vercel Connect connector → server env var.
+Approval tiers: read-only tools run silently, write tools ask once per session,
+and money/database/email tools ask on every call. Full guide, including how to
+add your own service: [docs/integrations.md](docs/integrations.md).
 
 ---
 
@@ -150,6 +180,7 @@ model running on your laptop — use a tunnel or a hosted endpoint in production
 agent/
   agent.ts                    dynamic per-request model selection
   channels/eve.ts             auth + provider headers → session attributes
+  connections/*.ts            one-liner MCP connections driven by lib/integrations
   instructions.md             agent identity (Somali/English aware)
 app/
   layout.tsx                  metadata, theme bootstrap, providers
@@ -164,7 +195,10 @@ components/
   ai-elements/, ui/           generated primitives (message, prompt input, dialogs…)
 lib/
   chat-history.ts             grouping/search for the sidebar
+  integrations/               connection catalog + Connect/token resolution
   providers/                  catalog, selection contract, credentials, runtime, live models
+docs/
+  integrations.md             MCP setup, approval tiers, adding a service
 ```
 
 ---
