@@ -35,6 +35,8 @@ function secretMaterial(): string {
     process.env.PROVIDER_KEYS_SECRET ??
     process.env.BETTER_AUTH_SECRET ??
     "ururka-local-development-only";
+  // Legacy namespace kept on purpose: tokens sealed before the T Flash rename
+  // must keep decrypting until they expire (7 days).
   return `ururka:provider-credentials:v1:${secret}`;
 }
 

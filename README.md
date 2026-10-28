@@ -1,12 +1,33 @@
-# Ururka Agent / وکیل • Soomaali
+# T Flash · Ururka Agent
 
-**Ururka Agent** waa chat-app casri ah oo ku dhisan [eve](https://eve.dev) + Next.js 16.
-Waxa ugu weyn ee lagu daray: **waxaad ku xiri kartaa provider kasta** — [OpenRouter](https://openrouter.ai/),
-OpenAI, Anthropic, Google Gemini, Groq, Mistral, DeepSeek, xAI, Together, Fireworks,
-Cerebras, Ollama, LM Studio, ama endpoint kasta oo OpenAI-compatible ah — adigoo furaha
-gelinaya UI-ga ama environment variable ahaan. Model-ka waxaa la beddelaa wada hadalka dhexdiisa.
+**T Flash** waa goob shaqo AI oo degdeg ah oo ku dhisan [eve](https://eve.dev) + Next.js 16.
+Waxaad ku xiri kartaa provider kasta — [OpenRouter](https://openrouter.ai/), OpenAI, Anthropic,
+Google Gemini, Groq, Mistral, DeepSeek, xAI, Together, Fireworks, Cerebras, Ollama, LM Studio,
+ama endpoint kasta oo OpenAI-compatible ah — adigoo furaha gelinaya UI-ga ama environment
+variable ahaan. Model-ka waxaa la beddelaa wada hadalka dhexdiisa.
 
-A modern, multi-provider AI workspace built with the eve agent framework.
+A fast, quiet multi-provider AI workspace built on the eve agent framework.
+
+---
+
+## ✦ Design
+
+T Flash is deliberately plain: warm paper and charcoal surfaces, one accent colour used only
+for the logo and small state signals, no gradients, no glass, no decorative icons.
+
+- **Shell** — a persistent sidebar (chat history, search, settings, account) beside a single
+  reading column. The sidebar becomes a drawer below `lg`.
+- **One reading measure** — conversation and composer share a `max-w-2xl` column, so the eye
+  never has to travel.
+- **The composer is the hero** — one card, one row of quiet tools (model · style · attach), one
+  send button. Everything else is out of the way.
+- **Honest states** — thinking, errors, connection status and provider health are written in
+  plain language with no fake progress theatre.
+- **Brand** — the T Flash mark is a capital **T** whose stem is a lightning bolt, in black and
+  amber at every size (favicon → sign-in → sidebar).
+
+Design tokens live in `app/globals.css` (`--brand`, `--brand-tile`, `--brand-bolt`, `--sidebar`,
+`--shell-shadow`). The mark itself is `components/brand/logo.tsx`.
 
 ---
 
@@ -17,10 +38,10 @@ A modern, multi-provider AI workspace built with the eve agent framework.
 | **Providers** | 15 built-in providers + custom OpenAI-compatible endpoints. OpenRouter is a first-class citizen. |
 | **BYOK** | Paste an API key in **Settings → Providers**. It is validated by a live `/models` call, then sealed with AES-GCM on the server; only an opaque token is kept in the browser. |
 | **Server keys** | Set any `*_API_KEY` in the environment for an operator-wide connection. Keys never reach the browser. |
-| **Live model catalog** | Models (with context length, pricing, vision flags) are fetched from each provider's `/models` endpoint, with a built-in fallback list when offline. |
+| **Live model catalog** | Models (context length, pricing, vision flags) are fetched from each provider's `/models` endpoint, with a built-in fallback list when offline. |
 | **Per-request switching** | The chosen provider/model is sent on every eve request and resolved at runtime with `defineDynamic` + AI SDK `LanguageModel`. No redeploy needed. |
-| **Chat UI** | Streaming messages, reasoning blocks, tool calls, approvals/questions (HITL), file attachments, cancellation, steering, resumable `/s/:id` sessions. |
-| **Modern extras** | Searchable model picker (⌘K), bilingual UI (Soomaali/English), light/dark/system theme, assistant personas via ephemeral `clientContext`, local chat history, Markdown export, copy buttons, keyboard shortcuts. |
+| **Chat** | Streaming messages, reasoning blocks, tool calls, approvals/questions (HITL), attachments, cancellation, steering, resumable `/s/:id` sessions. |
+| **Workspace** | Chat history with search, bilingual UI (Soomaali/English), light/dark/system theme, assistant personas via ephemeral `clientContext`, Markdown export, copy buttons, keyboard shortcuts. |
 | **Auth** | Better Auth (Vercel social) + `vercelOidc()` + `localDev()`; provider selection is only attached to authenticated principals. |
 
 ---
@@ -30,8 +51,10 @@ A modern, multi-provider AI workspace built with the eve agent framework.
 ```bash
 corepack pnpm install          # or: pnpm install
 cp .env.example .env.local     # optional — only for server-wide keys / auth
-pnpm dev                      # Next.js + eve dev server, http://localhost:3000
+pnpm dev                       # Next.js + eve dev server, http://localhost:3000
 ```
+
+Node.js **24.x** is required (the eve dev server refuses older runtimes).
 
 Other commands:
 
@@ -43,8 +66,8 @@ pnpm build:eve      # compile the eve agent only
 pnpm deploy         # deploy to Vercel (eve deploy)
 ```
 
-Open the app, click the model chip (or press **⌘K**), choose a provider, then open
-**Settings → Providers** to connect it.
+Open the app, click the model chip in the top bar (or press **⌘K**), choose a provider, then
+open **Settings → Providers** to connect it.
 
 ### Connect OpenRouter (example)
 
@@ -53,7 +76,7 @@ Open the app, click the model chip (or press **⌘K**), choose a provider, then 
    The model list refreshes live from `https://openrouter.ai/api/v1/models`.
 3. Pick any model in **Models** (⌘K) and start chatting.
 
-Prefer configuration instead? Add to `.env.local`:
+Prefer configuration? Add to `.env.local`:
 
 ```bash
 OPENROUTER_API_KEY=sk-or-v1-...
@@ -68,10 +91,10 @@ Restart the dev server. The provider now shows **Server key** for everyone.
 ```
 Browser (model picker)                 Server (eve)
 ──────────────────────                ──────────────────────────────────────
-x-ururka-provider: openrouter   ──▶   agent/channels/eve.ts
-x-ururka-model:    openai/...         authenticates, validates against the
-x-ururka-context:  128000             allowlisted catalog, stores the choice
-x-ururka-token:    v1.<sealed>        in session auth attributes
+x-tflash-provider: openrouter   ──▶   agent/channels/eve.ts
+x-tflash-model:    openai/...         authenticates, validates against the
+x-tflash-context:  128000             allowlisted catalog, stores the choice
+x-tflash-token:    v1.<sealed>        in session auth attributes
                                              │
                                              ▼
                                       agent/agent.ts  (defineDynamic)
@@ -121,20 +144,27 @@ model running on your laptop — use a tunnel or a hosted endpoint in production
 
 ---
 
-## 📁 Key files
+## 📁 Project layout
 
 ```
-agent/agent.ts                  dynamic per-request model selection
-agent/channels/eve.ts           auth + provider headers → session attributes
-agent/instructions.md           agent identity (Somali/English aware)
-lib/providers/catalog.ts        provider + fallback model registry
-lib/providers/selection.ts      header/attribute validation contract
-lib/providers/credentials.ts    AES-GCM sealing + env key resolution
-lib/providers/live-models.ts    /models discovery and connection tests
-lib/providers/runtime.ts        AI SDK LanguageModel factory
-app/api/providers/*             status, models, test, connect routes
-components/app/*                settings, model browser, header, empty state, i18n
-app/_components/agent-chat.tsx  chat shell and eve hook wiring
+agent/
+  agent.ts                    dynamic per-request model selection
+  channels/eve.ts             auth + provider headers → session attributes
+  instructions.md             agent identity (Somali/English aware)
+app/
+  layout.tsx                  metadata, theme bootstrap, providers
+  page.tsx, s/…               chat entry points
+  globals.css                 design tokens (T Flash palette)
+  icon.svg, apple-icon.tsx    brand mark as app icons
+components/
+  brand/logo.tsx              T Flash mark + lockup
+  chat/                       agent-chat, composer, messages, auth wrapper
+  workspace/                  sidebar, top-bar, empty state
+  settings/                   app settings, i18n, personas, providers, model browser
+  ai-elements/, ui/           generated primitives (message, prompt input, dialogs…)
+lib/
+  chat-history.ts             grouping/search for the sidebar
+  providers/                  catalog, selection contract, credentials, runtime, live models
 ```
 
 ---

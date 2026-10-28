@@ -25,7 +25,9 @@ import {
 import { translate, type Language, type TranslationKey, type Translator } from "./i18n";
 import { clientContextFor, type PersonaId } from "./personas";
 
-const STORAGE_KEY = "ururka:settings:v1";
+export const STORAGE_KEY = "tflash:settings:v1";
+/** Previous product name; read once so existing users keep their settings. */
+const LEGACY_STORAGE_KEY = "ururka:settings:v1";
 const MAX_CHATS = 30;
 
 export type Theme = "system" | "light" | "dark";
@@ -100,7 +102,8 @@ const SettingsContext = createContext<SettingsContextValue | null>(null);
 function readStoredSettings(): AppSettings {
   if (typeof window === "undefined") return DEFAULT_SETTINGS;
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw =
+      window.localStorage.getItem(STORAGE_KEY) ?? window.localStorage.getItem(LEGACY_STORAGE_KEY);
     if (!raw) return DEFAULT_SETTINGS;
     const parsed = JSON.parse(raw) as Partial<AppSettings>;
     const provider = getProvider(parsed.providerId) ?? defaultProvider();
@@ -147,10 +150,11 @@ export function AppSettingsProvider({ children }: { readonly children: ReactNode
     const root = document.documentElement;
     if (settings.theme === "system") {
       root.removeAttribute("data-theme");
+      root.style.removeProperty("color-scheme");
     } else {
       root.dataset.theme = settings.theme;
+      root.style.colorScheme = settings.theme;
     }
-    root.style.colorScheme = settings.theme;
   }, [settings.theme]);
 
   const update = useCallback((patch: Partial<AppSettings>) => {
