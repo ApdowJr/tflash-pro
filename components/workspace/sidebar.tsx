@@ -73,7 +73,9 @@ export function Sidebar({
       />
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex w-[17.5rem] flex-col bg-sidebar transition-transform duration-200 ease-out lg:static lg:z-auto lg:translate-x-0",
+          // On a phone the drawer takes most of the width but never all of it,
+          // so the conversation stays visible behind the scrim.
+          "tf-safe-x fixed inset-y-0 left-0 z-50 flex w-[min(17.5rem,86vw)] flex-col bg-sidebar transition-transform duration-200 ease-out lg:static lg:z-auto lg:w-[17.5rem] lg:translate-x-0",
           "tflash-hairline",
           open ? "translate-x-0 shadow-xl lg:shadow-none" : "-translate-x-full",
         )}
@@ -98,7 +100,7 @@ export function Sidebar({
 
         <div className="px-3 pb-2">
           <button
-            className="flex w-full items-center gap-2 rounded-lg border border-border/80 bg-card px-2.5 py-2 text-[13px] font-medium text-foreground shadow-xs transition-colors hover:bg-accent"
+            className="flex h-10 w-full items-center gap-2 rounded-lg border border-border/80 bg-card px-2.5 text-[13px] font-medium text-foreground shadow-xs transition-colors hover:bg-accent lg:h-9"
             onClick={onNewChat}
             type="button"
           >
@@ -115,7 +117,7 @@ export function Sidebar({
             <span className="sr-only">{t("searchChats")}</span>
             <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
             <input
-              className="h-8 w-full rounded-md bg-transparent pr-2 pl-8 text-[13px] text-foreground placeholder:text-muted-foreground/80 focus:bg-card focus:ring-1 focus:ring-border focus:outline-none"
+              className="h-10 w-full rounded-md bg-transparent pr-2 pl-8 text-[13px] text-foreground placeholder:text-muted-foreground/80 focus:bg-card focus:ring-1 focus:ring-border focus:outline-none lg:h-8"
               onChange={(event) => setQuery(event.target.value)}
               placeholder={t("searchChats")}
               type="search"
@@ -142,7 +144,7 @@ export function Sidebar({
                       <li className="group/chat relative" key={chat.id}>
                         <a
                           className={cn(
-                            "flex h-8 items-center rounded-md pr-8 pl-2.5 text-[13px] transition-colors",
+                            "flex h-10 items-center rounded-md pr-8 pl-2.5 text-[13px] transition-colors lg:h-8",
                             active
                               ? "bg-accent font-medium text-foreground"
                               : "text-muted-foreground hover:bg-accent/70 hover:text-foreground",
@@ -153,7 +155,7 @@ export function Sidebar({
                         </a>
                         <button
                           aria-label={t("deleteChat")}
-                          className="absolute top-1/2 right-1 flex size-6 -translate-y-1/2 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-background hover:text-destructive focus-visible:opacity-100 group-hover/chat:opacity-100"
+                          className="tf-reveal absolute top-1/2 right-1 flex size-8 -translate-y-1/2 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-background hover:text-destructive focus-visible:opacity-100 group-hover/chat:opacity-100 lg:size-6"
                           onClick={() => removeChat(chat.id)}
                           type="button"
                         >
@@ -168,29 +170,29 @@ export function Sidebar({
           )}
         </nav>
 
-        <div className="shrink-0 border-t border-border/70 p-2">
+        <div className="tf-safe-bottom shrink-0 border-t border-border/70 p-2">
           <button
-            className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            className="flex h-10 w-full items-center gap-2.5 rounded-md px-2 text-[13px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground lg:h-8"
             onClick={onOpenConnections}
             type="button"
           >
-            <WrenchIcon className="size-4" />
+            <WrenchIcon className="size-4 shrink-0" />
             {t("connections")}
           </button>
           <button
-            className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            className="flex h-10 w-full items-center gap-2.5 rounded-md px-2 text-[13px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground lg:h-8"
             onClick={onOpenSettings}
             type="button"
           >
-            <Settings2Icon className="size-4" />
+            <Settings2Icon className="size-4 shrink-0" />
             {t("settings")}
           </button>
           <button
-            className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            className="flex h-10 w-full items-center gap-2.5 rounded-md px-2 text-[13px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground lg:h-8"
             onClick={() => update({ theme: nextTheme[settings.theme] })}
             type="button"
           >
-            <ThemeIcon className="size-4" />
+            <ThemeIcon className="size-4 shrink-0" />
             {t("theme")}
             <span className="ml-auto text-[11px] text-muted-foreground/70">{t(settings.theme)}</span>
           </button>
@@ -232,7 +234,7 @@ function AccountMenu({ account }: { readonly account: Account }) {
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
-          className="mt-1 flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent"
+          className="mt-1 flex h-11 w-full items-center gap-2.5 rounded-md px-2 text-left transition-colors hover:bg-accent lg:h-9"
           type="button"
         >
           <span className="relative flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted text-[10px] font-medium text-muted-foreground">

@@ -32,7 +32,7 @@ export function SignIn() {
   }
 
   return (
-    <main className="flex min-h-dvh items-center justify-center bg-background px-6 text-foreground">
+    <main className="tf-safe-x tf-safe-bottom flex min-h-dvh items-center justify-center bg-background px-5 py-10 text-foreground sm:px-6">
       <div className="tf-rise flex w-full max-w-sm flex-col gap-7">
         <FlashLockup markClassName="size-9" wordmarkClassName="text-lg" />
         <div className="space-y-2">
@@ -45,7 +45,7 @@ export function SignIn() {
         </div>
         <div className="space-y-3">
           <Button
-            className="h-10 w-full gap-2 text-sm"
+            className="h-11 w-full gap-2 text-sm sm:h-10"
             disabled={pending}
             onClick={signIn}
             type="button"

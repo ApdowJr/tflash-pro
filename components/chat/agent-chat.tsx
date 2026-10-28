@@ -281,7 +281,7 @@ function ChatSession({
                 : `tflash:chat-scroll:${activeSessionId}`
             }
           >
-            <ConversationContent className="tflash-scroll mx-auto w-full max-w-2xl gap-7 px-5 pt-4 pb-8 sm:px-6">
+            <ConversationContent className="tflash-scroll mx-auto w-full max-w-2xl gap-6 px-4 pt-4 pb-8 sm:gap-7 sm:px-6">
               {agent.data.messages.map((message, index) =>
                 showPendingThinking &&
                 isPendingAssistantShell &&
@@ -320,7 +320,7 @@ function ChatSession({
           </div>
         )}
 
-        <div className="shrink-0 px-4 pt-1 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
+        <div className="tf-safe-bottom shrink-0 px-3 pt-1 sm:px-6">
           <div className="mx-auto w-full max-w-2xl">
             <ChatComposer
               isBusy={isBusy}
@@ -365,7 +365,7 @@ function CopyMessageButton({
   return (
     <Button
       aria-label={t("copy")}
-      className="absolute -bottom-6 left-0 h-6 gap-1 px-1.5 text-[10.5px] text-muted-foreground opacity-0 transition-opacity focus-visible:opacity-100 group-hover/msg:opacity-100"
+      className="tf-reveal absolute -bottom-5 left-0 h-6 gap-1 rounded-md bg-background/85 px-1.5 text-[10.5px] text-muted-foreground opacity-0 backdrop-blur transition-opacity focus-visible:opacity-100 group-hover/msg:opacity-100"
       onClick={() => {
         const text = message.parts
           .filter((part) => part.type === "text")

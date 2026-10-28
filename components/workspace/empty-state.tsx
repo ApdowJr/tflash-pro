@@ -48,7 +48,7 @@ export function EmptyState({
   };
 
   return (
-    <div className="tf-rise mx-auto flex w-full max-w-2xl flex-col gap-9 px-5 pt-10 pb-8 sm:pt-20">
+    <div className="tf-rise mx-auto flex w-full max-w-2xl flex-col gap-7 px-4 pt-8 pb-8 sm:gap-9 sm:px-6 sm:pt-20">
       <div className="space-y-2.5">
         <h1 className="text-balance font-semibold text-[26px] leading-[1.15] tracking-[-0.02em] sm:text-[32px]">
           {t("welcome")}
@@ -100,7 +100,7 @@ export function EmptyState({
                 {integration.name}
               </span>
             ))}
-          <span className="ml-auto flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
+          <span className="ml-auto flex shrink-0 items-center gap-1 pt-1 text-[11px] text-muted-foreground">
             {t("connections")}
             <ArrowRightIcon className="size-3" />
           </span>
@@ -116,14 +116,14 @@ export function EmptyState({
       ) : (
         <button
           className={cn(
-            "flex items-center gap-2.5 rounded-xl border border-brand/35 bg-brand/8 px-3.5 py-2.5 text-left text-[12px] leading-snug",
+            "flex flex-wrap items-center gap-x-2.5 gap-y-1.5 rounded-xl border border-brand/35 bg-brand/8 px-3.5 py-2.5 text-left text-[12px] leading-snug",
             "text-foreground/90 transition-colors hover:bg-brand/14",
           )}
           onClick={onOpenSettings}
           type="button"
         >
           <KeyRoundIcon className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className="flex-1 text-pretty">{t("demoHint")}</span>
+          <span className="min-w-0 flex-1 text-pretty">{t("demoHint")}</span>
           <span className="flex shrink-0 items-center gap-1 font-medium text-foreground">
             {t("connectNow")}
             <ArrowRightIcon className="size-3" />

@@ -49,7 +49,7 @@ export function ChatComposer({
         disabled={isResuming}
         placeholder={t("placeholder")}
       />
-      <PromptInputFooter className="border-t-0 px-2.5 pt-1.5 pb-2.5 pr-14">
+      <PromptInputFooter className="flex-wrap border-t-0 px-2.5 pt-1.5 pb-2.5 pr-14">
         <PromptInputTools className="gap-1">
           <ComposerModelButton onClick={onOpenModels} />
           <ComposerPersonaButton onClick={onOpenPersona} />
@@ -100,7 +100,7 @@ function ComposerModelButton({ onClick }: { readonly onClick: () => void }) {
   const { selection, t, isConnected } = useAppSettings();
   return (
     <PromptInputButton
-      className="h-7 max-w-[13rem] gap-1.5 rounded-full px-2 text-[11.5px] text-muted-foreground hover:text-foreground"
+      className="h-8 max-w-[8.5rem] gap-1.5 rounded-full px-2 text-[11.5px] text-muted-foreground hover:text-foreground sm:max-w-[13rem]"
       onClick={onClick}
       size="sm"
       tooltip={t("switchModel")}
@@ -123,7 +123,7 @@ function ComposerPersonaButton({ onClick }: { readonly onClick: () => void }) {
   const persona = getPersona(settings.persona);
   return (
     <PromptInputButton
-      className="h-7 gap-1.5 rounded-full px-2 text-[11.5px] text-muted-foreground hover:text-foreground"
+      className="h-8 gap-1.5 rounded-full px-2 text-[11.5px] text-muted-foreground hover:text-foreground"
       onClick={onClick}
       size="sm"
       tooltip={t("persona")}
@@ -141,7 +141,7 @@ function ComposerAttachButton() {
   return (
     <PromptInputButton
       aria-label={t("attach")}
-      className="size-7 rounded-full text-muted-foreground hover:text-foreground"
+      className="size-8 rounded-full text-muted-foreground hover:text-foreground sm:size-7"
       onClick={() => attachments.openFileDialog()}
       size="icon-sm"
       tooltip={t("attach")}
@@ -169,7 +169,7 @@ function ComposerAction({
   if (!isBusy || canSubmit) {
     return (
       <PromptInputSubmit
-        className="right-2.5 bottom-2.5 size-8 bg-foreground text-background transition-opacity hover:opacity-90 disabled:opacity-40"
+        className="right-2 bottom-2 size-9 bg-foreground text-background transition-opacity hover:opacity-90 disabled:opacity-40 sm:right-2.5 sm:bottom-2.5 sm:size-8"
         disabled={isResuming || (!canSubmit && !isBusy)}
       />
     );
@@ -178,7 +178,7 @@ function ComposerAction({
   return (
     <PromptInputButton
       aria-label="Stop"
-      className="absolute right-2.5 bottom-2.5 size-8 rounded-full border-border bg-card"
+      className="absolute right-2 bottom-2 size-9 rounded-full border-border bg-card sm:right-2.5 sm:bottom-2.5 sm:size-8"
       onClick={onCancel}
       variant="outline"
     >

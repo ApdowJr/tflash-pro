@@ -22,7 +22,7 @@ export function ModelPicker({
   const { t } = useAppSettings();
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="flex h-[min(80dvh,660px)] w-full max-w-2xl flex-col gap-0 overflow-hidden p-0">
+      <DialogContent className="flex h-[min(80dvh,660px)] w-full max-w-2xl flex-col gap-0 overflow-hidden p-0 max-sm:h-[calc(100dvh-1.5rem)] max-sm:max-w-[calc(100%-1rem)]">
         <DialogHeader className="sr-only">
           <DialogTitle>{t("chooseModel")}</DialogTitle>
           <DialogDescription>{t("modelPickerHint")}</DialogDescription>
