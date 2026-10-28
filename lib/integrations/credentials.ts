@@ -22,21 +22,45 @@ export type SealedIntegrationToken = SealedEnvelope & {
   readonly integrationId: string;
   readonly token: string;
   readonly label?: string;
+  /** When the *provider's* access token expires, if it told us. */
+  readonly tokenExpiresAt?: number;
+  /** Present when the provider supports refreshing without a new consent. */
+  readonly refreshToken?: string;
 };
 
 export async function sealIntegrationToken(input: {
   readonly integrationId: IntegrationId;
   readonly token: string;
   readonly label?: string;
+  readonly tokenExpiresAt?: number;
+  readonly refreshToken?: string;
+  /** Envelope lifetime; refreshed grants outlive a pasted token. */
+  readonly ttlMs?: number;
 }): Promise<{ token: string; expiresAt: number }> {
   return sealJson(
     {
       integrationId: input.integrationId,
       token: input.token,
       label: input.label ?? "Connected in this browser",
+      ...(input.tokenExpiresAt ? { tokenExpiresAt: input.tokenExpiresAt } : {}),
+      ...(input.refreshToken ? { refreshToken: input.refreshToken } : {}),
     },
-    TOKEN_TTL_MS,
+    input.ttlMs ?? TOKEN_TTL_MS,
   );
+}
+
+/**
+ * Opens a sealed token *without* caring about provider expiry, so the OAuth
+ * refresh route can read the refresh token of an about-to-expire grant.
+ */
+export async function openIntegrationTokenForRefresh(
+  sealed: string | undefined,
+): Promise<SealedIntegrationToken | null> {
+  return openJson<SealedIntegrationToken>(sealed, (payload) => {
+    if (typeof payload.integrationId !== "string") return false;
+    if (typeof payload.token !== "string" || payload.token.length === 0) return false;
+    return getIntegration(payload.integrationId) !== undefined;
+  });
 }
 
 export async function openIntegrationToken(
@@ -45,7 +69,16 @@ export async function openIntegrationToken(
   return openJson<SealedIntegrationToken>(sealed, (payload) => {
     if (typeof payload.integrationId !== "string") return false;
     if (typeof payload.token !== "string" || payload.token.length === 0) return false;
-    return getIntegration(payload.integrationId) !== undefined;
+    if (getIntegration(payload.integrationId) === undefined) return false;
+    // A stale access token is as good as no token: the browser refreshes ahead
+    // of expiry, so reaching this means the grant is gone.
+    if (
+      typeof payload.tokenExpiresAt === "number" &&
+      payload.tokenExpiresAt <= Date.now()
+    ) {
+      return false;
+    }
+    return true;
   });
 }
 

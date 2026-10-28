@@ -68,6 +68,12 @@ export type IntegrationInfo = {
   readonly featured?: boolean;
   /** Extra setup note shown in the UI (e.g. a plan requirement). */
   readonly note?: { readonly en: string; readonly so: string };
+  /**
+   * Present when the service can be authorized with OAuth instead of a pasted
+   * token. `access` is the human summary of what the consent screen asks for;
+   * the endpoints and scopes live in `oauth.ts` (server-only).
+   */
+  readonly oauth?: { readonly access: { readonly en: string; readonly so: string } };
 };
 
 export const INTEGRATIONS: readonly IntegrationInfo[] = [
@@ -88,6 +94,12 @@ export const INTEGRATIONS: readonly IntegrationInfo[] = [
     connectorEnvKey: "CONNECT_GITHUB_CONNECTOR",
     appScopeEnvKey: "CONNECT_GITHUB_APP_SCOPED",
     access: "write",
+    oauth: {
+      access: {
+        en: "Repositories, issues, pull requests, Actions and your profile",
+        so: "Repo-yada, issues, pull requests, Actions iyo profile-kaaga",
+      },
+    },
     probe: { url: "https://api.github.com/user" },
     featured: true,
     note: {
@@ -112,6 +124,12 @@ export const INTEGRATIONS: readonly IntegrationInfo[] = [
     connectorEnvKey: "CONNECT_LINEAR_CONNECTOR",
     appScopeEnvKey: "CONNECT_LINEAR_APP_SCOPED",
     access: "write",
+    oauth: {
+      access: {
+        en: "Issues, projects, cycles and comments in your workspace",
+        so: "Issues, projects, cycles iyo comments workspace-kaaga",
+      },
+    },
     probe: {
       url: "https://api.linear.app/graphql",
       method: "POST",
@@ -138,6 +156,12 @@ export const INTEGRATIONS: readonly IntegrationInfo[] = [
     connectorEnvKey: "CONNECT_NOTION_CONNECTOR",
     appScopeEnvKey: "CONNECT_NOTION_APP_SCOPED",
     access: "write",
+    oauth: {
+      access: {
+        en: "Pages and databases you pick in Notion",
+        so: "Bogagga iyo databases-ka aad Notion ka dooratay",
+      },
+    },
     probe: {
       url: "https://api.notion.com/v1/users/me",
       headers: { "notion-version": "2022-06-28" },
@@ -161,6 +185,12 @@ export const INTEGRATIONS: readonly IntegrationInfo[] = [
     connectorEnvKey: "CONNECT_SENTRY_CONNECTOR",
     appScopeEnvKey: "CONNECT_SENTRY_APP_SCOPED",
     access: "read",
+    oauth: {
+      access: {
+        en: "Organizations, projects, issues and events you can already see",
+        so: "Organizations, projects, issues iyo events aad horey u arki kurtay",
+      },
+    },
     probe: { url: "https://sentry.io/api/0/organizations/" },
     featured: true,
   },
@@ -181,6 +211,12 @@ export const INTEGRATIONS: readonly IntegrationInfo[] = [
     connectorEnvKey: "CONNECT_SUPABASE_CONNECTOR",
     appScopeEnvKey: "CONNECT_SUPABASE_APP_SCOPED",
     access: "destructive",
+    oauth: {
+      access: {
+        en: "All projects in your Supabase organizations",
+        so: "Dhammaan projects-ka organizations-kaaga Supabase",
+      },
+    },
     probe: { url: "https://api.supabase.com/v1/projects" },
     featured: true,
   },
@@ -220,6 +256,12 @@ export const INTEGRATIONS: readonly IntegrationInfo[] = [
     connectorEnvKey: "CONNECT_VERCEL_CONNECTOR",
     appScopeEnvKey: "CONNECT_VERCEL_APP_SCOPED",
     access: "write",
+    oauth: {
+      access: {
+        en: "Projects, deployments, environment variables and logs",
+        so: "Projects, deployments, environment variables iyo logs",
+      },
+    },
     probe: { url: "https://api.vercel.com/v2/user" },
     featured: true,
   },
@@ -240,6 +282,12 @@ export const INTEGRATIONS: readonly IntegrationInfo[] = [
     connectorEnvKey: "CONNECT_POSTHOG_CONNECTOR",
     appScopeEnvKey: "CONNECT_POSTHOG_APP_SCOPED",
     access: "write",
+    oauth: {
+      access: {
+        en: "Insights, events, feature flags and session data",
+        so: "Insights, events, feature flags iyo xogta session-ka",
+      },
+    },
     probe: { url: "https://us.posthog.com/api/users/@me/" },
   },
   {

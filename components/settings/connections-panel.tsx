@@ -2,6 +2,7 @@
 
 import {
   ActivityIcon,
+  ArrowRightIcon,
   BookOpenIcon,
   CheckIcon,
   ChevronDownIcon,
@@ -10,11 +11,11 @@ import {
   CreditCardIcon,
   DatabaseIcon,
   ExternalLinkIcon,
-  GitBranchIcon,
-  ListChecksIcon,
   EyeIcon,
   EyeOffIcon,
+  GitBranchIcon,
   KeyRoundIcon,
+  ListChecksIcon,
   Loader2Icon,
   MailIcon,
   ShieldCheckIcon,
@@ -49,21 +50,39 @@ const ICONS: Record<IntegrationId, typeof DatabaseIcon> = {
   resend: MailIcon,
 };
 
-type ServerStatus = {
-  readonly connected: boolean;
-  readonly mode: "connect" | "token" | "project-connect" | "none";
-};
+type Status = IntegrationsStatusResponse["integrations"][number];
 
 const CONNECT_COMMAND = "vercel connect create github --name t-flash && vercel env pull";
 
+/** Maps the `?oauth=` code from the callback route onto UI copy. */
+function oauthErrorKey(code: string) {
+  switch (code) {
+    case "denied":
+      return "oauthDenied" as const;
+    case "state":
+      return "oauthState" as const;
+    case "exchange":
+      return "oauthExchange" as const;
+    case "unconfigured":
+    case "misconfigured":
+      return "oauthUnconfigured_error" as const;
+    default:
+      return "oauthError" as const;
+  }
+}
+
 /**
  * Connections: every external tool the agent can reach, how it authenticates,
- * and what it is allowed to do without asking. Deliberately plain — this is a
- * settings page, not a marketplace.
+ * and what it is allowed to do without asking.
+ *
+ * The primary path is a real OAuth grant — the developer lands on the
+ * provider's consent screen and comes back connected. Pasting a token is the
+ * fallback, not the expectation.
  */
 export function ConnectionsPanel({ className }: { readonly className?: string }) {
-  const { t, settings, connectIntegration, disconnectIntegration } = useAppSettings();
-  const [statuses, setStatuses] = useState<Readonly<Record<string, ServerStatus>>>({});
+  const { t, settings, disconnectIntegration, oauthError, oauthJustConnected, clearOAuthNotice } =
+    useAppSettings();
+  const [statuses, setStatuses] = useState<Readonly<Record<string, Status>>>({});
   const [connectAvailable, setConnectAvailable] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [copied, setCopied] = useState<string>();
@@ -76,10 +95,8 @@ export function ConnectionsPanel({ className }: { readonly className?: string })
         if (!response.ok) return;
         const payload = (await response.json()) as IntegrationsStatusResponse;
         if (cancelled) return;
-        const next: Record<string, ServerStatus> = {};
-        for (const item of payload.integrations) {
-          next[item.id] = { connected: item.connected, mode: item.mode };
-        }
+        const next: Record<string, Status> = {};
+        for (const item of payload.integrations) next[item.id] = item;
         setStatuses(next);
         setConnectAvailable(payload.integrations.some((item) => item.connectAvailable));
       } catch {
@@ -91,6 +108,11 @@ export function ConnectionsPanel({ className }: { readonly className?: string })
     };
   }, []);
 
+  // Land with the connection that just finished open, so "connected" is visible.
+  useEffect(() => {
+    if (oauthJustConnected) setExpanded(oauthJustConnected);
+  }, [oauthJustConnected]);
+
   const groups = useMemo(
     () =>
       INTEGRATION_CATEGORIES.map((category) => ({
@@ -100,12 +122,11 @@ export function ConnectionsPanel({ className }: { readonly className?: string })
     [],
   );
 
-  const connectedCount =
-    INTEGRATIONS.filter(
-      (integration) =>
-        Boolean(settings.integrationTokens[integration.id]) ||
-        statuses[integration.id]?.connected === true,
-    ).length;
+  const connectedCount = INTEGRATIONS.filter(
+    (integration) =>
+      Boolean(settings.integrationTokens[integration.id]) ||
+      statuses[integration.id]?.connected === true,
+  ).length;
 
   const copy = (value: string) => {
     void navigator.clipboard.writeText(value).then(() => {
@@ -116,6 +137,41 @@ export function ConnectionsPanel({ className }: { readonly className?: string })
 
   return (
     <div className={cn("space-y-4", className)}>
+      {oauthError ? (
+        <div
+          className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2"
+          role="alert"
+        >
+          <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0 text-destructive" />
+          <p className="flex-1 text-[12px] text-destructive leading-snug">
+            {t(oauthErrorKey(oauthError))}
+          </p>
+          <button
+            className="text-[11px] text-muted-foreground underline-offset-2 hover:underline"
+            onClick={clearOAuthNotice}
+            type="button"
+          >
+            {t("dismiss")}
+          </button>
+        </div>
+      ) : null}
+
+      {oauthJustConnected ? (
+        <div className="flex items-start gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-3 py-2">
+          <CheckIcon className="mt-0.5 size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+          <p className="flex-1 text-[12px] text-emerald-700 leading-snug dark:text-emerald-300">
+            {t("oauthConnected")}
+          </p>
+          <button
+            className="text-[11px] text-muted-foreground underline-offset-2 hover:underline"
+            onClick={clearOAuthNotice}
+            type="button"
+          >
+            {t("dismiss")}
+          </button>
+        </div>
+      ) : null}
+
       <div className="space-y-2.5 rounded-xl border border-border/70 bg-muted/30 px-3.5 py-3">
         <div className="flex items-start gap-2">
           <ShieldCheckIcon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
@@ -182,14 +238,13 @@ export function ConnectionsPanel({ className }: { readonly className?: string })
                 isOpen={expanded === integration.id}
                 key={integration.id}
                 onCopy={copy}
+                onDisconnect={() => disconnectIntegration(integration.id)}
                 onToggle={() =>
                   setExpanded((current) =>
                     current === integration.id ? null : integration.id,
                   )
                 }
-                onDisconnect={() => disconnectIntegration(integration.id)}
-                onToken={(record) => connectIntegration(integration.id, record)}
-                sealedToken={settings.integrationTokens[integration.id]?.token}
+                record={settings.integrationTokens[integration.id]}
                 status={statuses[integration.id]}
               />
             ))}
@@ -207,34 +262,44 @@ export function ConnectionsPanel({ className }: { readonly className?: string })
 function ConnectionRow({
   integration,
   status,
-  sealedToken,
+  record,
   isOpen,
   copied,
   onToggle,
   onCopy,
-  onToken,
   onDisconnect,
 }: {
   readonly integration: IntegrationInfo;
-  readonly status?: ServerStatus;
-  readonly sealedToken?: string;
+  readonly status?: Status;
+  readonly record?: IntegrationTokenRecord;
   readonly isOpen: boolean;
   readonly copied?: string;
   readonly onToggle: () => void;
   readonly onCopy: (value: string) => void;
-  readonly onToken: (record: IntegrationTokenRecord) => void;
   readonly onDisconnect: () => void;
 }) {
-  const { t, settings } = useAppSettings();
+  const { t, settings, connectIntegration } = useAppSettings();
   const Icon = ICONS[integration.id];
-  const browserConnected = Boolean(sealedToken);
-  const connected = browserConnected || (status?.connected ?? false);
+  const browserConnected = Boolean(record);
+  const serverConnected = status?.connected ?? false;
+  const connected = browserConnected || serverConnected;
   const mode = status?.mode ?? "none";
+  // Optimistic until the status call lands: an unconfigured provider bounces
+  // back with `?oauth=unconfigured`, which the panel turns into a clear banner.
+  const oauthReady = status?.oauthAvailable ?? integration.oauth !== undefined;
+
+  const [redirecting, setRedirecting] = useState(false);
+  const [showTokenForm, setShowTokenForm] = useState(false);
   const [tokenDraft, setTokenDraft] = useState("");
   const [showToken, setShowToken] = useState(false);
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string }>();
   const [canForce, setCanForce] = useState(false);
+
+  const startOAuth = () => {
+    setRedirecting(true);
+    window.location.assign(`/api/integrations/oauth/start?id=${encodeURIComponent(integration.id)}`);
+  };
 
   const saveToken = async (force = false) => {
     const token = tokenDraft.trim();
@@ -261,10 +326,11 @@ function ConnectionRow({
         setMessage({ kind: "error", text: payload.message ?? t("tokenInvalid") });
         return;
       }
-      onToken({
+      connectIntegration(integration.id, {
         token: payload.token,
         label: payload.verified ? t("tokenConnected") : t("tokenSaved"),
         connectedAt: Date.now(),
+        source: "token",
         ...(payload.expiresAt ? { expiresAt: payload.expiresAt } : {}),
       });
       setTokenDraft("");
@@ -278,6 +344,14 @@ function ConnectionRow({
       setPending(false);
     }
   };
+
+  const expiresLabel =
+    record?.expiresAt && !record.refreshable
+      ? new Date(record.expiresAt).toLocaleDateString(settings.language, {
+          month: "short",
+          day: "numeric",
+        })
+      : undefined;
 
   return (
     <div
@@ -339,30 +413,109 @@ function ConnectionRow({
             </p>
           ) : null}
 
-          {integration.probe ? (
-            <div className="space-y-2 border-t border-border/60 pt-2.5">
-              <p className="flex items-center gap-1.5 font-medium text-[11px] text-muted-foreground">
-                <KeyRoundIcon className="size-3" />
-                {t("connectWithToken")}
-              </p>
-              {sealedToken ? (
-                <div className="flex items-center gap-2">
-                  <p className="flex-1 text-[11px] text-emerald-700 dark:text-emerald-300">
-                    {t("integrationBrowser")}
-                  </p>
-                  <Button
-                    className="h-7 gap-1 px-2 text-[11px] text-muted-foreground"
-                    onClick={onDisconnect}
-                    size="sm"
-                    type="button"
-                    variant="ghost"
-                  >
-                    <Trash2Icon className="size-3" />
-                    {t("tokenDisconnect")}
-                  </Button>
+          {browserConnected && record ? (
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-2.5 py-2">
+              <CheckIcon className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+              <span className="font-medium text-[11px] text-emerald-800 dark:text-emerald-200">
+                {record.label}
+              </span>
+              <span className="text-[10px] text-muted-foreground">
+                {record.refreshable
+                  ? t("renewsAutomatically")
+                  : expiresLabel
+                    ? `${t("expiresOn")} ${expiresLabel}`
+                    : ""}
+              </span>
+              <Button
+                className="ml-auto h-7 gap-1 px-2 text-[11px] text-muted-foreground"
+                onClick={onDisconnect}
+                size="sm"
+                type="button"
+                variant="ghost"
+              >
+                <Trash2Icon className="size-3" />
+                {t("tokenDisconnect")}
+              </Button>
+            </div>
+          ) : null}
+
+          {!browserConnected && integration.oauth ? (
+            oauthReady ? (
+              <div className="space-y-1.5">
+                <Button
+                  className="h-8 gap-1.5 text-[12px]"
+                  disabled={redirecting}
+                  onClick={startOAuth}
+                  size="sm"
+                  type="button"
+                >
+                  {redirecting ? (
+                    <Loader2Icon className="size-3.5 animate-spin" />
+                  ) : (
+                    <ShieldCheckIcon className="size-3.5" />
+                  )}
+                  {t("oauthContinue")} {integration.name}
+                  {redirecting ? null : <ArrowRightIcon className="size-3.5" />}
+                </Button>
+                <p className="text-pretty text-[11px] text-muted-foreground leading-snug">
+                  <span className="font-medium text-foreground/80">{t("oauthAccessTitle")}: </span>
+                  {integration.oauth.access[settings.language]}
+                </p>
+                <p className="text-pretty text-[10px] text-muted-foreground/80 leading-snug">
+                  {t("oauthConsentNote")}
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-1.5 rounded-lg border border-border/70 bg-muted/30 px-2.5 py-2">
+                <p className="text-pretty text-[11px] text-muted-foreground leading-snug">
+                  {t("oauthUnconfigured")}
+                </p>
+                <div className="flex flex-wrap gap-1">
+                  {(status?.oauthEnvKeys ?? []).map((key) => (
+                    <button
+                      className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-card px-1.5 py-0.5 font-mono text-[10px] text-foreground/80 hover:border-foreground/20"
+                      key={key}
+                      onClick={() => onCopy(key)}
+                      type="button"
+                    >
+                      {key}
+                      {copied === key ? (
+                        <CheckIcon className="size-2.5" />
+                      ) : (
+                        <CopyIcon className="size-2.5 text-muted-foreground" />
+                      )}
+                    </button>
+                  ))}
                 </div>
-              ) : (
+                {status?.oauthSetupUrl ? (
+                  <a
+                    className="inline-flex items-center gap-1 text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                    href={status.oauthSetupUrl}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    <ExternalLinkIcon className="size-3" />
+                    {t("oauthSetupLink")}
+                  </a>
+                ) : null}
+              </div>
+            )
+          ) : null}
+
+          {!browserConnected && !integration.oauth ? (
+            <p className="text-pretty text-[11px] text-muted-foreground leading-snug">
+              {t("tokenOnlyNote")}
+            </p>
+          ) : null}
+
+          {!browserConnected ? (
+            <div className="space-y-2 border-t border-border/60 pt-2.5">
+              {showTokenForm || !oauthReady ? (
                 <div className="space-y-1.5">
+                  <p className="flex items-center gap-1.5 font-medium text-[11px] text-muted-foreground">
+                    <KeyRoundIcon className="size-3" />
+                    {t("connectWithToken")}
+                  </p>
                   <div className="relative">
                     <Input
                       autoComplete="off"
@@ -410,51 +563,61 @@ function ConnectionRow({
                     ) : null}
                     <span className="text-[10px] text-muted-foreground/80">{t("tokenHint")}</span>
                   </div>
+                  {message ? (
+                    <p
+                      className={cn(
+                        "text-[11px]",
+                        message.kind === "ok"
+                          ? "text-emerald-700 dark:text-emerald-300"
+                          : "text-destructive",
+                      )}
+                      role={message.kind === "error" ? "alert" : undefined}
+                    >
+                      {message.text}
+                    </p>
+                  ) : null}
                 </div>
-              )}
-              {message ? (
-                <p
-                  className={cn(
-                    "text-[11px]",
-                    message.kind === "ok"
-                      ? "text-emerald-700 dark:text-emerald-300"
-                      : "text-destructive",
-                  )}
-                  role={message.kind === "error" ? "alert" : undefined}
+              ) : (
+                <button
+                  className="text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                  onClick={() => setShowTokenForm(true)}
+                  type="button"
                 >
-                  {message.text}
-                </p>
-              ) : null}
+                  {t("useTokenInstead")}
+                </button>
+              )}
             </div>
           ) : null}
 
-          <div className="space-y-1">
-            <p className="font-medium text-[11px] text-muted-foreground">
-              {t("integrationEnvTitle")}
-            </p>
-            {[...integration.tokenEnvKeys, integration.connectorEnvKey].map((key) => (
-              <div
-                className="flex items-center gap-2 rounded-md border border-border/60 bg-muted/40 px-2 py-1"
-                key={key}
-              >
-                <code className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground/80">
-                  {key}
-                </code>
-                <button
-                  aria-label={t("copy")}
-                  className="shrink-0 text-muted-foreground hover:text-foreground"
-                  onClick={() => onCopy(key)}
-                  type="button"
+          {browserConnected ? null : (
+            <div className="space-y-1">
+              <p className="font-medium text-[11px] text-muted-foreground">
+                {t("integrationEnvTitle")}
+              </p>
+              {[...integration.tokenEnvKeys, integration.connectorEnvKey].map((key) => (
+                <div
+                  className="flex items-center gap-2 rounded-md border border-border/60 bg-muted/40 px-2 py-1"
+                  key={key}
                 >
-                  {copied === key ? (
-                    <CheckIcon className="size-3" />
-                  ) : (
-                    <CopyIcon className="size-3" />
-                  )}
-                </button>
-              </div>
-            ))}
-          </div>
+                  <code className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground/80">
+                    {key}
+                  </code>
+                  <button
+                    aria-label={t("copy")}
+                    className="shrink-0 text-muted-foreground hover:text-foreground"
+                    onClick={() => onCopy(key)}
+                    type="button"
+                  >
+                    {copied === key ? (
+                      <CheckIcon className="size-3" />
+                    ) : (
+                      <CopyIcon className="size-3" />
+                    )}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
 
           <a
             className="inline-flex items-center gap-1 text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
@@ -482,7 +645,7 @@ function approvalLabelKey(access: IntegrationInfo["access"]) {
   }
 }
 
-function accessLabelKey(mode: ServerStatus["mode"]) {
+function accessLabelKey(mode: Status["mode"]) {
   switch (mode) {
     case "connect":
       return "integrationViaConnect" as const;

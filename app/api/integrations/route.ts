@@ -1,5 +1,6 @@
 import { INTEGRATIONS, integrationEnvKeys } from "@/lib/integrations/catalog";
 import { resolveIntegrationAuth, type ServerAuthMode } from "@/lib/integrations/connection";
+import { oauthConfigured, oauthProviderFor } from "@/lib/integrations/oauth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,6 +20,12 @@ export type IntegrationStatusItem = {
   readonly envKeys: readonly string[];
   /** Project-wide Connect availability, so the UI can explain the options. */
   readonly connectAvailable: boolean;
+  /** True when this service can be authorized with OAuth *and* the deployment has credentials. */
+  readonly oauthAvailable: boolean;
+  /** Env vars the operator must set to turn OAuth on for this service. */
+  readonly oauthEnvKeys?: readonly string[];
+  /** Where to register the OAuth app. */
+  readonly oauthSetupUrl?: string;
 };
 
 export type IntegrationsStatusResponse = {
@@ -30,12 +37,22 @@ export async function GET(): Promise<Response> {
   const connectAvailable = Boolean(process.env.VERCEL_PROJECT_ID);
   const integrations: IntegrationStatusItem[] = INTEGRATIONS.map((integration) => {
     const auth = resolveIntegrationAuth(integration);
+    const provider = oauthProviderFor(integration.id);
+    const oauthEnvKeys = provider
+      ? [
+          provider.clientIdEnv,
+          ...(provider.clientSecretEnv ? [provider.clientSecretEnv] : []),
+        ]
+      : undefined;
     return {
       id: integration.id,
       mode: auth.mode,
       connected: auth.mode !== "none",
       envKeys: integrationEnvKeys(integration),
       connectAvailable,
+      oauthAvailable: oauthConfigured(integration.id),
+      ...(oauthEnvKeys ? { oauthEnvKeys } : {}),
+      ...(provider ? { oauthSetupUrl: provider.setupUrl } : {}),
     };
   });
 

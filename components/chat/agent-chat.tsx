@@ -55,7 +55,7 @@ function ChatSession({
   readonly sessionId?: string;
   readonly sessionless: boolean;
 }) {
-  const { t, selection, eveHeaders, turnContext, addChat } = useAppSettings();
+  const { t, selection, eveHeaders, turnContext, addChat, oauthJustConnected } = useAppSettings();
   const controller = usePromptInputController();
   const [cancellationError, setCancellationError] = useState<string>();
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -153,6 +153,13 @@ function ChatSession({
     },
     [],
   );
+
+  // Coming back from a provider's consent screen lands on the chat route, so
+  // reopen Connections to show the grant that was just approved.
+  useEffect(() => {
+    if (!oauthJustConnected) return;
+    openSettings("connections");
+  }, [oauthJustConnected, openSettings]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

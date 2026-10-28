@@ -47,7 +47,14 @@ export type IntegrationTokenRecord = {
   readonly token: string;
   readonly label: string;
   readonly connectedAt: number;
+  /** Envelope expiry (how long this browser keeps the sealed record). */
   readonly expiresAt?: number;
+  /** When the provider's own access token lapses; renewed ahead of time. */
+  readonly tokenExpiresAt?: number;
+  /** True when the provider supports silent renewal. */
+  readonly refreshable?: boolean;
+  /** How the record was created, for honest UI copy. */
+  readonly source?: "oauth" | "token";
 };
 
 export type ChatRecord = {
@@ -104,6 +111,11 @@ type SettingsContextValue = {
   readonly modelsStateFor: (providerId: string) => ModelsState;
   readonly loadModels: (providerId: string, force?: boolean) => Promise<void>;
   readonly envConfigured: Readonly<Record<string, boolean>>;
+  /** Set when an OAuth round trip came back with a problem, for the panel to show. */
+  readonly oauthError?: string;
+  /** The integration whose authorization just completed, for a one-line confirmation. */
+  readonly oauthJustConnected?: string;
+  readonly clearOAuthNotice: () => void;
   readonly refreshStatus: () => Promise<void>;
   readonly addChat: (id: string, title: string) => void;
   readonly removeChat: (id: string) => void;
@@ -146,12 +158,77 @@ export function AppSettingsProvider({ children }: { readonly children: ReactNode
   const [envConfigured, setEnvConfigured] = useState<Readonly<Record<string, boolean>>>({});
   const [liveModels, setLiveModels] = useState<Readonly<Record<string, readonly ModelInfo[]>>>({});
   const [modelsState, setModelsState] = useState<Readonly<Record<string, ModelsState>>>({});
+  const [oauthError, setOauthError] = useState<string>();
+  const [oauthJustConnected, setOauthJustConnected] = useState<string>();
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
   useEffect(() => {
     setSettings(readStoredSettings());
     setHydrated(true);
+  }, []);
+
+  /**
+   * Finish an OAuth round trip: the callback wrote a short-lived HttpOnly
+   * cookie, this reads it once, stores the sealed record, and cleans the URL.
+   */
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const code = url.searchParams.get("oauth");
+    const integrationId = url.searchParams.get("integration");
+    const connected = url.searchParams.get("connected");
+    if (!code && !integrationId && !connected) return;
+
+    let cancelled = false;
+    void (async () => {
+      if (connected === "1") {
+        try {
+          const response = await fetch("/api/integrations/oauth/result", { cache: "no-store" });
+          const payload = (await response.json()) as {
+            connected?: boolean;
+            integrationId?: string;
+            token?: string;
+            expiresAt?: number;
+            tokenExpiresAt?: number;
+            refreshable?: boolean;
+            label?: string;
+          };
+          if (!cancelled && payload.connected && payload.integrationId && payload.token) {
+            setSettings((current) => ({
+              ...current,
+              integrationTokens: {
+                ...current.integrationTokens,
+                [payload.integrationId as string]: {
+                  token: payload.token as string,
+                  label: payload.label ?? "Authorized",
+                  connectedAt: Date.now(),
+                  ...(payload.expiresAt ? { expiresAt: payload.expiresAt } : {}),
+                  ...(payload.tokenExpiresAt ? { tokenExpiresAt: payload.tokenExpiresAt } : {}),
+                  refreshable: payload.refreshable === true,
+                  source: "oauth" as const,
+                },
+              },
+            }));
+            setOauthJustConnected(payload.integrationId);
+          }
+        } catch {
+          if (!cancelled) setOauthError("error");
+        }
+      }
+      if (!cancelled && code) setOauthError(code);
+
+      for (const key of ["oauth", "integration", "connected"]) url.searchParams.delete(key);
+      window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const clearOAuthNotice = useCallback(() => {
+    setOauthError(undefined);
+    setOauthJustConnected(undefined);
   }, []);
 
   useEffect(() => {
@@ -351,6 +428,7 @@ export function AppSettingsProvider({ children }: { readonly children: ReactNode
     const now = Date.now();
     const sealed = Object.values(current.integrationTokens)
       .filter((record) => !record.expiresAt || record.expiresAt > now)
+      .filter((record) => !record.tokenExpiresAt || record.tokenExpiresAt > now)
       .map((record) => record.token)
       .filter((token) => typeof token === "string" && token.startsWith("v1."));
     if (sealed.length > 0) {
@@ -368,6 +446,80 @@ export function AppSettingsProvider({ children }: { readonly children: ReactNode
     (key: TranslationKey) => translate(settingsRef.current.language, key),
     [],
   );
+
+  /**
+   * OAuth grants can lapse (Linear 24h, PostHog 1h). Renew them while the app
+   * is open, well before the access token dies, so a tool call never lands on
+   * an expired credential.
+   */
+  const refreshingRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!hydrated) return;
+    let cancelled = false;
+
+    const renew = async () => {
+      const current = settingsRef.current.integrationTokens;
+      const now = Date.now();
+      for (const [integrationId, record] of Object.entries(current)) {
+        if (!record.refreshable) continue;
+        if (refreshingRef.current.has(integrationId)) continue;
+        const due =
+          typeof record.tokenExpiresAt === "number"
+            ? record.tokenExpiresAt - now < 10 * 60 * 1000
+            : true;
+        if (!due) continue;
+
+        refreshingRef.current.add(integrationId);
+        try {
+          const response = await fetch("/api/integrations/oauth/refresh", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ token: record.token }),
+          });
+          const payload = (await response.json()) as {
+            ok?: boolean;
+            token?: string;
+            expiresAt?: number;
+            tokenExpiresAt?: number;
+          };
+          if (cancelled) return;
+          if (payload.ok && payload.token) {
+            setSettings((latest) => ({
+              ...latest,
+              integrationTokens: {
+                ...latest.integrationTokens,
+                [integrationId]: {
+                  ...record,
+                  token: payload.token as string,
+                  ...(payload.expiresAt ? { expiresAt: payload.expiresAt } : {}),
+                  ...(payload.tokenExpiresAt ? { tokenExpiresAt: payload.tokenExpiresAt } : {}),
+                },
+              },
+            }));
+          } else if (response.status === 401 || response.status === 409) {
+            // The grant is gone: drop it so the UI says "not connected" instead
+            // of pretending a dead token still works.
+            setSettings((latest) => {
+              const integrationTokens = { ...latest.integrationTokens };
+              delete integrationTokens[integrationId];
+              return { ...latest, integrationTokens };
+            });
+          }
+        } catch {
+          // Offline: try again on the next tick.
+        } finally {
+          refreshingRef.current.delete(integrationId);
+        }
+      }
+    };
+
+    void renew();
+    const timer = window.setInterval(() => void renew(), 5 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [hydrated]);
 
   const value: SettingsContextValue = {
     settings,
@@ -387,6 +539,9 @@ export function AppSettingsProvider({ children }: { readonly children: ReactNode
     modelsStateFor,
     loadModels,
     envConfigured,
+    ...(oauthError ? { oauthError } : {}),
+    ...(oauthJustConnected ? { oauthJustConnected } : {}),
+    clearOAuthNotice,
     refreshStatus,
     addChat,
     removeChat,
