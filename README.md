@@ -38,7 +38,7 @@ Design tokens live in `app/globals.css` (`--brand`, `--brand-tile`, `--brand-bol
 | **Providers** | 15 built-in providers + custom OpenAI-compatible endpoints. OpenRouter is a first-class citizen. |
 | **BYOK** | Paste an API key in **Settings → Providers**. It is validated by a live `/models` call, then sealed with AES-GCM on the server; only an opaque token is kept in the browser. |
 | **Server keys** | Set any `*_API_KEY` in the environment for an operator-wide connection. Keys never reach the browser. |
-| **Integrations (MCP)** | GitHub, Linear, Notion, Sentry, Supabase, Neon, Vercel, PostHog, Stripe and Resend ship as MCP connections, each with an approval gate matched to its blast radius. Paste a token per service in **Settings → Connections**, or use Vercel Connect. See [docs/integrations.md](docs/integrations.md). |
+| **Integrations (MCP)** | GitHub, Linear, Notion, Sentry, Supabase, Neon, Vercel, PostHog, Stripe and Resend ship as MCP connections, each with an approval gate matched to its blast radius. Seven of them connect with one OAuth tap in **Settings → Connections**; the rest take a scoped token. See [docs/integrations.md](docs/integrations.md). |
 | **Live model catalog** | Models (context length, pricing, vision flags) are fetched from each provider's `/models` endpoint, with a built-in fallback list when offline. |
 | **Per-request switching** | The chosen provider/model is sent on every eve request and resolved at runtime with `defineDynamic` + AI SDK `LanguageModel`. No redeploy needed. |
 | **Chat** | Streaming messages, reasoning blocks, tool calls, approvals/questions (HITL), attachments, cancellation, steering, resumable `/s/:id` sessions. |
@@ -93,21 +93,25 @@ Ten developer tools are wired up out of the box. Open **Settings → Connections
 to see which ones are live, what each is allowed to do, and the environment
 variable (or Vercel Connect connector) each one needs.
 
-**Fastest path:** click a row, paste a token, press **Connect**. The token is
-verified against the service, sealed with AES-256-GCM and kept in this browser
-only — the model never sees it, and it is sent back sealed with each chat
-request. Expires after 7 days, or immediately when you press **Disconnect**.
+**Click a row, press Continue with GitHub.** You approve on the service's own
+consent screen — the row lists exactly what it asks for — and come back
+connected. The grant is sealed with AES-256-GCM and kept in this browser only,
+renewed in the background when the provider rotates tokens, and dropped the
+moment you press **Disconnect**. The model never sees it.
 
 ```bash
-# recommended: per-user OAuth through Vercel Connect
-vercel link
+# operator setup for one-tap connect: register an OAuth app per service
+echo "GITHUB_OAUTH_CLIENT_ID=..." >> .env.local
+echo "GITHUB_OAUTH_CLIENT_SECRET=..." >> .env.local
+# redirect URI: https://your-deployment/api/integrations/oauth/callback
+
+# no OAuth app? Vercel Connect still works, or paste a token per service
 vercel connect create github --name t-flash
 vercel connect attach <connector-uid> --yes
-vercel env pull
-
-# or the simplest path for a single developer: a static token
-echo "GITHUB_MCP_TOKEN=ghp_..." >> .env.local
 ```
+
+Neon, Stripe and Resend have no third-party OAuth, so those rows ask for a
+scoped API key instead — and say why.
 
 Precedence: browser token → Vercel Connect connector → server env var.
 Approval tiers: read-only tools run silently, write tools ask once per session,
@@ -195,7 +199,7 @@ components/
   ai-elements/, ui/           generated primitives (message, prompt input, dialogs…)
 lib/
   chat-history.ts             grouping/search for the sidebar
-  integrations/               connection catalog + Connect/token resolution
+  integrations/               catalog, OAuth authorizer, Connect/token resolution
   providers/                  catalog, selection contract, credentials, runtime, live models
 docs/
   integrations.md             MCP setup, approval tiers, adding a service
