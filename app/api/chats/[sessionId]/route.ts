@@ -1,30 +1,10 @@
-import { currentPrincipal } from "@/lib/identity";
-import { serverSupabase } from "@/lib/supabase/server";
-import { OWNER_PROOF_HEADER, verifyChatOwnership } from "@/lib/security/chat-ownership";
+import { OWNER_PROOF_HEADER } from "@/lib/security/chat-ownership";
+import { ownedChat } from "@/lib/security/owned-chat";
 import { internalEveHeaders, internalOrigin } from "@/lib/security/internal-origin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 type RouteContext = { params: Promise<{ sessionId: string }> };
-
-async function ownedChat(request: Request, sessionId: string) {
-  const principal = await currentPrincipal();
-  if (!principal) return null;
-  if (principal.kind === "vercel") {
-    const proof = request.headers.get(OWNER_PROOF_HEADER);
-    return verifyChatOwnership(principal.id, sessionId, proof)
-      ? { kind: "vercel" as const, userId: principal.id, proof: proof! }
-      : null;
-  }
-  const supabase = await serverSupabase();
-  const { data: chat } = await supabase.from("tflash_chats")
-    .select("owner_proof")
-    .eq("session_id", sessionId)
-    .eq("user_id", principal.id)
-    .maybeSingle();
-  if (!chat || !verifyChatOwnership(principal.id, sessionId, chat.owner_proof)) return null;
-  return { kind: "supabase" as const, supabase, userId: principal.id };
-}
 
 export async function PATCH(request: Request, context: RouteContext): Promise<Response> {
   if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {

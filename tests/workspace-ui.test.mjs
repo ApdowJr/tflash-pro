@@ -82,6 +82,7 @@ function fakeFetch(handler = () => undefined) {
     if (path.startsWith("/api/providers/models?")) {
       return Response.json({ models: [{ id: "example/model", name: "Example model" }], source: "static" });
     }
+    if (path.startsWith("/api/chats/") && path.endsWith("/search")) return Response.json({ status: "no-match" });
     if (path.startsWith("/api/chats/")) return Response.json({ ok: true });
     if (path === "/api/chats") return Response.json({ chats: [], storage: "account" });
     throw new Error(`Unexpected request in UI test: ${path}`);
@@ -123,7 +124,7 @@ test("history actions rename, confirm removal, report failure, and persist befor
 
   const search = screen.getByRole("searchbox", { name: "Search chats…" });
   await user.type(search, "not-found");
-  assert.ok(screen.getByText("No chats match your search."));
+  assert.ok(await screen.findByText("No chats match your search."));
   await user.clear(search);
 
   await user.click(screen.getByRole("button", { name: "Chat actions: Project notes" }));
@@ -160,7 +161,7 @@ test("Somali history actions and empty search are translated", async () => {
   assert.ok(within(dialog).getByRole("button", { name: "Kaydi" }));
   await user.click(within(dialog).getByRole("button", { name: "Jooji" }));
   await user.type(screen.getByRole("searchbox", { name: "Raadi wada hadallo…" }), "ma-jirto");
-  assert.ok(screen.getByText("Ma jiro wada hadal ku habboon raadinta."));
+  assert.ok(await screen.findByText("Ma jiro wada hadal ku habboon raadinta."));
 });
 
 test("mobile sidebar moves focus into navigation and restores it to the opener", async () => {
@@ -1123,3 +1124,153 @@ test("keeping the browser copy refreshes the revision before an explicit cloud r
 });
 
 
+
+test("chat search keeps title results, adds matching message excerpts, and reports/retries partial failures", async () => {
+  seed({
+    chats: [
+      { id: "title", title: "Needle title", updatedAt: 3 },
+      { id: "content", title: "API notes", updatedAt: 2 },
+      { id: "expired", title: "Old chat", updatedAt: 1 },
+    ],
+    chatProofs: { title: "proof-title", content: "proof-content", expired: "proof-expired" },
+  });
+  let expired = true;
+  const calls = fakeFetch((path) => {
+    if (path === "/api/chats/content/search") return Response.json({ status: "matched", snippet: { before: "A useful ", match: "NEEDLE", after: " in the answer" } });
+    if (path === "/api/chats/expired/search") return Response.json({ status: expired ? "unavailable" : "no-match" });
+  });
+  render(app(h(Sidebar, { open: true, onClose() {}, onNewChat() {}, onOpenSettings() {} })));
+  const user = userEvent.setup();
+  const search = await screen.findByRole("searchbox", { name: "Search chats…" });
+  await user.type(search, "needle");
+  assert.ok(screen.getByRole("link", { name: "Needle title" }));
+  assert.ok(screen.getByText(/Searching messages/));
+  assert.equal(screen.queryByText("No chats match your search."), null);
+  const link = await screen.findByRole("link", { name: /API notes.*NEEDLE/ });
+  assert.equal(link.getAttribute("href"), "/s/content");
+  assert.equal(within(link).getByText("NEEDLE").tagName, "MARK");
+  assert.ok(await screen.findByText(/Some chats could not be searched/));
+  assert.equal(screen.queryByText("No chats match your search."), null);
+  assert.equal(calls.filter((call) => call.path === "/api/chats/title/search").length, 0);
+  const contentCall = calls.find((call) => call.path === "/api/chats/content/search");
+  assert.equal(new Headers(contentCall.options.headers).get("x-tflash-owner-proof"), "proof-content");
+  assert.equal(JSON.parse(contentCall.options.body).query, "needle");
+
+  expired = false;
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  await screen.findByText("Message search complete.");
+  assert.equal(screen.queryByText(/Some chats could not be searched/), null);
+  assert.ok(screen.getByRole("link", { name: /API notes.*NEEDLE/ }));
+  const previousCount = calls.filter((call) => call.path === "/api/chats/content/search").length;
+  await user.click(screen.getByRole("button", { name: "Search again" }));
+  await waitFor(() => assert.equal(calls.filter((call) => call.path === "/api/chats/content/search").length, previousCount + 1));
+  await screen.findByText("Message search complete.");
+  await user.clear(search);
+  assert.ok(screen.getByRole("link", { name: "Old chat" }));
+  assert.equal(screen.queryByText("NEEDLE"), null);
+});
+
+test("message search debounces typing and ignores an older response even if fetch ignores abort", async () => {
+  seed({ chats: [{ id: "chat", title: "Project", updatedAt: 1 }], chatProofs: { chat: "proof" } });
+  let resolveFirst;
+  const first = new Promise((resolve) => { resolveFirst = resolve; });
+  const calls = fakeFetch((path, options) => {
+    if (path !== "/api/chats/chat/search") return;
+    const query = JSON.parse(options.body).query;
+    if (query === "first") return first;
+    if (query === "second") return Response.json({ status: "matched", snippet: { before: "new ", match: "second", after: " result" } });
+    throw new Error(`Unexpected intermediate query: ${query}`);
+  });
+  render(app(h(Sidebar, { open: true, onClose() {}, onNewChat() {}, onOpenSettings() {} })));
+  const user = userEvent.setup();
+  const search = await screen.findByRole("searchbox", { name: "Search chats…" });
+  await user.type(search, "first");
+  await waitFor(() => assert.ok(calls.some((call) => call.path.endsWith("/search"))));
+  const oldCall = calls.find((call) => call.path.endsWith("/search"));
+  await user.clear(search);
+  await user.type(search, "second");
+  assert.equal(oldCall.options.signal.aborted, true);
+  assert.ok(await screen.findByRole("link", { name: /Project.*second/ }));
+  resolveFirst(Response.json({ status: "matched", snippet: { before: "stale ", match: "first", after: " result" } }));
+  await waitFor(() => assert.ok(screen.getByRole("link", { name: /Project.*second/ })));
+  assert.equal(screen.queryByText("first"), null);
+  assert.deepEqual(calls.filter((call) => call.path.endsWith("/search")).map((call) => JSON.parse(call.options.body).query), ["first", "second"]);
+});
+
+test("message search limits browser concurrency and does not announce no matches while work is pending", async () => {
+  const chats = Array.from({ length: 5 }, (_, i) => ({ id: `chat-${i}`, title: `Chat ${i}`, updatedAt: i }));
+  seed({ chats, chatProofs: Object.fromEntries(chats.map((chat) => [chat.id, `proof-${chat.id}`])) });
+  const pending = [];
+  const calls = fakeFetch((path) => {
+    if (path.endsWith("/search")) return new Promise((resolve) => { pending.push(resolve); });
+  });
+  render(app(h(Sidebar, { open: true, onClose() {}, onNewChat() {}, onOpenSettings() {} })));
+  const user = userEvent.setup();
+  await user.type(await screen.findByRole("searchbox", { name: "Search chats…" }), "absent");
+  await waitFor(() => assert.equal(pending.length, 3));
+  assert.equal(calls.filter((call) => call.path.endsWith("/search")).length, 3);
+  assert.equal(screen.queryByText("No chats match your search."), null);
+  pending[0](Response.json({ status: "no-match" }));
+  await waitFor(() => assert.equal(pending.length, 4));
+  pending[1](Response.json({ status: "no-match" }));
+  await waitFor(() => assert.equal(pending.length, 5));
+  for (let i = 2; i < pending.length; i++) pending[i](Response.json({ status: "no-match" }));
+  assert.ok(await screen.findByText("No chats match your search."));
+});
+
+test("search is account-scoped on account change and Somali explains unavailable histories", async () => {
+  seed({ language: "so", chats: [{ id: "alice-chat", title: "Alice only", updatedAt: 1 }], chatProofs: { "alice-chat": "alice-proof" } });
+  window.localStorage.setItem("tflash:settings:v1:other-user", JSON.stringify({
+    language: "so", chats: [{ id: "bob-chat", title: "Bob only", updatedAt: 1 }], chatProofs: { "bob-chat": "bob-proof" },
+  }));
+  let resolveOld;
+  const oldResponse = new Promise((resolve) => { resolveOld = resolve; });
+  const calls = fakeFetch((path) => {
+    if (path === "/api/chats/alice-chat/search") return oldResponse;
+    if (path === "/api/chats/bob-chat/search") return Response.json({ status: "unavailable" });
+  });
+  function ScopedApp() {
+    const [id, setId] = React.useState(userId);
+    return h(React.Fragment, null,
+      h("button", { onClick: () => setId("other-user") }, "Switch account"),
+      h(AppSettingsProvider, { key: `vercel:${id}`, userId: id, accountKind: "vercel" },
+        h(Sidebar, { open: true, onClose() {}, onNewChat() {}, onOpenSettings() {} })),
+    );
+  }
+  render(h(ScopedApp));
+  const user = userEvent.setup();
+  await user.type(await screen.findByRole("searchbox", { name: "Raadi wada hadallo…" }), "needle");
+  await waitFor(() => assert.ok(calls.some((call) => call.path === "/api/chats/alice-chat/search")));
+  const oldCall = calls.find((call) => call.path === "/api/chats/alice-chat/search");
+  await user.click(screen.getByRole("button", { name: "Switch account" }));
+  assert.equal(oldCall.options.signal.aborted, true);
+  assert.ok(await screen.findByRole("link", { name: "Bob only" }));
+  resolveOld(Response.json({ status: "matched", snippet: { before: "private ", match: "needle", after: " Alice" } }));
+  await user.type(screen.getByRole("searchbox", { name: "Raadi wada hadallo…" }), "needle");
+  assert.ok(await screen.findByText(/Qaar ka mid ah wada hadallada lama raadin karin/));
+  assert.ok(screen.getByRole("button", { name: "Mar kale isku day" }));
+  assert.equal(screen.queryByText(/private/), null);
+  assert.equal(screen.queryByRole("link", { name: /Alice only/ }), null);
+  assert.equal(screen.queryByText("Ma jiro wada hadal ku habboon raadinta."), null);
+});
+
+
+test("Supabase searches its account history without a browser ownership proof", async () => {
+  seed();
+  const calls = fakeFetch((path, options) => {
+    if (path === "/api/chats") return Response.json({ chats: [{ id: "synced", title: "Synced title", updatedAt: 1 }], storage: "account" });
+    if (path === "/api/chats/synced/search") {
+      assert.equal(new Headers(options.headers).has("x-tflash-owner-proof"), false);
+      return Response.json({ status: "matched", snippet: { before: "hello ", match: "needle", after: " again" } });
+    }
+  });
+  render(app(h(Sidebar, { open: true, onClose() {}, onNewChat() {}, onOpenSettings() {} }), "supabase"));
+  const user = userEvent.setup();
+  const search = await screen.findByRole("searchbox", { name: "Search chats…" });
+  await screen.findByRole("link", { name: "Synced title" });
+  await user.type(search, "n");
+  assert.ok(screen.getByText("Enter at least 2 characters to search messages."));
+  assert.equal(calls.filter((call) => call.path.endsWith("/search")).length, 0);
+  await user.type(search, "eedle");
+  assert.ok(await screen.findByRole("link", { name: /Synced title.*needle/ }));
+});

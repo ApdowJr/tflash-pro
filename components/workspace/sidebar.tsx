@@ -30,7 +30,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { groupChats, searchChats } from "@/lib/chat-history";
+import { groupChats } from "@/lib/chat-history";
+import { MAX_MESSAGE_QUERY_LENGTH } from "@/lib/chat-search";
+import { useChatSearch } from "./use-chat-search";
 import { cn } from "@/lib/utils";
 import { useAppSettings, type ChatRecord } from "@/components/settings/app-settings";
 import { authClient } from "@/lib/auth-client";
@@ -61,7 +63,7 @@ export function Sidebar({
   readonly onNewChat: () => void;
   readonly onOpenSettings: () => void;
 }) {
-  const { settings, t, renameChat, removeChat, historyError, refreshChats } = useAppSettings();
+  const { settings, t, hydrated, accountId, accountKind, renameChat, removeChat, historyError, refreshChats } = useAppSettings();
   const [query, setQuery] = useState("");
   const [action, setAction] = useState<ChatAction | null>(null);
   const [title, setTitle] = useState("");
@@ -70,10 +72,10 @@ export function Sidebar({
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const wasOpenRef = useRef(false);
   const returnFocusRef = useRef<HTMLElement | null>(null);
-  const groups = useMemo(
-    () => groupChats(searchChats(settings.chats, query)),
-    [settings.chats, query],
-  );
+  const contentSearch = useChatSearch({
+    query, chats: settings.chats, proofs: settings.chatProofs, accountId, accountKind, hydrated,
+  });
+  const groups = useMemo(() => groupChats(contentSearch.chats), [contentSearch.chats]);
 
   useEffect(() => {
     if (open && !wasOpenRef.current) {
@@ -192,6 +194,7 @@ export function Sidebar({
             <input
               className="h-10 w-full rounded-md bg-transparent pr-2 pl-8 text-[13px] text-foreground placeholder:text-muted-foreground/80 focus:bg-card focus:ring-1 focus:ring-border focus:outline-none lg:h-8"
               onChange={(event) => setQuery(event.target.value)}
+              maxLength={MAX_MESSAGE_QUERY_LENGTH}
               placeholder={t("searchChats")}
               type="search"
               value={query}
@@ -199,6 +202,26 @@ export function Sidebar({
           </label>
         </div>
 
+        <div aria-live="polite" className="px-3 text-xs leading-relaxed text-muted-foreground" role="status">
+          {contentSearch.tooShort ? <p className="py-1">{t("searchMessagesMinimum")}</p> : null}
+          {contentSearch.searching ? (
+            <p className="py-1">{t("searchingMessages")}{" "}
+              <span aria-label={t("searchingMessages")} aria-valuemax={contentSearch.total} aria-valuemin={0} aria-valuenow={contentSearch.completed} role="progressbar">
+                ({contentSearch.completed}/{contentSearch.total})
+              </span>
+            </p>
+          ) : null}
+          {contentSearch.finished && contentSearch.failed === 0 ? (
+            <p className="py-1">{t("searchMessagesComplete")}{" "}
+              <button className="inline-flex min-h-10 items-center rounded px-1 underline focus-visible:outline focus-visible:outline-2 lg:min-h-8" onClick={contentSearch.retry} type="button">{t("searchAgain")}</button>
+            </p>
+          ) : null}
+          {!contentSearch.searching && contentSearch.failed > 0 ? (
+            <p className="py-1">{t("searchMessagesIncomplete")} ({contentSearch.failed}){" "}
+              <button className="inline-flex min-h-10 items-center rounded px-1 underline focus-visible:outline focus-visible:outline-2 lg:min-h-8" onClick={contentSearch.retry} type="button">{t("searchRetry")}</button>
+            </p>
+          ) : null}
+        </div>
         {historyError ? (
           <div className="px-3 py-2 text-xs text-destructive" role="alert">
             {t(historyError)} <button className="underline" onClick={() => void refreshChats()} type="button">{t("refresh")}</button>
@@ -206,9 +229,11 @@ export function Sidebar({
         ) : null}
         <nav aria-label={t("chats")} className="tflash-scroll min-h-0 flex-1 overflow-y-auto px-2 pb-2">
           {groups.length === 0 ? (
-            <p className="px-2.5 py-6 text-pretty text-muted-foreground text-xs leading-relaxed">
-              {query.trim().length > 0 ? t("noChatResults") : t("noChats")}
-            </p>
+            hydrated && !historyError && !contentSearch.searching && !contentSearch.tooShort && contentSearch.failed === 0 ? (
+              <p className="px-2.5 py-6 text-pretty text-muted-foreground text-xs leading-relaxed">
+                {query.trim().length > 0 ? t("noChatResults") : t("noChats")}
+              </p>
+            ) : null
           ) : (
             groups.map((group) => (
               <section className="pt-3" key={group.key}>
@@ -218,19 +243,28 @@ export function Sidebar({
                 <ul className="space-y-px">
                   {group.chats.map((chat) => {
                     const active = chat.id === activeChatId;
+                    const snippet = Object.hasOwn(contentSearch.matches, chat.id) ? contentSearch.matches[chat.id] : undefined;
                     return (
                       <li className="group/chat relative" key={chat.id}>
                         <a
                           aria-current={active ? "page" : undefined}
                           className={cn(
-                            "flex h-10 items-center rounded-md pr-9 pl-2.5 text-[13px] transition-colors lg:h-8",
+                            "flex min-w-0 items-center rounded-md pr-9 pl-2.5 text-[13px] transition-colors",
+                            snippet ? "min-h-14 py-2" : "h-10 lg:h-8",
                             active
                               ? "bg-accent font-medium text-foreground"
                               : "text-muted-foreground hover:bg-accent/70 hover:text-foreground",
                           )}
                           href={`/s/${encodeURIComponent(chat.id)}`}
                         >
-                          <span className="truncate">{chat.title}</span>
+                          <span className="flex min-w-0 flex-col gap-0.5">
+                            <span className="truncate">{chat.title}</span>
+                            {snippet ? (
+                              <span className="line-clamp-2 break-words text-[11px] font-normal leading-snug text-muted-foreground">
+                                {snippet.before}<mark className="rounded-sm bg-primary/15 text-foreground">{snippet.match}</mark>{snippet.after}
+                              </span>
+                            ) : null}
+                          </span>
                         </a>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>

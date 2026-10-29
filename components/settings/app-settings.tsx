@@ -99,6 +99,8 @@ export type ModelsState = {
 };
 
 type SettingsContextValue = {
+  readonly accountId: string;
+  readonly accountKind: "supabase" | "vercel";
   readonly settings: AppSettings;
   readonly hydrated: boolean;
   readonly t: Translator;
@@ -651,6 +653,8 @@ export function AppSettingsProvider({ children, userId, accountKind }: { readonl
   }, [hydrated]);
 
   const value: SettingsContextValue = {
+    accountId: userId,
+    accountKind,
     settings,
     hydrated,
     t,
