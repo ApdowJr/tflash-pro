@@ -1,5 +1,6 @@
 "use client";
 
+import { DocumentExportButtons } from "./documents";
 import { useState } from "react";
 import { CheckIcon, CircleIcon, DownloadIcon, FileTextIcon, Loader2Icon, TriangleAlertIcon } from "lucide-react";
 import { artifactMediaType, type AgentArtifact, type AgentPlan } from "@/lib/agent-workspace";
@@ -94,6 +95,7 @@ export function AgentArtifactCard({ artifact }: { readonly artifact: AgentArtifa
         <summary className="cursor-pointer text-xs text-muted-foreground">{t("previewFile")}</summary>
         <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-3 text-xs">{artifact.content}</pre>
       </details>
+      <DocumentExportButtons filename={artifact.filename} content={artifact.content} />
       <p className="text-[11px] text-muted-foreground">{t("artifactReview")}</p>
       {error ? <p className="text-xs text-destructive" role="alert">{t("downloadFailed")}</p> : null}
     </section>

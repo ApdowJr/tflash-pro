@@ -31,6 +31,8 @@ jobs:
           node-version: "24"
       - name: Install dependencies
         run: corepack pnpm install --frozen-lockfile
+      - name: Dependency security audit
+        run: corepack pnpm run audit:security
       - name: Test
         run: corepack pnpm test
       - name: Typecheck
@@ -39,3 +41,6 @@ jobs:
         run: corepack pnpm build
       - name: Build Eve agent
         run: corepack pnpm build:eve
+      # Intentionally blocks release while Eve ships vulnerable compiled Zod.
+      - name: Bundled Zod release gate
+        run: corepack pnpm run audit:bundled-zod

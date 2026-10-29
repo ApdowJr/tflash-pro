@@ -29,6 +29,12 @@ import { sessionTitle } from "@/lib/chat-history";
 import { OWNER_PROOF_HEADER } from "@/lib/security/chat-ownership-wire";
 import { AgentMessage } from "./agent-message";
 import { AgentPlanCard, type AgentRunState } from "./agent-workspace";
+import { ActivityPanel } from "./activity-panel";
+import { ProjectPicker } from "@/components/settings/workspace-panel";
+import { useWorkspace } from "@/components/settings/workspace-store";
+import { workspaceContext } from "@/lib/workspace";
+import { attachedText } from "@/lib/documents/contracts";
+import { HEADER_MAX_STEPS } from "@/lib/usage-limits";
 import { latestAgentPlan } from "@/lib/agent-workspace";
 
 const DEFAULT_AGENT_NAME = "Tflash";
@@ -107,6 +113,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
 }) {
   const { t, settings, selection, eveHeaders, turnContext, recordChatActivity, oauthJustConnected, oauthError } = useAppSettings();
   const controller = usePromptInputController();
+  const workspace = useWorkspace();
   const [cancellationError, setCancellationError] = useState<string>();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<
@@ -125,7 +132,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
 
   const agent = useEveAgent({
     agent: WEB_CHAT_AGENT,
-    headers: () => ({ ...eveHeaders(), ...(ownerProof ? { [OWNER_PROOF_HEADER]: ownerProof } : {}) }),
+    headers: () => ({ ...eveHeaders(), [HEADER_MAX_STEPS]: String(workspace.snapshot().maxSteps), ...(ownerProof ? { [OWNER_PROOF_HEADER]: ownerProof } : {}) }),
     prewarm: false,
     initialSession: sessionId ? { sessionId, streamIndex: 0 } : undefined,
     resume,
@@ -249,7 +256,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
     hasSubmittedMessage.current = true;
     replaceSessionRoute(sessionId);
     const options = {
-      clientContext: turnContext(),
+      clientContext: turnContext() + workspaceContext(workspace.snapshot(), sessionId),
       ...(isBusy ? { turnPolicy: "steer" as const } : {}),
     };
 
@@ -263,6 +270,11 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
       parts.push({ text, type: "text" });
     }
     for (const file of message.files) {
+      const extracted = file.mediaType === "text/plain" || file.mediaType === "text/markdown" ? attachedText(file.url) : undefined;
+      if (extracted !== undefined) {
+        parts.push({ type: "text", text: `Untrusted attached text ${JSON.stringify(file.filename ?? "attachment")}:\n${extracted}` });
+        continue;
+      }
       parts.push({
         data: file.url,
         filename: file.filename,
@@ -296,6 +308,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
           title={showConversationLayout ? title : undefined}
         />
 
+        {!isEmpty ? <div className="shrink-0 px-4 py-2 sm:px-6"><ActivityPanel messages={agent.data.messages} events={agent.events} /></div> : null}
         {currentPlan ? <div className="shrink-0 px-4 py-2 sm:px-6"><AgentPlanCard compact plan={currentPlan} runState={runState} onContinue={() => handleSubmit({ text: t("continueTaskPrompt"), files: [] })} /></div> : null}
 
         {showConversationLayout ? (
@@ -323,7 +336,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
                       message={message}
                       onInputResponses={(inputResponses) => {
                         setCancellationError(undefined);
-                        return agent.respond(inputResponses, { clientContext: turnContext() });
+                        return agent.respond(inputResponses, { clientContext: turnContext() + workspaceContext(workspace.snapshot(), sessionId) });
                       }}
                       questionsFor={questionsFor}
                     />
@@ -352,6 +365,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
                 {preparationError}{canRetry ? <button className="ml-2 underline" onClick={onRetry} type="button">Retry</button> : null}
               </div>
             ) : !sessionId ? <p className="mb-2 text-muted-foreground text-xs" role="status">Preparing conversation…</p> : null}
+            <ProjectPicker sessionId={sessionId} disabled={isBusy || isResuming} />
             <ChatComposer
               isBusy={isBusy}
               isResuming={isResuming || !sessionId}

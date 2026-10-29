@@ -1,5 +1,6 @@
 "use client";
 
+import { DocumentImportButton } from "./documents";
 import { FileIcon, PaperclipIcon, SquareIcon, XIcon } from "lucide-react";
 import {
   PromptInput,
@@ -69,6 +70,7 @@ export function ChatComposer({
         <PromptInputFooter className="flex-wrap border-t-0 px-2.5 pt-1.5 pb-2.5 pr-14">
           <PromptInputTools className="gap-1">
             <ComposerAttachButton />
+            <DocumentImportButton disabled={isResuming} />
           </PromptInputTools>
           <span className="hidden pr-1 text-[11px] text-muted-foreground/60 md:inline">
             {t("enterToSend")}

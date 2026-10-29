@@ -654,3 +654,174 @@ test("research messages show inert bilingual sources and download the actual exe
     window.HTMLAnchorElement.prototype.click = originalClick;
   }
 });
+
+test("projects and opt-in editable memory persist locally, remain account-isolated and delete with confirmation", async () => {
+  const { WorkspacePanel, ProjectPicker } = await import("../components/settings/workspace-panel.tsx");
+  const { useWorkspace } = await import("../components/settings/workspace-store.tsx");
+  const { workspaceContext } = await import("../lib/workspace.ts");
+  let snapshot;
+  function Probe() { const store = useWorkspace(); snapshot = store.workspace; return h("output", { "data-testid": "context" }, workspaceContext(store.workspace, "project-chat")); }
+  seed(); fakeFetch();
+  const content = h(React.Fragment, null, h(WorkspacePanel), h(ProjectPicker, { sessionId: "project-chat" }), h(Probe));
+  const rendered = render(app(content)); const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "New project" }));
+  await user.type(screen.getByLabelText("Project name"), "School");
+  await user.type(screen.getByLabelText("Project instructions"), "Use primary sources");
+  await user.click(screen.getByRole("button", { name: "Save", exact: true }));
+  await user.selectOptions(screen.getByRole("combobox", { name: "Projects", exact: true }), snapshot.projects[0].id);
+  assert.ok(screen.getByTestId("context").textContent.includes("Use primary sources"));
+  await user.click(screen.getByRole("button", { name: "Add note" }));
+  await user.type(screen.getByLabelText("Memory note"), "Prefer short answers <script>inert</script>");
+  await user.click(screen.getByRole("button", { name: "Save", exact: true }));
+  assert.equal(snapshot.notes.length, 1);
+  assert.ok(!screen.getByTestId("context").textContent.includes("Prefer short"));
+  await user.click(screen.getByRole("checkbox", { name: "Use saved notes in future messages" }));
+  assert.ok(screen.getByTestId("context").textContent.includes("Prefer short"));
+  assert.equal(document.querySelector("script"), null);
+  await user.click(screen.getByRole("button", { name: "Edit note" }));
+  await user.clear(screen.getByLabelText("Memory note")); await user.type(screen.getByLabelText("Memory note"), "Updated preference");
+  await user.click(screen.getByRole("button", { name: "Save", exact: true }));
+  assert.ok(screen.getByTestId("context").textContent.includes("Updated preference"));
+  rendered.rerender(app(content, "supabase"));
+  await waitFor(() => assert.equal(snapshot.notes.length, 0));
+  assert.equal(snapshot.projects.length, 0);
+  rendered.rerender(h(AppSettingsProvider, { userId: "another-account", accountKind: "vercel" }, content));
+  await waitFor(() => assert.equal(snapshot.notes.length, 0));
+  assert.equal(snapshot.projects.length, 0);
+  rendered.rerender(app(content, "vercel"));
+  await waitFor(() => assert.equal(snapshot.notes.length, 1));
+  await user.click(screen.getByRole("button", { name: "Remove: Updated preference" }));
+  assert.equal(snapshot.notes.length, 1);
+  const confirm = screen.getByRole("alertdialog", { name: "Remove" });
+  await user.click(within(confirm).getByRole("button", { name: "Remove", exact: true }));
+  assert.equal(snapshot.notes.length, 0);
+  assert.ok(!screen.getByTestId("context").textContent.includes("Updated preference"));
+});
+
+test("workspace storage failures never present a successful write", async () => {
+  const { WorkspacePanel } = await import("../components/settings/workspace-panel.tsx");
+  seed(); fakeFetch(); render(app(h(WorkspacePanel)));
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "New project" }));
+  await user.type(screen.getByLabelText("Project name"), "Unsaved project");
+  const original = window.Storage.prototype.setItem;
+  window.Storage.prototype.setItem = function (key, value) { if (key.startsWith("tflash:workspace")) throw new Error("Quota exceeded"); return original.call(this, key, value); };
+  try {
+    await user.click(screen.getByRole("button", { name: "Save", exact: true }));
+    assert.ok(screen.getByRole("alert").textContent.includes("Could not save workspace"));
+    assert.equal(screen.queryByRole("button", { name: "Edit project" }), null);
+    assert.equal(screen.getByLabelText("Project name").value, "Unsaved project");
+  } finally { window.Storage.prototype.setItem = original; }
+});
+
+test("activity UI uses authoritative results, hides arguments and keeps unreported cost unknown", async () => {
+  const { ActivityPanel } = await import("../components/chat/activity-panel.tsx");
+  seed({ language: "so" }); fakeFetch();
+  render(app(h(ActivityPanel, { messages: [{ id: "msg", role: "assistant", parts: [
+    { type: "dynamic-tool", toolName: "bash", toolCallId: "call", state: "output-denied", input: { token: "DO-NOT-SHOW" }, approval: { id: "approval", approved: false } },
+  ] }], events: [{ type: "step.completed", data: { turnId: "t", stepIndex: 0, usage: { inputTokens: 5, outputTokens: 2 } } }] })));
+  await userEvent.setup().click(await screen.findByText("Ficillada iyo isticmaalka · 1"));
+  assert.ok(screen.getByText("La diiday")); assert.ok(screen.getByText("Lama soo sheegin"));
+  assert.ok(!document.body.textContent.includes("DO-NOT-SHOW"));
+});
+
+test("document imports create inert text attachments without sending, exports are explicit binary downloads", async () => {
+  const { DocumentExportButtons, DocumentImportButton } = await import("../components/chat/documents.tsx");
+  const { usePromptInputAttachments } = await import("../components/ai-elements/prompt-input.tsx");
+  let attachments;
+  function Reader() { attachments = usePromptInputAttachments(); return h(DocumentImportButton); }
+  seed(); const calls = [];
+  fakeFetch((path, options) => {
+    if (path === "/api/documents/read") { calls.push(path); return Response.json({ text: "Extracted <script>not executed</script>", truncated: true }); }
+    if (path === "/api/documents/export") { calls.push(path); return new Response("%PDF-1.7\nfixture", { headers: { "content-type": "application/pdf" } }); }
+  });
+  const originalCreate = URL.createObjectURL, originalRevoke = URL.revokeObjectURL, originalClick = window.HTMLAnchorElement.prototype.click;
+  let savedFilename; URL.createObjectURL = () => "blob:document"; URL.revokeObjectURL = () => {};
+  window.HTMLAnchorElement.prototype.click = function () { savedFilename = this.download; };
+  try {
+    render(app(h(TooltipProvider, null, h(PromptInputProvider, null, h(Reader), h(DocumentExportButtons, { filename: "report.md", content: "Report" })))));
+    assert.equal(calls.length, 0);
+    const input = screen.getByLabelText("Read PDF or DOCX", { selector: "input" });
+    fireEvent.change(input, { target: { files: [new File(["%PDF-fixture"], "study.pdf", { type: "application/pdf" })] } });
+    await waitFor(() => assert.equal(attachments.files.length, 1));
+    assert.match(attachments.files[0].filename, /study.pdf.extracted.txt/);
+    assert.ok(screen.getByText("Only part of this document was extracted."));
+    assert.equal(document.querySelector("script"), null);
+    await userEvent.setup().click(screen.getByRole("button", { name: "PDF", exact: true }));
+    assert.equal(savedFilename, "report.pdf");
+    assert.deepEqual(calls, ["/api/documents/read", "/api/documents/export"]);
+    await new Promise((resolve) => window.setTimeout(resolve, 1050));
+  } finally { URL.createObjectURL = originalCreate; URL.revokeObjectURL = originalRevoke; window.HTMLAnchorElement.prototype.click = originalClick; }
+});
+
+test("actual chat submits only selected memory/project context, enforces the wire limit setting and sends extracted documents as text", async () => {
+  const { registerHooks } = await import("node:module");
+  const hook = registerHooks({ resolve(specifier, context, nextResolve) {
+    if (specifier === "eve/react") return { url: "data:text/javascript,export function useEveAgent(options) { globalThis.__chatOptions = options; return globalThis.__chatMock; }", shortCircuit: true };
+    return nextResolve(specifier, context);
+  } });
+  const { AgentChat } = await import("../components/chat/agent-chat.tsx");
+  const { useWorkspace } = await import("../components/settings/workspace-store.tsx");
+  const { emptyWorkspace, workspaceStorageKey } = await import("../lib/workspace.ts");
+  seed({ chatProofs: { "owned-chat": "test-proof" } });
+  const wkey = workspaceStorageKey("vercel", userId);
+  window.localStorage.setItem(wkey, JSON.stringify({ ...emptyWorkspace(), memoryEnabled: true, maxSteps: 2, projects: [
+    { id: "school", name: "School", instructions: "Use primary sources", chatIds: ["owned-chat"] },
+    { id: "other", name: "Other", instructions: "Do not send other project", chatIds: [] },
+  ], notes: [
+    { id: "global", text: "Selected memory", enabled: true, projectId: null },
+    { id: "other-note", text: "Unrelated memory", enabled: true, projectId: "other" },
+  ] }));
+  const blobs = new Map();
+  const originalCreate = URL.createObjectURL, originalRevoke = URL.revokeObjectURL;
+  URL.createObjectURL = (blob) => { const url = `blob:test-chat-${blobs.size}`; blobs.set(url, blob); return url; };
+  URL.revokeObjectURL = () => {};
+  fakeFetch((path) => path.startsWith("blob:") ? { blob: async () => blobs.get(path) } : path === "/api/documents/read" ? Response.json({ text: "Actual extracted document body", truncated: false }) : undefined);
+  const sends = [];
+  globalThis.__chatMock = { status: "ready", events: [], data: { messages: [], inputs: {} }, send: async (message, options) => { sends.push({ message, options }); }, respond: async () => {}, cancel: async () => {} };
+  let store;
+  function Probe() { store = useWorkspace(); return null; }
+  try {
+    render(app(h(TooltipProvider, null, h(Probe), h(AgentChat, { account: { id: userId, kind: "vercel", name: "Test", email: "test@example.test" }, sessionId: "owned-chat" }))));
+    const user = userEvent.setup();
+    await waitFor(() => assert.equal(screen.getByPlaceholderText("Ask Tflash anything…").disabled, false));
+    await user.type(screen.getByPlaceholderText("Ask Tflash anything…"), "Read this document");
+    fireEvent.change(screen.getByLabelText("Read PDF or DOCX", { selector: "input" }), { target: { files: [new File(["%PDF-fixture"], "study.pdf", { type: "application/pdf" })] } });
+    await screen.findByText("study.pdf.extracted.txt");
+    fireEvent.submit(screen.getByPlaceholderText("Ask Tflash anything…").closest("form"));
+    await waitFor(() => assert.equal(sends.length, 1));
+    assert.ok(sends[0].options.clientContext.includes("Use primary sources"));
+    assert.ok(sends[0].options.clientContext.includes("Selected memory"));
+    assert.ok(!sends[0].options.clientContext.includes("Unrelated memory"));
+    assert.equal(globalThis.__chatOptions.headers()["x-tflash-max-steps"], "2");
+    assert.equal(globalThis.__chatOptions.headers()["x-tflash-owner-proof"], "test-proof");
+    assert.ok(sends[0].message.some((part) => part.type === "text" && part.text.includes("Actual extracted document body")));
+    assert.ok(sends[0].message.every((part) => part.type === "text"));
+    await React.act(async () => { store.change((w) => ({ ...w, memoryEnabled: false })); });
+    await user.type(screen.getByPlaceholderText("Ask Tflash anything…"), "Next question");
+    fireEvent.submit(screen.getByPlaceholderText("Ask Tflash anything…").closest("form"));
+    await waitFor(() => assert.equal(sends.length, 2));
+    assert.ok(!sends[1].options.clientContext.includes("Selected memory"));
+    assert.ok(sends[1].options.clientContext.includes("Use primary sources"));
+  } finally { hook.deregister(); URL.createObjectURL = originalCreate; URL.revokeObjectURL = originalRevoke; }
+});
+
+test("workspace edits merge the latest tab data, refuse corrupt overwrites and allow explicit clear recovery", async () => {
+  const { WorkspacePanel } = await import("../components/settings/workspace-panel.tsx");
+  const { emptyWorkspace, workspaceStorageKey } = await import("../lib/workspace.ts");
+  seed(); fakeFetch(); render(app(h(WorkspacePanel))); const user = userEvent.setup();
+  await screen.findByRole("button", { name: "New project" });
+  const key = workspaceStorageKey("vercel", userId);
+  window.localStorage.setItem(key, JSON.stringify({ ...emptyWorkspace(), projects: [{ id: "other-tab", name: "Other tab project", instructions: "", chatIds: [] }] }));
+  await user.click(screen.getByRole("checkbox", { name: "Use saved notes in future messages" }));
+  assert.ok(screen.getByText("Other tab project"));
+  assert.equal(JSON.parse(window.localStorage.getItem(key)).memoryEnabled, true);
+  window.localStorage.setItem(key, "corrupt data");
+  await user.click(screen.getByRole("checkbox", { name: "Use saved notes in future messages" }));
+  assert.ok(screen.getByRole("alert").textContent.includes("Could not save workspace"));
+  assert.equal(window.localStorage.getItem(key), "corrupt data");
+  await user.click(screen.getByRole("button", { name: "Clear projects and notes" }));
+  await user.click(within(screen.getByRole("alertdialog", { name: "Remove" })).getByRole("button", { name: "Remove", exact: true }));
+  assert.equal(window.localStorage.getItem(key), null);
+  assert.equal(screen.queryByText("Other tab project"), null);
+});

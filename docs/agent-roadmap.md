@@ -28,11 +28,37 @@ Implemented locally; no production deployment or live provider search is implied
 
 Local tests execute the real wrapper and report tools with mocked HTTP responses, exercising literal/redirect SSRF rejection, errors, cancellation, oversized/truncated content, receipt ownership/expiry/tampering, citations, bilingual rendering and exact report downloads. They do not establish live DNS rebinding behavior, provider-native search availability, live model tool choice, or production connectivity. DNS protections are inherited from the pinned framework fetcher, not reimplemented.
 
-## Phase 3 — projects and user-controlled memory (not implemented)
+## Phase 3 — projects and user-controlled memory
 
-- Define account ownership for both login systems before choosing storage.
-- Let users review, edit, delete and opt out of saved project instructions/notes.
-- Keep retrieved notes explicitly separate from system instructions and credentials.
-- Add access-control, deletion, retention and account-isolation tests before deployment.
+Implemented locally with an intentionally browser-local first release for **both** Supabase and Vercel accounts. No new database tables, service-role key or cloud storage permissions are required.
 
-No scheduling, unattended background execution, automatic spending, or approval bypass is enabled by this work. Later phases need their own implementation and tests; they are not capabilities the assistant should claim today.
+- Strict, versioned workspace schema; per-login-kind/account storage keys; 20 projects, 30 notes, unique ids and single-project chat membership. An account switch renders an empty workspace until that account is loaded, never the preceding account's context. Changes persist before showing success; storage errors are visible. Cross-tab storage events refresh the workspace.
+- Create/edit/delete projects and instructions. A selector above the composer assigns the current chat; project cards link to their conversations, whose transcript holds their files/reports. There is no separate file bucket or cross-project file search.
+- Memory is manually curated and **off by default**. Review/edit/delete notes, global/project scope, per-note inclusion and global opt-out. Project deletion removes its scoped notes, not conversations. Export JSON backups or clear all with confirmation. There is no automatic model-side capture/write tool or backup import.
+- Selected project instructions (up to 4,000 characters) and enabled applicable notes (up to 6,000 characters; excess notes are omitted with a count in model context) join each send/approval response as bounded untrusted user data, never tool approval or system authority. No unrelated project's notes are supplied. Notes are sent to the selected model when the user submits.
+- Storage is local, not encrypted or cross-device synced. Browser storage is not a security boundary against someone with access to the browser profile. Do not store credentials. Deletion stops **new injection**, not erasure of historical prompts/provider copies or forensic erasure of browser storage. Existing conversations may still contain/use earlier information; start a new chat for clean context.
+
+## Activity and usage limits
+
+- Collapsible current-chat activity projection from real tool parts and durable task events: partial snapshots/task receipts are not successful completion. Approval decisions/outcomes and available event times are shown, without arguments, results or credential fields. A JSON summary is downloadable. It is not a full audit ledger; visible rows are bounded to the latest 200 (export includes the projected calls). Old events can lack timestamps.
+- Usage prefers Eve's cumulative checkpoints (including delegated spend), adding newer own-session steps. Stream ids deduplicate overlapping replay; step coordinates avoid counting the same visible retry twice. Historical retry billing cannot be reconstructed from an ambiguous stream. Costs are sums of reported costs, potentially partial; absent cost stays unknown. No price lookup or fabricated estimate, no tool/infra/compaction invoice coverage.
+- A durable hook counts unique step indexes per turn and calls Eve's `ctx.cancel()` **before** an excess model call. Browser setting: 1–30, default 12; the authenticated channel validates it on every request. New turns reset the allowance; retries of the same step do not increment it. Copies/delegated sessions have separate counters, not an account-wide aggregate. This is a model-call limit, not a tool-call/spend guarantee.
+- Eve runtime usage windows pause for explicit continuation after 250,000 uncached input tokens, 30,000 output tokens or USD 2 of reported cost. The crossing call finishes; costs may be missing. It is not a hard dollar cap. Existing shell/MCP approvals remain fresh per call. No automatic approval, spending, scheduling or background resume.
+
+## PDF / DOCX
+
+- Authenticated same-origin POST routes read bounded uploads and generate genuine binary downloads, both `no-store`; nothing is uploaded to an external conversion service or persisted by these routes. Files sent with a chat remain subject to that transcript/provider's retention.
+- Reads: 2 MiB upload, up to 50 PDF pages / 100,000 text characters. No OCR/encrypted PDF support. DOCX reads only `word/document.xml`, not headers/footers, tracked layout or images; ignores external relationships/macros. ZIP entry count 256, declared total expansion 20 MiB, main XML 1 MiB with streamed byte enforcement; rejects encrypted/duplicate parts and DOCTYPE. No XML external entity resolver.
+- Parsing is isolated in a Node worker, terminated after 12 seconds, with V8 heap/stack limits and at most two active readers per process. These are not OS-wide memory/rate quotas; deployment limits still apply. Extraction inserts a plain-text attachment for review, never sends automatically. The composer sends such text as text content, supporting providers that cannot read arbitrary file MIME types.
+- Markdown/plain-text artifact cards offer PDF/DOCX conversion only on user clicks. Up to 50,000 characters / 2,000 lines; PDF maximum 100 pages. PDF embeds bundled Noto Sans with its OFL license from `notofonts/noto-fonts` (`hinted/ttf/NotoSans/NotoSans-Regular.ttf`). Unsupported glyphs fail with DOCX/original-text fallback; plain text is not a rich Markdown renderer. Exported formats do not preserve source layout.
+- Next file tracing explicitly includes the parser, PDF.js worker/font/CMap resources and bundled export font. A local standalone-copy smoke exercised only the files in the production route trace: PDF/DOCX extraction passed without development modules. PDF.js can warn about absent optional native canvas rendering; rendering is not used or supported here. Production worker/runtime deployment remains unverified.
+
+## Validation and rollout
+
+Local tests cover strict schemas, project membership/deletion, opt-in scoped/bounded context, account/login-kind isolation in the real provider/UI, storage failures, edit/delete confirmations, actual server hook cancellation with a mocked durable slot, usage/approval/task projections, real PDF/DOCX round trips, malformed/unsafe archives, scanned/oversize PDFs, route login/origin checks for both principal kinds, and user-initiated UI import/export. Provider transports/authentication are mocked; no live model selection/tool use or production connectivity is established. Production deployment is a separate explicit step.
+
+### Dependency audit / release blocker
+
+The 2026-10-29 dependency update reduced the registry audit from **56 advisories (7 critical, 20 high, 18 moderate, 11 low) to 0**, including development dependencies and without advisory suppressions. Auth/provider, sanitizer, math and real Undici DNS-dispatch regressions accompany the update.
+
+**Separate release blocker:** Eve 0.83.2 still embeds Zod 4.5.4, affected by GHSA-mrhx-c7xc-m3w5. Package overrides cannot repair compiled code. CI intentionally fails its bundled-Zod gate until a patched framework runtime or a reviewed mitigation is validated. See [dependency security](dependency-security.md). Local tests/builds and registry-audit success do not clear this finding, establish live service connectivity or authorize production rollout.
