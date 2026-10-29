@@ -1,5 +1,20 @@
 # Agent capabilities: phased delivery
 
+## Three explicit operating modes
+
+The workspace exposes **Chat**, **Coder**, and **Research** as per-conversation modes. Selection is scoped to the signed-in account and chat in browser storage and is included as bounded client context on normal turns and approval responses. It is a preference, not a permission grant: existing shell/MCP approvals and higher-priority safety rules remain authoritative.
+
+- **Chat**: general assistance, writing, explanation and file-based help; use tools when they materially improve the answer.
+- **Coder**: inspect the actual connected repository before editing; make minimal coherent changes, add regression tests, run available checks, and report exact evidence. The temporary shell sandbox is not the user's repository unless the connection explicitly proves it.
+- **Research**: search, read public sources through the approved fetch tool, cite fetched evidence, separate source facts from synthesis, and create reports only from real receipts. Search/fetch availability remains provider-dependent.
+
+The selector does not provision a persistent code VM or grant GitHub access by itself. Coder capability depends on the connected GitHub integration and the approvals available in the deployment. Research depends on the selected provider's search support and public-source access.
+
+## Account workspace sync
+
+For Supabase-authenticated accounts, project instructions, manually managed memory notes, memory opt-in, and model-call limits can sync to a per-user `tflash_workspaces` row protected by RLS. Browser storage remains a recovery copy and the Settings panel surfaces sync status. A cloud error must not silently overwrite the local copy. Vercel-only accounts remain browser-local because they do not have a Supabase user JWT. The migration is part of the PR and must be reviewed/applied separately; this change does not mutate production. This PR aligns the chat migration filename with the linked Supabase project's applied version (`20261028075927`) after checking the live table's columns, index, and RLS policies against the migration. Verify `supabase migration list` and review the diff before any migration push; the new workspace migration remains unapplied.
+
+
 ## Phase 1 — task execution visibility and text deliverables
 
 Implemented in this branch:
@@ -30,7 +45,7 @@ Local tests execute the real wrapper and report tools with mocked HTTP responses
 
 ## Phase 3 — projects and user-controlled memory
 
-Implemented locally with an intentionally browser-local first release for **both** Supabase and Vercel accounts. No new database tables, service-role key or cloud storage permissions are required.
+The first release was browser-local. This PR adds account-scoped cloud sync for Supabase-authenticated users while keeping Vercel-only accounts browser-local. It adds a `tflash_workspaces` table with per-user RLS and a validated, size-bounded same-origin API. The migration is committed but is not applied to production by this PR. No service-role key is used.
 
 - Strict, versioned workspace schema; per-login-kind/account storage keys; 20 projects, 30 notes, unique ids and single-project chat membership. An account switch renders an empty workspace until that account is loaded, never the preceding account's context. Changes persist before showing success; storage errors are visible. Cross-tab storage events refresh the workspace.
 - Create/edit/delete projects and instructions. A selector above the composer assigns the current chat; project cards link to their conversations, whose transcript holds their files/reports. There is no separate file bucket or cross-project file search.

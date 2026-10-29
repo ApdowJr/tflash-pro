@@ -36,6 +36,9 @@ const { INTEGRATIONS } = await import("../lib/integrations/catalog.ts");
 const { ModelBrowser } = await import("../components/settings/model-browser.tsx");
 const { ModelPicker } = await import("../components/settings/model-picker.tsx");
 const { ChatComposer } = await import("../components/chat/chat-composer.tsx");
+const { AgentModePicker } = await import("../components/chat/chat-composer.tsx");
+const { WorkspaceProvider, useWorkspace } = await import("../components/settings/workspace-store.tsx");
+const { workspaceStorageKey, emptyWorkspace } = await import("../lib/workspace.ts");
 const { AuthScreen } = await import("../components/app/auth-screen.tsx");
 const { browserSupabase } = await import("../lib/supabase/browser.ts");
 const { PromptInputProvider } = await import("../components/ai-elements/prompt-input.tsx");
@@ -974,4 +977,42 @@ test("top bar controls expose mobile-sized touch targets and visible keyboard fo
     assert.ok(button.className.includes("min-h-11"), "control should be at least 44px tall");
     assert.ok(button.className.includes("focus-visible:ring-2"), "control should show keyboard focus");
   }
+});
+
+
+test("agent mode selector exposes three accessible choices and changes the selected mode", async () => {
+  const selected = [];
+  render(h(AgentModePicker, { mode: "chat", onChange: (mode) => selected.push(mode), language: "so", disabled: false }));
+  const group = screen.getByRole("group", { name: "Habka agent-ka" });
+  assert.equal(within(group).getAllByRole("button").length, 3);
+  assert.equal(screen.getByRole("button", { name: "Sheeko" }).getAttribute("aria-pressed"), "true");
+  await userEvent.click(screen.getByRole("button", { name: "Cilmi-baaris" }));
+  assert.deepEqual(selected, ["research"]);
+});
+
+
+test("workspace cross-tab updates are preserved and queued to cloud instead of being overwritten by stale reads", async () => {
+  const writes = [];
+  globalThis.fetch = async (_url, options = {}) => {
+    if (options.method === "PUT") {
+      writes.push(JSON.parse(options.body));
+      return Response.json({ ok: true, storage: "cloud" });
+    }
+    return Response.json({ storage: "cloud", workspace: null });
+  };
+  function Probe() {
+    const { workspace, syncStatus } = useWorkspace();
+    return h("div", {}, ...workspace.projects.map((project) => h("span", { key: project.id }, project.name)), h("p", { role: "status" }, syncStatus));
+  }
+  render(h(WorkspaceProvider, { kind: "supabase", userId: "cross-tab-test", children: h(Probe) }));
+  await waitFor(() => assert.equal(screen.getByRole("status").textContent, "synced"));
+  const updated = { ...emptyWorkspace(), projects: [{ id: "cross-tab-project", name: "Cross-tab edit", instructions: "", chatIds: [] }] };
+  window.dispatchEvent(new dom.window.StorageEvent("storage", {
+    key: workspaceStorageKey("supabase", "cross-tab-test"),
+    oldValue: null,
+    newValue: JSON.stringify(updated),
+  }));
+  await waitFor(() => assert.ok(screen.getByText("Cross-tab edit")));
+  await waitFor(() => assert.equal(screen.getByRole("status").textContent, "synced"));
+  assert.deepEqual(writes.at(-1), updated);
 });
