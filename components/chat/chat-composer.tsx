@@ -121,7 +121,7 @@ function ComposerAttachButton() {
   return (
     <PromptInputButton
       aria-label={t("attach")}
-      className="size-8 rounded-full text-muted-foreground hover:text-foreground sm:size-7"
+      className="tf-touch-target size-8 rounded-full text-muted-foreground hover:text-foreground sm:size-7"
       onClick={() => attachments.openFileDialog()}
       size="icon-sm"
       tooltip={t("attach")}
@@ -150,7 +150,7 @@ function ComposerAction({
   if (!isBusy || canSubmit) {
     return (
       <PromptInputSubmit
-        className="right-2 bottom-2 size-9 bg-foreground text-background transition-opacity hover:opacity-90 disabled:opacity-40 sm:right-2.5 sm:bottom-2.5 sm:size-8"
+        className="tf-touch-target right-2 bottom-2 size-9 bg-foreground text-background transition-opacity hover:opacity-90 disabled:opacity-40 sm:right-2.5 sm:bottom-2.5 sm:size-8"
         disabled={isResuming || (!canSubmit && !isBusy)}
       />
     );
@@ -159,7 +159,7 @@ function ComposerAction({
   return (
     <PromptInputButton
       aria-label={t("stop")}
-      className="absolute right-2 bottom-2 size-9 rounded-full border-border bg-card sm:right-2.5 sm:bottom-2.5 sm:size-8"
+      className="tf-touch-target absolute right-2 bottom-2 size-9 rounded-full border-border bg-card sm:right-2.5 sm:bottom-2.5 sm:size-8"
       onClick={onCancel}
       variant="outline"
     >

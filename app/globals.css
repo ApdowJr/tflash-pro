@@ -391,3 +391,81 @@ body {
 .auth-social > div::before,.auth-social > div::after { content:""; flex:1; height:1px; background:#e6e0d8; }
 
 .auth-social-unavailable { margin:7px 0 0; color:#827b70; font-size:11px; line-height:1.4; }
+
+/* Accessibility quality pass: visible focus, skip navigation, and motion safety. */
+.tf-skip-link {
+  position: fixed;
+  z-index: 100;
+  top: max(0.75rem, env(safe-area-inset-top));
+  left: max(0.75rem, env(safe-area-inset-left));
+  transform: translateY(calc(-100% - 1rem));
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+  background: var(--card);
+  color: var(--foreground);
+  padding: 0.75rem 1rem;
+  box-shadow: var(--shell-shadow);
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: transform 160ms ease-out;
+}
+
+.tf-skip-link:focus,
+.tf-skip-link:focus-visible {
+  transform: translateY(0);
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+
+:where(a, button, input, textarea, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+
+#main-content:focus {
+  outline: none;
+}
+
+#main-content :where(h1, h2, h3)[tabindex="-1"]:focus {
+  outline: none;
+}
+
+html {
+  scroll-padding-block: 1rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .tf-skip-link {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  :where(a, button, input, textarea, select, [tabindex]):focus-visible {
+    outline: 2px solid Highlight;
+  }
+}
+
+/* Touch ergonomics: keep the most-used controls comfortably tappable. */
+@media (max-width: 40rem) and (pointer: coarse) {
+  .tf-topbar > button,
+  .tf-topbar > [data-slot="dropdown-menu-trigger"] {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .tf-touch-target {
+    min-width: 44px !important;
+    min-height: 44px !important;
+  }
+}

@@ -407,6 +407,7 @@ test("OAuth return marks only the approved connection as connected and supports 
   assert.equal(within(linearRow).queryByRole("link", { name: "Ku xir Linear" }), null);
   assert.equal(window.location.pathname, "/s/current-chat");
   assert.equal(window.location.search, "");
+  await waitFor(() => assert.equal(JSON.parse(window.localStorage.getItem(storageKey)).integrationTokens.linear?.source, "oauth"));
   const record = JSON.parse(window.localStorage.getItem(storageKey)).integrationTokens.linear;
   assert.equal(record.source, "oauth");
   assert.equal(record.token, "v1.sealed-grant");
