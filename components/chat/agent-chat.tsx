@@ -297,7 +297,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
         open={sidebarOpen}
       />
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <main id="main-content" tabIndex={-1} className="flex min-w-0 flex-1 flex-col">
         <TopBar
           canExport={!isEmpty}
           onExportChat={exportChat}
@@ -377,7 +377,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
             </p>
           </div>
         </div>
-      </div>
+      </main>
 
       <ModelPicker
         onOpenChange={setModelsOpen}
