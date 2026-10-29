@@ -51,7 +51,7 @@ export function ActivityPanel({
     ).size > workspace.maxSteps;
   return (
     <details className="mx-auto w-full max-w-2xl rounded-lg border bg-card text-xs">
-      <summary className="cursor-pointer px-3 py-2">
+      <summary className="tf-touch-target min-h-11 cursor-pointer rounded-lg px-3 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
         {t("activityUsage")} · {rows.length}
       </summary>
       <div className="max-h-[40dvh] space-y-3 overflow-auto p-3 pt-0">
@@ -121,6 +121,7 @@ function ActivityDownload({ data }: { data: unknown }) {
   return (
     <>
       <Button
+        className="tf-touch-target min-h-11"
         variant="outline"
         size="sm"
         onClick={() => {
