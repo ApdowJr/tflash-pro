@@ -36,6 +36,7 @@ const { INTEGRATIONS } = await import("../lib/integrations/catalog.ts");
 const { ModelBrowser } = await import("../components/settings/model-browser.tsx");
 const { ModelPicker } = await import("../components/settings/model-picker.tsx");
 const { ChatComposer } = await import("../components/chat/chat-composer.tsx");
+const { AgentModePicker } = await import("../components/chat/chat-composer.tsx");
 const { AuthScreen } = await import("../components/app/auth-screen.tsx");
 const { browserSupabase } = await import("../lib/supabase/browser.ts");
 const { PromptInputProvider } = await import("../components/ai-elements/prompt-input.tsx");
@@ -974,4 +975,15 @@ test("top bar controls expose mobile-sized touch targets and visible keyboard fo
     assert.ok(button.className.includes("min-h-11"), "control should be at least 44px tall");
     assert.ok(button.className.includes("focus-visible:ring-2"), "control should show keyboard focus");
   }
+});
+
+
+test("agent mode selector exposes three accessible choices and changes the selected mode", async () => {
+  const selected = [];
+  render(h(AgentModePicker, { mode: "chat", onChange: (mode) => selected.push(mode), language: "so", disabled: false }));
+  const group = screen.getByRole("group", { name: "Habka agent-ka" });
+  assert.equal(within(group).getAllByRole("button").length, 3);
+  assert.equal(screen.getByRole("button", { name: "Sheeko" }).getAttribute("aria-pressed"), "true");
+  await userEvent.click(screen.getByRole("button", { name: "Cilmi-baaris" }));
+  assert.deepEqual(selected, ["research"]);
 });
