@@ -133,7 +133,7 @@ function AuthLayout({ children, language, onLanguageChange }: {
 }) {
   const text = words[language];
   return (
-    <main className="auth-shell">
+    <main id="main-content" tabIndex={-1} className="auth-shell">
       <section className="auth-story" aria-label={text.about}>
         <div className="auth-story-top"><Brand inverted /></div>
         <div aria-hidden="true" className="auth-art">
