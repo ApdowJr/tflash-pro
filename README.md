@@ -81,6 +81,14 @@ Browser-supplied keys are encrypted server-side with AES-GCM. The browser keeps 
 
 Custom, Ollama, and LM Studio endpoints are reached **from the server**, not the user's laptop. In production each custom `host[:port]` must be explicitly listed in `CUSTOM_PROVIDER_ALLOWED_HOSTS`; an empty list denies custom endpoints. HTTPS is required except for an explicitly allowed loopback HTTP endpoint. Credential-bearing URLs, internal/metadata hostnames, and redirects are rejected. Only allow hosts and DNS you control.
 
+## Voice input and read aloud
+
+The microphone in the composer opens **Voice input**. Choose Somali or English and press **Start listening**; the browser may ask for microphone permission. Final recognized words are appended to the current draft, which you can edit before pressing Send. **Stop listening** requests the last words; closing the dialog or leaving/hiding the page aborts unfinished speech. No audio is recorded or uploaded by Tflash itself. Your browser or operating system may send audio to its own speech-recognition service, and that service's privacy terms apply.
+
+Use **Listen** below a completed assistant response to choose a language and an available device/browser voice, then press **Play**. Playback contains only the assistant's text, not reasoning, attachments or tool data, and stops when the dialog closes or the conversation unmounts. Long responses are read in chunks; Markdown and code may be spoken literally. The browser or selected voice service may process that response text.
+
+Both controls require compatible browser speech APIs; input also requires HTTPS and microphone access. Somali recognition and installed Somali voices are **not guaranteed**: language support, accuracy, internet needs and voice availability depend on the browser, device and speech service. Tflash requests the chosen recognition language but cannot verify that an engine honored it, so review the draft. If no matching voice is available, install one supported by your device or explicitly choose another language; the app does not silently substitute an English voice for Somali. Embedded previews may block microphone permission; open the app directly if needed. These controls use no Tflash speech-provider credentials. Automated tests mock browser APIs; no live Somali recognition or speech voice has been verified.
+
 ## Task plans and downloadable results
 
 For substantial multi-step work, Tflash can publish a task checklist and update it as work progresses. The latest plan appears above the conversation; actual run status is separate from the agent's reported step status. Plans do not execute tasks or certify success.

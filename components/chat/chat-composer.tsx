@@ -1,6 +1,7 @@
 "use client";
 
 import { DocumentImportButton } from "./documents";
+import { VoiceInputButton } from "./voice-input";
 import { FileIcon, PaperclipIcon, SquareIcon, XIcon } from "lucide-react";
 import {
   PromptInput,
@@ -77,6 +78,7 @@ export function ChatComposer({
           <PromptInputTools className="gap-1">
             <ComposerAttachButton />
             <DocumentImportButton disabled={isResuming} />
+            <VoiceInputButton disabled={isResuming} />
           </PromptInputTools>
           <span className="hidden pr-1 text-[11px] text-muted-foreground/60 md:inline">
             {t("enterToSend")}
@@ -176,6 +178,7 @@ function ComposerAction({
   if (!isBusy || canSubmit) {
     return (
       <PromptInputSubmit
+        aria-label={t("send")}
         className="tf-touch-target right-2 bottom-2 size-9 bg-foreground text-background transition-opacity hover:opacity-90 disabled:opacity-40 sm:right-2.5 sm:bottom-2.5 sm:size-8"
         disabled={isResuming || (!canSubmit && !isBusy)}
       />

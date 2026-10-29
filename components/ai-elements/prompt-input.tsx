@@ -172,6 +172,8 @@ export interface AttachmentsContext {
 export interface TextInputContext {
   value: string;
   setInput: (v: string) => void;
+  /** Append to the latest draft without overwriting edits made since a render. */
+  append: (v: string) => void;
   clear: () => void;
   /** Clear only when the current text still matches the submitted draft. */
   clearIfUnchanged: (submitted: string) => void;
@@ -236,6 +238,12 @@ export const PromptInputProvider = ({
     textInputRef.current = value;
     setTextInput(value);
   }, []);
+  const appendInput = useCallback((value: string) => {
+    const text = value.trim();
+    if (!text) return;
+    const current = textInputRef.current;
+    setInput(`${current}${current && !/\s$/u.test(current) ? " " : ""}${text}`);
+  }, [setInput]);
   const clearInput = useCallback(() => setInput(""), [setInput]);
   const clearInputIfUnchanged = useCallback((submitted: string) => {
     if (textInputRef.current === submitted) setInput("");
@@ -348,10 +356,11 @@ export const PromptInputProvider = ({
         failedDrafts,
         discardFailed,
         setInput,
+        append: appendInput,
         value: textInput,
       },
     }),
-    [textInput, setInput, clearInput, clearInputIfUnchanged, recoverFailed, failedDrafts, discardFailed, attachments, __registerFileInput],
+    [textInput, setInput, appendInput, clearInput, clearInputIfUnchanged, recoverFailed, failedDrafts, discardFailed, attachments, __registerFileInput],
   );
 
   return (
