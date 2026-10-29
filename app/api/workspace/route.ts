@@ -5,7 +5,7 @@ import { workspaceSchema } from "@/lib/workspace";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const noStore = { "cache-control": "no-store" };
-const MAX_BODY_CHARS = 200_000;
+const MAX_BODY_BYTES = 200_000;
 const EXPECTED_USER_HEADER = "x-tflash-expected-user-id";
 const CONFLICT_MESSAGE = "Workspace changed elsewhere. Choose which copy to keep before syncing.";
 
@@ -47,7 +47,7 @@ export async function PUT(request: Request): Promise<Response> {
   let raw: string;
   try {
     raw = await request.text();
-    if (raw.length > MAX_BODY_CHARS) return Response.json({ error: "Workspace is too large." }, { status: 413, headers: noStore });
+    if (new TextEncoder().encode(raw).byteLength > MAX_BODY_BYTES) return Response.json({ error: "Workspace is too large." }, { status: 413, headers: noStore });
   } catch {
     return Response.json({ error: "Invalid request." }, { status: 400, headers: noStore });
   }

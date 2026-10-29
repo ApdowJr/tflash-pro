@@ -1035,6 +1035,41 @@ test("workspace cross-tab updates use the latest cloud revision", async () => {
   assert.equal(writes.at(-1).body.expectedUpdatedAt, revisions[0]);
 });
 
+test("a stale write 409 preserves the browser draft and newer cloud copy until resolution", async () => {
+  const initial = emptyWorkspace();
+  const newerCloud = { ...emptyWorkspace(), maxSteps: 17 };
+  const initialRevision = "2026-10-29T12:00:00.000Z";
+  let cloudWorkspace = initial;
+  let revision = initialRevision;
+  let injectedConcurrentWrite = false;
+  const calls = fakeFetch((path, options = {}) => {
+    if (path !== "/api/workspace") return undefined;
+    if (options.method === "PUT") {
+      const body = JSON.parse(options.body);
+      if (!injectedConcurrentWrite) {
+        injectedConcurrentWrite = true;
+        cloudWorkspace = newerCloud;
+        revision = "2026-10-29T12:00:00.001Z";
+        assert.equal(body.expectedUpdatedAt, initialRevision);
+        return Response.json({ error: "Workspace changed elsewhere." }, { status: 409 });
+      }
+      return Response.json({ ok: true, storage: "cloud", updatedAt: "2026-10-29T12:00:00.002Z" });
+    }
+    return Response.json({ storage: "cloud", workspace: cloudWorkspace, updatedAt: revision });
+  });
+  render(app(h(WorkspacePanel), "supabase"));
+  const memoryToggle = await screen.findByRole("checkbox", { name: "Use saved notes in future messages" });
+  await waitFor(() => assert.equal(screen.getByRole("status").textContent, "Workspace synced to your signed-in account. Memory remains opt-in; avoid storing secrets."));
+
+  await userEvent.click(memoryToggle);
+
+  await screen.findByText("This device's copy is preserved. Keeping it replaces the cloud copy; using cloud replaces this device's copy.");
+  const localWorkspace = JSON.parse(window.localStorage.getItem(workspaceStorageKey("supabase", userId)));
+  assert.equal(localWorkspace.memoryEnabled, true);
+  assert.deepEqual(cloudWorkspace, newerCloud);
+  assert.equal(calls.filter((call) => call.path === "/api/workspace" && call.options.method === "PUT").length, 1);
+});
+
 test("workspace conflicts preserve both copies until the user chooses the cloud copy", async () => {
   const local = { ...emptyWorkspace(), projects: [{ id: "local-project", name: "Local draft", instructions: "", chatIds: [] }] };
   const cloud = { ...emptyWorkspace(), projects: [{ id: "cloud-project", name: "Cloud saved", instructions: "", chatIds: [] }] };
