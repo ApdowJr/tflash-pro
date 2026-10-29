@@ -53,7 +53,7 @@ Deleting a chat removes the Supabase index entry or the local Vercel index and a
 
 ### Supabase email/password
 
-1. Apply `supabase/migrations/20261028000000_create_tflash_chats.sql` to your Supabase project if it has not already been applied. It creates the index and user-specific RLS policies; it does not store transcripts.
+1. Before applying schema changes, verify the target project's recorded migration history and current tables/policies; do not infer that a migration was applied from a committed filename. On a new project, apply these files in version order using the approved Supabase migration workflow: `supabase/migrations/20261028075927_create_tflash_chats.sql` creates the per-user chat index and RLS policies (not transcripts), and `supabase/migrations/20261029120000_create_tflash_workspace_sync.sql` creates per-user workspace sync with RLS. Existing projects require schema/history reconciliation before any apply or repair.
 2. Enable Email authentication and **Confirm email**. Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` before building.
 3. Use the default **Confirm signup** email template, or another template containing `{{ .ConfirmationURL }}`. No numeric-code template is needed.
 4. Under **Auth → URL Configuration**, set the production Site URL and allow each exact callback, including query strings, for example `http://localhost:3000/auth/callback**` and `https://your-domain.example/auth/callback**`. Add the exact preview host separately. Open confirmation/recovery links in the browser that started the flow so its PKCE verifier is available.

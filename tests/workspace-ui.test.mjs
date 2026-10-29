@@ -38,6 +38,7 @@ const { ModelPicker } = await import("../components/settings/model-picker.tsx");
 const { ChatComposer } = await import("../components/chat/chat-composer.tsx");
 const { AgentModePicker } = await import("../components/chat/chat-composer.tsx");
 const { WorkspaceProvider, useWorkspace } = await import("../components/settings/workspace-store.tsx");
+const { WorkspacePanel } = await import("../components/settings/workspace-panel.tsx");
 const { workspaceStorageKey, emptyWorkspace } = await import("../lib/workspace.ts");
 const { AuthScreen } = await import("../components/app/auth-screen.tsx");
 const { browserSupabase } = await import("../lib/supabase/browser.ts");
@@ -991,14 +992,22 @@ test("agent mode selector exposes three accessible choices and changes the selec
 });
 
 
-test("workspace cross-tab updates are preserved and queued to cloud instead of being overwritten by stale reads", async () => {
+test("workspace cross-tab updates use the latest cloud revision", async () => {
   const writes = [];
+  const revisions = ["2026-10-29T12:00:00.000Z", "2026-10-29T12:00:00.001Z"];
+  let nextRevision = 0;
+  let revision = null;
+  let cloudWorkspace = null;
   globalThis.fetch = async (_url, options = {}) => {
     if (options.method === "PUT") {
-      writes.push(JSON.parse(options.body));
-      return Response.json({ ok: true, storage: "cloud" });
+      const body = JSON.parse(options.body);
+      writes.push({ body, expectedUserId: new Headers(options.headers).get("x-tflash-expected-user-id") });
+      if (body.expectedUpdatedAt !== revision) return Response.json({ error: "conflict" }, { status: 409 });
+      cloudWorkspace = body.workspace;
+      revision = revisions[nextRevision++];
+      return Response.json({ ok: true, storage: "cloud", updatedAt: revision });
     }
-    return Response.json({ storage: "cloud", workspace: null });
+    return Response.json({ storage: "cloud", workspace: cloudWorkspace, updatedAt: revision });
   };
   function Probe() {
     const { workspace, syncStatus } = useWorkspace();
@@ -1014,5 +1023,57 @@ test("workspace cross-tab updates are preserved and queued to cloud instead of b
   }));
   await waitFor(() => assert.ok(screen.getByText("Cross-tab edit")));
   await waitFor(() => assert.equal(screen.getByRole("status").textContent, "synced"));
-  assert.deepEqual(writes.at(-1), updated);
+  assert.deepEqual(writes.at(-1).body.workspace, updated);
+  assert.equal(writes.at(-1).expectedUserId, "cross-tab-test");
+  assert.equal(writes.at(-1).body.expectedUpdatedAt, revisions[0]);
 });
+
+test("workspace conflicts preserve both copies until the user chooses the cloud copy", async () => {
+  const local = { ...emptyWorkspace(), projects: [{ id: "local-project", name: "Local draft", instructions: "", chatIds: [] }] };
+  const cloud = { ...emptyWorkspace(), projects: [{ id: "cloud-project", name: "Cloud saved", instructions: "", chatIds: [] }] };
+  window.localStorage.setItem(workspaceStorageKey("supabase", userId), JSON.stringify(local));
+  const calls = fakeFetch((path, options = {}) => {
+    if (path !== "/api/workspace") return undefined;
+    if (options.method === "PUT") return Response.json({ ok: true, storage: "cloud", updatedAt: "2026-10-29T12:00:00.001Z" });
+    return Response.json({ storage: "cloud", workspace: cloud, updatedAt: "2026-10-29T12:00:00.000Z" });
+  });
+  render(app(h(WorkspacePanel), "supabase"));
+  await screen.findByText("Local draft");
+  await screen.findByText("This device's copy is preserved. Keeping it replaces the cloud copy; using cloud replaces this device's copy.");
+  assert.equal(screen.queryByText("Cloud saved"), null);
+  await userEvent.click(screen.getByRole("button", { name: "Use cloud copy (replace this device)" }));
+  await screen.findByText("Cloud saved");
+  assert.deepEqual(JSON.parse(window.localStorage.getItem(workspaceStorageKey("supabase", userId))), cloud);
+  assert.equal(calls.filter((call) => call.path === "/api/workspace" && call.options.method === "PUT").length, 0);
+});
+
+test("keeping the browser copy refreshes the revision before an explicit cloud replacement", async () => {
+  const local = { ...emptyWorkspace(), projects: [{ id: "local-project", name: "Local draft", instructions: "", chatIds: [] }] };
+  const cloud = { ...emptyWorkspace(), projects: [{ id: "cloud-project", name: "Cloud saved", instructions: "", chatIds: [] }] };
+  const latestCloud = { ...emptyWorkspace(), maxSteps: 17 };
+  window.localStorage.setItem(workspaceStorageKey("supabase", userId), JSON.stringify(local));
+  let getCount = 0;
+  let write;
+  const calls = fakeFetch((path, options = {}) => {
+    if (path !== "/api/workspace") return undefined;
+    if (options.method === "PUT") {
+      write = { body: JSON.parse(options.body), expectedUserId: new Headers(options.headers).get("x-tflash-expected-user-id") };
+      return Response.json({ ok: true, storage: "cloud", updatedAt: "2026-10-29T12:00:00.002Z" });
+    }
+    getCount += 1;
+    return getCount === 1
+      ? Response.json({ storage: "cloud", workspace: cloud, updatedAt: "2026-10-29T12:00:00.000Z" })
+      : Response.json({ storage: "cloud", workspace: latestCloud, updatedAt: "2026-10-29T12:00:00.001Z" });
+  });
+  render(app(h(WorkspacePanel), "supabase"));
+  await screen.findByText("Local draft");
+  await userEvent.click(screen.getByRole("button", { name: "Keep this device's copy (replace cloud)" }));
+  await waitFor(() => assert.equal(screen.getByRole("status").textContent, "Workspace synced to your signed-in account. Memory remains opt-in; avoid storing secrets."));
+  assert.equal(write.expectedUserId, userId);
+  assert.equal(write.body.expectedUpdatedAt, "2026-10-29T12:00:00.001Z");
+  assert.deepEqual(write.body.workspace, local);
+  assert.ok(screen.getByText("Local draft"));
+  assert.ok(calls.some((call) => call.path === "/api/workspace" && call.options.method !== "PUT"));
+});
+
+

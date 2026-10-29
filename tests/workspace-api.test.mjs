@@ -12,61 +12,110 @@ registerHooks({
 });
 const route = await import("../app/api/workspace/route.ts");
 const { emptyWorkspace } = await import("../lib/workspace.ts");
+const expectedUserHeader = "x-tflash-expected-user-id";
 let principal = null;
 const rows = new Map();
 let failDatabase = false;
 globalThis.__tflashWorkspacePrincipal = () => principal;
 class Query {
-  constructor() { this.filters = []; }
+  constructor() { this.filters = []; this.updateValues = null; }
   select() { return this; }
   eq(key, value) { this.filters.push((row) => row[key] === value); return this; }
-  maybeSingle() { return Promise.resolve(this.execute(true)); }
-  async upsert(row) {
+  update(values) { this.updateValues = values; return this; }
+  async insert(row) {
     if (failDatabase) return { error: { message: "database unavailable" } };
+    if (rows.has(row.user_id)) return { error: { code: "23505", message: "duplicate row" } };
     rows.set(row.user_id, row);
     return { error: null };
   }
-  execute(single = false) {
+  async maybeSingle() {
     if (failDatabase) return { data: null, error: { message: "database unavailable" } };
-    const found = [...rows.values()].filter((row) => this.filters.every((filter) => filter(row)));
-    return { data: single ? found[0] ?? null : found, error: null };
+    const row = [...rows.values()].find((item) => this.filters.every((filter) => filter(item)));
+    if (!row) return { data: null, error: null };
+    if (this.updateValues) {
+      Object.assign(row, this.updateValues);
+      return { data: { updated_at: row.updated_at }, error: null };
+    }
+    return { data: row, error: null };
   }
 }
 globalThis.__tflashWorkspaceSupabase = async () => ({ from: () => new Query() });
-const request = (body, headers = {}) => new Request("https://tflash.example.test/api/workspace", {
-  method: "PUT", headers: { "content-type": "application/json", ...headers }, body,
-});
+const getRequest = (expectedUserId = principal?.id) => {
+  const headers = expectedUserId === undefined || expectedUserId === null
+    ? {}
+    : { [expectedUserHeader]: expectedUserId };
+  return new Request("https://tflash.example.test/api/workspace", { headers });
+};
+const putRequest = (body, { expectedUserId = principal?.id, contentType = "application/json" } = {}) => {
+  const headers = { "content-type": contentType };
+  if (expectedUserId !== undefined && expectedUserId !== null) headers[expectedUserHeader] = expectedUserId;
+  return new Request("https://tflash.example.test/api/workspace", { method: "PUT", headers, body });
+};
+const putWorkspace = (workspace, expectedUpdatedAt = null, options) =>
+  putRequest(JSON.stringify({ workspace, expectedUpdatedAt }), options);
 afterEach(() => { principal = null; rows.clear(); failDatabase = false; });
 
 test("workspace API requires a verified principal and keeps Vercel identities browser-local", async () => {
-  assert.equal((await route.GET()).status, 401);
+  assert.equal((await route.GET(getRequest(null))).status, 401);
   principal = { id: "vercel:user", kind: "vercel" };
-  assert.equal((await route.GET()).status, 200);
-  assert.equal((await (await route.GET()).json()).storage, "browser");
-  assert.equal((await route.PUT(request(JSON.stringify(emptyWorkspace())))).status, 200);
+  assert.equal((await route.GET(getRequest())).status, 200);
+  assert.equal((await (await route.GET(getRequest())).json()).storage, "browser");
+  assert.equal((await route.PUT(putWorkspace(emptyWorkspace()))).status, 200);
   assert.equal(rows.size, 0);
 });
 
-test("Supabase workspace reads, validates, and upserts only the authenticated user row", async () => {
+test("Supabase workspace reads and validates only the authenticated user's row", async () => {
   principal = { id: "user-a", kind: "supabase" };
   const empty = emptyWorkspace();
-  assert.deepEqual(await (await route.GET()).json(), { storage: "cloud", workspace: null });
-  assert.equal((await route.PUT(request(JSON.stringify(empty)))).status, 200);
+  assert.deepEqual(await (await route.GET(getRequest())).json(), { storage: "cloud", workspace: null, updatedAt: null });
+  const create = await route.PUT(putWorkspace(empty));
+  assert.equal(create.status, 200);
+  const { updatedAt } = await create.json();
+  assert.equal(typeof updatedAt, "string");
   assert.deepEqual(rows.get("user-a").workspace, empty);
-  assert.deepEqual((await (await route.GET()).json()).workspace, empty);
+  assert.deepEqual(await (await route.GET(getRequest())).json(), { storage: "cloud", workspace: empty, updatedAt });
   assert.equal(rows.has("user-b"), false);
-  assert.equal((await route.PUT(request(JSON.stringify({ ...empty, maxSteps: 999 })))).status, 400);
-  assert.equal((await route.PUT(request("{bad json"))).status, 400);
-  assert.equal((await route.PUT(request("x".repeat(200001)))).status, 413);
-  assert.equal((await route.PUT(request(JSON.stringify(empty), { "content-type": "text/plain" }))).status, 415);
+  assert.equal((await route.PUT(putWorkspace({ ...empty, maxSteps: 999 }, updatedAt))).status, 400);
+  assert.equal((await route.PUT(putRequest("{bad json"))).status, 400);
+  assert.equal((await route.PUT(putRequest("x".repeat(200001)))).status, 413);
+  assert.equal((await route.PUT(putRequest(JSON.stringify(empty), { contentType: "text/plain" }))).status, 415);
+  assert.equal((await route.PUT(putRequest(JSON.stringify({ ...empty, extra: true }), { expectedUserId: "user-a" }))).status, 400);
+});
+
+test("workspace compare-and-set rejects stale writes and duplicate initial inserts", async () => {
+  principal = { id: "user-a", kind: "supabase" };
+  const original = emptyWorkspace();
+  const first = await route.PUT(putWorkspace(original));
+  const firstRevision = (await first.json()).updatedAt;
+  assert.equal(first.status, 200);
+
+  const newerWorkspace = { ...original, maxSteps: 13 };
+  const newer = await route.PUT(putWorkspace(newerWorkspace, firstRevision));
+  const newerRevision = (await newer.json()).updatedAt;
+  assert.equal(newer.status, 200);
+  assert.notEqual(newerRevision, firstRevision);
+
+  assert.equal((await route.PUT(putWorkspace(original, firstRevision))).status, 409);
+  assert.equal((await route.PUT(putWorkspace(original, null))).status, 409);
+  assert.deepEqual(rows.get("user-a").workspace, newerWorkspace);
+});
+
+test("queued writes are bound to their originating account and cannot cross accounts", async () => {
+  rows.set("user-a", { user_id: "user-a", workspace: emptyWorkspace(), updated_at: "2026-10-29T12:00:00.000Z" });
+  principal = { id: "user-b", kind: "supabase" };
+  const before = structuredClone(rows.get("user-a"));
+  assert.equal((await route.GET(getRequest("user-a"))).status, 409);
+  assert.equal((await route.PUT(putWorkspace({ ...emptyWorkspace(), maxSteps: 5 }, before.updated_at, { expectedUserId: "user-a" }))).status, 409);
+  assert.deepEqual(rows.get("user-a"), before);
+  assert.equal(rows.has("user-b"), false);
 });
 
 test("database failures and corrupt stored workspaces fail without overwriting data", async () => {
   principal = { id: "user-a", kind: "supabase" };
-  rows.set("user-a", { user_id: "user-a", workspace: { invalid: true } });
-  assert.equal((await route.GET()).status, 503);
+  rows.set("user-a", { user_id: "user-a", workspace: { invalid: true }, updated_at: "2026-10-29T12:00:00.000Z" });
+  assert.equal((await route.GET(getRequest())).status, 503);
   failDatabase = true;
-  assert.equal((await route.GET()).status, 503);
-  assert.equal((await route.PUT(request(JSON.stringify(emptyWorkspace())))).status, 503);
+  assert.equal((await route.GET(getRequest())).status, 503);
+  assert.equal((await route.PUT(putWorkspace(emptyWorkspace()))).status, 503);
   assert.deepEqual(rows.get("user-a").workspace, { invalid: true });
 });
