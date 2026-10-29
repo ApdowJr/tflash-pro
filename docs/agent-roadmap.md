@@ -12,7 +12,7 @@ The selector does not provision a persistent code VM or grant GitHub access by i
 
 ## Account workspace sync
 
-For Supabase-authenticated accounts, project instructions, manually managed memory notes, memory opt-in, and model-call limits can sync to a per-user `tflash_workspaces` row protected by RLS. Browser storage remains a recovery copy and the Settings panel surfaces sync status. A cloud error must not silently overwrite the local copy. Vercel-only accounts remain browser-local because they do not have a Supabase user JWT. The migration is part of the PR and must be reviewed/applied separately; this change does not mutate production.
+For Supabase-authenticated accounts, project instructions, manually managed memory notes, memory opt-in, and model-call limits can sync to a per-user `tflash_workspaces` row protected by RLS. Browser storage remains a recovery copy and the Settings panel surfaces sync status. A cloud error must not silently overwrite the local copy. Vercel-only accounts remain browser-local because they do not have a Supabase user JWT. The migration is part of the PR and must be reviewed/applied separately; this change does not mutate production. Before applying any migration, reconcile the existing history mismatch: the repository names the chat migration `20261028000000_create_tflash_chats.sql`, while the linked Supabase project reports applied version `20261028075927`. Do not run a blanket migration push until this drift is resolved.
 
 
 ## Phase 1 — task execution visibility and text deliverables
