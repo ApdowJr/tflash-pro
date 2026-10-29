@@ -195,7 +195,7 @@ export function SettingsDialog({
         </DialogHeader>
 
         <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
-          <nav aria-label={t("settings")} className="grid shrink-0 grid-cols-2 gap-1 border-b p-2 sm:flex sm:w-44 sm:flex-col sm:border-r sm:border-b-0 sm:p-3" role="tablist" aria-orientation="horizontal">
+          <nav aria-label={t("settings")} className="grid shrink-0 grid-cols-2 gap-1 border-b p-2 sm:flex sm:w-44 sm:flex-col sm:border-r sm:border-b-0 sm:p-3" role="tablist">
             {tabs.map(({ id, label, icon: Icon }) => (
               <button
                 aria-controls="settings-panel"
