@@ -126,3 +126,65 @@ test("Vercel sign-in refuses a host outside the configured origin", async () => 
     body: JSON.stringify({ provider: "vercel", callbackURL: "/" }),
   })), /not in the allowed hosts list/);
 });
+
+test("Vercel OAuth state cannot authenticate a callback without its matching browser cookie", async () => {
+  const originalFetch = globalThis.fetch;
+  let providerCalls = 0;
+  globalThis.fetch = async () => {
+    providerCalls++;
+    throw new Error(
+      "Invalid state must be rejected before contacting the provider",
+    );
+  };
+  try {
+    const login = await auth.handler(
+      new Request("https://app.example.test/api/auth/sign-in/social", {
+        method: "POST",
+        headers: {
+          origin: "https://app.example.test",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ provider: "vercel", callbackURL: "/" }),
+      }),
+    );
+    assert.equal(login.status, 200);
+    const state = new URL((await login.json()).url).searchParams.get("state");
+    assert.ok(state);
+    const cookies = login.headers
+      .getSetCookie()
+      .map((cookie) => cookie.split(";", 1)[0])
+      .join("; ");
+    assert.ok(cookies);
+    for (const [candidate, cookie] of [
+      [state, ""],
+      ["forged-state", cookies],
+    ]) {
+      const callback = await auth.handler(
+        new Request(
+          `https://app.example.test/api/auth/callback/vercel?code=fake-code&state=${encodeURIComponent(candidate)}`,
+          { headers: { cookie } },
+        ),
+      );
+      assert.equal(callback.status, 302);
+      for (const name of [
+        context.authCookies.sessionToken.name,
+        context.authCookies.sessionData.name,
+        context.authCookies.accountData.name,
+      ]) {
+        assert.ok(
+          !callback.headers
+            .getSetCookie()
+            .some(
+              (value) =>
+                value.startsWith(`${name}=`) &&
+                !/Max-Age=0(?:;|$)/i.test(value),
+            ),
+          `Invalid state issued ${name}`,
+        );
+      }
+    }
+    assert.equal(providerCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

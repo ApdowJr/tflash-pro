@@ -28,6 +28,8 @@ Set `TFLASH_SESSION_SECRET` (chat ownership proofs) and `PROVIDER_KEYS_SECRET` (
 For a **Git preview only**, `TFLASH_PREVIEW_USE_AUTH_SECRET=1` explicitly permits deriving separate, branch-specific preview keys from a sufficiently long `BETTER_AUTH_SECRET`. The branch name must be present in `VERCEL_GIT_COMMIT_REF`. This never applies to production. Changing the branch, root secret, or flag invalidates the preview's existing proofs and connections. Prefer dedicated secrets when preview data must persist independently.
 
 ```bash
+corepack pnpm run audit:security    # registry dependency advisories
+corepack pnpm run audit:bundled-zod # separate release gate; currently BLOCKED
 corepack pnpm test        # local unit and mock-service tests
 corepack pnpm typecheck
 corepack pnpm build       # Next production build
@@ -83,13 +85,21 @@ Custom, Ollama, and LM Studio endpoints are reached **from the server**, not the
 
 For substantial multi-step work, Tflash can publish a task checklist and update it as work progresses. The latest plan appears above the conversation; actual run status is separate from the agent's reported step status. Plans do not execute tasks or certify success.
 
-Finished Markdown, text, CSV and JSON deliverables appear as preview/download cards. Content stays in the owned conversation's workflow data, not a public bucket. Downloads are text-only and bounded to 100,000 characters; no PDF rendering or automatic code execution is added. Review generated content before using it. See [the phased agent roadmap](docs/agent-roadmap.md) for implementation details and deferred projects/memory work.
+Finished Markdown, text, CSV and JSON deliverables appear as preview/download cards. Content stays in the owned conversation's workflow data, not a public bucket. Downloads are text-only and bounded to 100,000 characters; original downloads never execute code. Markdown/plain-text cards also offer explicit user-click PDF/DOCX conversion (50,000 characters / 2,000 lines). Review generated content before using it. See [the phased agent roadmap](docs/agent-roadmap.md) for implementation details and storage/usage limitations.
 
 ## Research with traceable sources
 
 Ask Tflash to research a topic and create a downloadable report. It uses Eve's existing provider-managed search where supported, reads public HTTPS pages with per-call approval, and shows requested source URLs, retrieval times and excerpts. A Markdown report accepts only app-issued source receipts from the same account/chat and requires citations and limitations. Retrieved evidence and AI synthesis are labelled separately; retrieval does not independently verify the claims.
 
-Search depends on the selected provider/model. AI Gateway keeps its existing Exa default; supported direct OpenAI/Anthropic/Google models use native search. Direct OpenRouter/other compatible endpoints may not have search; supply public URLs instead. No provider is switched automatically. Reports are Markdown, not PDF. These tools do not need a shell sandbox; live provider search and production connectivity still need verification.
+Search depends on the selected provider/model. AI Gateway keeps its existing Exa default; supported direct OpenAI/Anthropic/Google models use native search. Direct OpenRouter/other compatible endpoints may not have search; supply public URLs instead. No provider is switched automatically. Research reports are authored as Markdown; their cards can convert plain text to PDF/DOCX on request. These tools do not need a shell sandbox; live provider search and production connectivity still need verification.
+
+## Projects, memory, activity and documents
+
+- **Settings → Workspace** manages up to 20 projects and 30 editable notes. The project selector above the composer associates a chat with a project. Open its conversations to find their attachments and reports. Notes are opt-in, can be disabled individually or globally, and can be scoped to one project. Deleting a project removes its scoped notes, not its conversations.
+- Projects/notes are **browser-local for each account and login kind**, not encrypted, cloud-synced or shared. Never store secrets. Enabled notes and selected project instructions are sent with submitted messages to the selected model as untrusted user context. Deleting/disabling stops adding them to new prompts, not erasure of earlier provider/transcript copies. Export a JSON backup or clear them explicitly in Workspace.
+- **Activity & usage** in each conversation shows tool outcomes/approval state and available timestamps without exporting arguments or outputs. Task receipts remain running until settlement. Provider-reported input/output tokens and known model costs are shown; missing costs remain unknown. This is not a full invoice or tamper-proof audit log.
+- A durable server hook stops a session's turn before exceeding its selected **1–30 model calls** (default 12). Separate usage windows pause for approval at 250,000 new input tokens, 30,000 output tokens or USD 2 in reported model cost. A call can cross a threshold; parallel tools, compaction, unknown costs and delegated sessions are not a hard invoice cap. No automatic continuation is added.
+- The composer's **Read PDF or DOCX** control extracts plain text to a reviewable `.txt` attachment without sending it. Imports: 2 MiB, 50 PDF pages, 100,000 text characters; no OCR/encrypted PDFs. DOCX reads the main document body only and ignores macros/external relationships. Parsing runs in a timeout-bound worker, not on the request thread. Exports are genuine PDF/DOCX binaries, not renamed text files; no rich layout preservation. Somali/English text is supported; unsupported PDF glyphs fail rather than silently disappearing.
 
 ## Tools, sandbox, and storage
 
@@ -106,3 +116,9 @@ Persist Eve's workflow storage (or configure a suitable workflow world) and rout
 - `app/api/chats/*`, `lib/security/*`, `agent/channels/eve.ts` — ownership and protected Eve routes.
 - `lib/providers/*`, `app/api/providers/*`, `agent/agent.ts` — providers and dynamic model routing.
 - `lib/integrations/*`, `agent/connections/*`, `docs/integrations.md` — MCP connections and approval policy.
+
+## Release security note
+
+The 2026-10-29 security update reduced the registry audit from **56 advisories (7 critical) to 0** across production and development dependencies, without advisory suppressions. Next.js, Better Auth and affected transitive dependencies were patched. CI guards both the registry audit and the separate bundled-Zod finding below.
+
+**Production remains blocked:** Eve 0.83.2 embeds **Zod 4.5.4**, affected by [GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5). Package-manager overrides do not rewrite compiled framework code. The bundled-Zod CI gate intentionally fails until an upstream patched runtime or a reviewed mitigation is validated. This is not fixed by a clean registry audit. See [dependency security](docs/dependency-security.md) for evidence and release criteria; passing tests/builds is not production security approval.

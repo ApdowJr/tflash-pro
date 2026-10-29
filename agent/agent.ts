@@ -1,4 +1,5 @@
 import { defineAgent, defineDynamic } from "eve";
+import { modelUsageWindowReached } from "@/lib/usage-limits";
 import { DEFAULT_CONTEXT_WINDOW } from "@/lib/providers/catalog";
 import { resolveLanguageModel } from "@/lib/providers/runtime";
 import {
@@ -42,6 +43,7 @@ export default defineAgent({
       },
     },
   }),
+  limits: { sessionUsage: modelUsageWindowReached },
   compaction: {
     // Keep long chats usable regardless of which provider is selected.
     thresholdPercent: 0.85,

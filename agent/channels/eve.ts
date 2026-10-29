@@ -1,3 +1,4 @@
+import { ATTR_MAX_STEPS, HEADER_MAX_STEPS, modelStepLimit } from "@/lib/usage-limits";
 import { eveChannel } from "eve/channels/eve";
 import { ForbiddenError, type AuthFn } from "eve/channels/auth";
 import { requestSupabase } from "@/lib/supabase/request";
@@ -39,6 +40,7 @@ function requestAttributes(request: Request) {
   );
   return {
     ...selectionToAttributes(selectionFromHeaders(request.headers)),
+    [ATTR_MAX_STEPS]: String(modelStepLimit(request.headers.get(HEADER_MAX_STEPS))),
     ...(integrationTokens ? { [ATTR_INTEGRATION_TOKENS]: integrationTokens } : {}),
   };
 }

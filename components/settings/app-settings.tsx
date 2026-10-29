@@ -27,6 +27,7 @@ import {
   type WireSelection,
 } from "@/lib/providers/selection";
 import { translate, type Language, type TranslationKey, type Translator } from "./i18n";
+import { WorkspaceProvider } from "./workspace-store";
 import { clientContextFor, type PersonaId } from "./personas";
 
 export const STORAGE_KEY = "tflash:settings:v1";
@@ -681,7 +682,7 @@ export function AppSettingsProvider({ children, userId, accountKind }: { readonl
     clearLocalCredentials,
   };
 
-  return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;
+  return <SettingsContext.Provider value={value}><WorkspaceProvider kind={accountKind} userId={userId}>{children}</WorkspaceProvider></SettingsContext.Provider>;
 }
 
 export function useAppSettings(): SettingsContextValue {
