@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
+import { ThemeInitializer } from "@/components/theme-initializer";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import "@fontsource/dm-serif-display/400.css";
 import "@fontsource/dm-serif-display/400-italic.css";
@@ -46,16 +47,11 @@ export const viewport: Viewport = {
   ],
 };
 
-// Applies the saved theme before hydration so the first paint never flashes.
-const THEME_SCRIPT = `(function(){try{var t=localStorage.getItem('tflash:theme');if(t==='dark'||t==='light'){document.documentElement.dataset.theme=t;document.documentElement.style.colorScheme=t;}}catch(e){}})();`;
-
 export default function RootLayout({ children }: { readonly children: ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <head>
-        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
-      </head>
+    <html lang="en">
       <body>
+        <ThemeInitializer />
         <a className="tf-skip-link" href="#main-content">Skip to main content · U gudub nuxurka</a>
         <TooltipProvider>
           {children}
