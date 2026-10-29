@@ -968,7 +968,7 @@ test("top bar controls expose mobile-sized touch targets and visible keyboard fo
   })));
   const header = screen.getByRole("banner");
   const menu = within(header).getByRole("button", { name: /open menu/i });
-  const model = within(header).getByRole("button", { name: /choose model/i });
+  const model = within(header).getByRole("button", { name: /choose (a )?model/i });
   const more = within(header).getByRole("button", { name: /more actions/i });
   for (const button of [menu, model, more]) {
     assert.ok(button.className.includes("min-h-11"), "control should be at least 44px tall");
