@@ -178,6 +178,27 @@ test("mobile sidebar moves focus into navigation and restores it to the opener",
   await waitFor(() => assert.equal(document.activeElement, opener));
 });
 
+test("Escape closes the mobile sidebar and restores focus to the menu trigger", async () => {
+  seed();
+  fakeFetch();
+  function SidebarHarness() {
+    const [open, setOpen] = React.useState(false);
+    return h(React.Fragment, null,
+      h("button", { type: "button", onClick: () => setOpen(true) }, "Open navigation"),
+      h(Sidebar, { open, onClose: () => setOpen(false), onNewChat() {}, onOpenSettings() {} }),
+    );
+  }
+
+  render(app(h(SidebarHarness)));
+  const user = userEvent.setup();
+  const opener = screen.getByRole("button", { name: "Open navigation" });
+  await user.click(opener);
+  await screen.findByRole("button", { name: "Close menu" });
+  await user.keyboard("{Escape}");
+  await waitFor(() => assert.equal(document.activeElement, opener));
+  assert.equal(screen.queryByRole("button", { name: "Close menu" })?.closest("aside")?.className.includes("invisible"), true);
+});
+
 test("provider settings are searchable, clear unfinished keys, and connect OpenRouter", async () => {
   seed();
   const calls = fakeFetch((path, options) => {

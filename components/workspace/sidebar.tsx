@@ -92,6 +92,18 @@ export function Sidebar({
     }
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      }
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [open, onClose]);
+
   function openAction(kind: ChatAction["kind"], chat: ChatRecord) {
     setTitle(chat.title);
     setActionError(undefined);
