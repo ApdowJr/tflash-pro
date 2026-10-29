@@ -15,7 +15,7 @@ import { Input } from "@/components/ui/input";
 
 const textClass = "w-full rounded-md border bg-background p-2 text-sm";
 export function WorkspacePanel() {
-  const { workspace, ready, storageError, syncStatus, cloudEnabled, change, clear } = useWorkspace();
+  const { workspace, ready, storageError, syncStatus, cloudEnabled, change, clear, resolveConflict } = useWorkspace();
   const { settings, t } = useAppSettings();
   const [project, setProject] = useState<Project>();
   const [note, setNote] = useState<MemoryNote>();
@@ -55,9 +55,32 @@ export function WorkspacePanel() {
     });
   }
   if (!ready) return <p>{t("loadingChat")}</p>;
+  const syncMessage = !cloudEnabled || syncStatus === "local"
+    ? "workspaceLocal"
+    : syncStatus === "synced"
+      ? "workspaceCloudSynced"
+      : syncStatus === "syncing"
+        ? "workspaceCloudSyncing"
+        : syncStatus === "conflict"
+          ? "workspaceCloudConflictStatus"
+          : "workspaceCloudSyncFailed";
   return (
     <section className="space-y-5" aria-label={t("workspace")}>
-      <p className="text-xs text-muted-foreground">{cloudEnabled ? t(syncStatus === "synced" ? "workspaceCloudSynced" : syncStatus === "syncing" ? "workspaceCloudSyncing" : "workspaceCloudSyncFailed") : t("workspaceLocal")}</p>
+      <p role="status" aria-live="polite" className="text-xs text-muted-foreground">{t(syncMessage)}</p>
+      {cloudEnabled && syncStatus === "conflict" ? (
+        <div className="rounded-md border p-3">
+          <p role="alert" className="text-sm font-medium">{t("workspaceCloudConflictStatus")}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{t("workspaceCloudConflictDetail")}</p>
+          <div className="flex flex-col gap-2 pt-3 sm:flex-row">
+            <Button className="min-h-11 w-full sm:w-auto" size="sm" variant="outline" onClick={() => void resolveConflict("browser")}>
+              {t("workspaceKeepBrowser")}
+            </Button>
+            <Button className="min-h-11 w-full sm:w-auto" size="sm" variant="outline" onClick={() => void resolveConflict("cloud")}>
+              {t("workspaceUseCloud")}
+            </Button>
+          </div>
+        </div>
+      ) : null}
       {storageError ? (
         <p role="alert" className="text-xs text-destructive">
           {t("workspaceLoadFailed")}
