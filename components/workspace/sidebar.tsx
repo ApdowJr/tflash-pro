@@ -10,7 +10,7 @@ import {
   Trash2Icon,
   XIcon,
 } from "lucide-react";
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { FlashLockup } from "@/components/brand/logo";
 import { Button } from "@/components/ui/button";
 import {
@@ -67,10 +67,30 @@ export function Sidebar({
   const [title, setTitle] = useState("");
   const [pending, setPending] = useState(false);
   const [actionError, setActionError] = useState<"historySaveFailed" | "historyRemoveFailed">();
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const wasOpenRef = useRef(false);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
   const groups = useMemo(
     () => groupChats(searchChats(settings.chats, query)),
     [settings.chats, query],
   );
+
+  useEffect(() => {
+    if (open && !wasOpenRef.current) {
+      returnFocusRef.current = document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+      wasOpenRef.current = true;
+      closeButtonRef.current?.focus();
+      return;
+    }
+    if (!open && wasOpenRef.current) {
+      wasOpenRef.current = false;
+      const target = returnFocusRef.current;
+      returnFocusRef.current = null;
+      if (target?.isConnected) target.focus();
+    }
+  }, [open]);
 
   function openAction(kind: ChatAction["kind"], chat: ChatRecord) {
     setTitle(chat.title);
@@ -113,6 +133,7 @@ export function Sidebar({
         onClick={onClose}
       />
       <aside
+        id="conversation-sidebar"
         className={cn(
           "tf-safe-x fixed inset-y-0 left-0 z-50 flex w-[min(17.5rem,86vw)] flex-col bg-sidebar transition-transform duration-200 ease-out lg:static lg:z-auto lg:w-[17.5rem] lg:translate-x-0",
           "tflash-hairline",
@@ -128,6 +149,7 @@ export function Sidebar({
             <FlashLockup />
           </button>
           <button
+            ref={closeButtonRef}
             aria-label={t("closeMenu")}
             className="-mr-1 flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground lg:hidden"
             onClick={onClose}
