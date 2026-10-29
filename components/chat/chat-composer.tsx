@@ -14,6 +14,7 @@ import {
   usePromptInputController,
 } from "@/components/ai-elements/prompt-input";
 import { useAppSettings } from "@/components/settings/app-settings";
+import { AGENT_MODES, type AgentMode } from "@/lib/agent-modes";
 
 /**
  * The composer is the one element people touch every turn, so it gets the
@@ -24,13 +25,17 @@ export function ChatComposer({
   isResuming,
   onCancel,
   onSubmit,
+  mode = "chat",
+  onModeChange,
 }: {
   readonly isBusy: boolean;
   readonly isResuming: boolean;
   readonly onCancel: () => void;
   readonly onSubmit: (message: PromptInputMessage) => Promise<void>;
+  readonly mode?: AgentMode;
+  readonly onModeChange?: (mode: AgentMode) => void;
 }) {
-  const { t } = useAppSettings();
+  const { t, settings } = useAppSettings();
   const controller = usePromptInputController();
 
   return (
@@ -57,6 +62,7 @@ export function ChatComposer({
           </button>
         </div>
       ))}
+      <AgentModePicker mode={mode} onChange={onModeChange} language={settings.language} disabled={isBusy || isResuming} />
       <PromptInput
         className="tflash-composer overflow-visible rounded-[1.35rem] border-border bg-card dark:bg-card focus-within:border-foreground/25! focus-within:ring-1 focus-within:ring-foreground/10"
         onSubmit={onSubmit}
@@ -84,6 +90,26 @@ export function ChatComposer({
         />
       </PromptInput>
     </>
+  );
+}
+
+function AgentModePicker({ mode, onChange, language, disabled }: { mode: AgentMode; onChange?: (mode: AgentMode) => void; language: "en" | "so"; disabled: boolean }) {
+  return (
+    <div aria-label={language === "so" ? "Habka agent-ka" : "Agent mode"} className="mb-2 flex flex-wrap gap-1" role="group">
+      {AGENT_MODES.map((item) => (
+        <button
+          aria-pressed={mode === item.id}
+          className={`tf-touch-target min-h-11 rounded-full border px-3 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${mode === item.id ? "border-foreground/25 bg-accent font-medium text-foreground" : "border-transparent text-muted-foreground hover:bg-accent/60 hover:text-foreground"}`}
+          disabled={disabled || !onChange}
+          key={item.id}
+          onClick={() => onChange?.(item.id)}
+          title={item.hint[language]}
+          type="button"
+        >
+          {item.label[language]}
+        </button>
+      ))}
+    </div>
   );
 }
 
