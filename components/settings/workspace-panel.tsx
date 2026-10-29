@@ -15,7 +15,7 @@ import { Input } from "@/components/ui/input";
 
 const textClass = "w-full rounded-md border bg-background p-2 text-sm";
 export function WorkspacePanel() {
-  const { workspace, ready, storageError, change, clear } = useWorkspace();
+  const { workspace, ready, storageError, syncStatus, cloudEnabled, change, clear } = useWorkspace();
   const { settings, t } = useAppSettings();
   const [project, setProject] = useState<Project>();
   const [note, setNote] = useState<MemoryNote>();
@@ -57,7 +57,7 @@ export function WorkspacePanel() {
   if (!ready) return <p>{t("loadingChat")}</p>;
   return (
     <section className="space-y-5" aria-label={t("workspace")}>
-      <p className="text-xs text-muted-foreground">{t("workspaceLocal")}</p>
+      <p className="text-xs text-muted-foreground">{cloudEnabled ? t(syncStatus === "synced" ? "workspaceCloudSynced" : syncStatus === "syncing" ? "workspaceCloudSyncing" : "workspaceCloudSyncFailed") : t("workspaceLocal")}</p>
       {storageError ? (
         <p role="alert" className="text-xs text-destructive">
           {t("workspaceLoadFailed")}
