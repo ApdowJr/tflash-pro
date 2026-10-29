@@ -42,6 +42,7 @@ import { agentModeContext, agentModeStorageKey, parseAgentMode, type AgentMode }
 const DEFAULT_AGENT_NAME = "Tflash";
 
 type ReadySession = { readonly id: string; readonly resume: boolean; readonly proof?: string };
+type PreparationError = "chatStorageSetupRequired" | "chatStorageUnavailable" | "chatPreparationFailed" | "chatSignInRequired" | "chatOwnershipUnavailable";
 
 /** Start sessions server-side so every login method receives a bound owner. */
 export function AgentChat({ account, sessionId, sessionless = false }: {
@@ -49,9 +50,9 @@ export function AgentChat({ account, sessionId, sessionless = false }: {
   readonly sessionId?: string;
   readonly sessionless?: boolean;
 }) {
-  const { hydrated, eveHeaders, settings, registerChatProof } = useAppSettings();
+  const { hydrated, eveHeaders, settings, registerChatProof, t } = useAppSettings();
   const [ready, setReady] = useState<ReadySession>();
-  const [preparationError, setPreparationError] = useState<string>();
+  const [preparationError, setPreparationError] = useState<PreparationError>();
   const [attempt, setAttempt] = useState(0);
   const createRef = useRef<Promise<{ id: string; proof?: string }> | null>(null);
 
@@ -60,23 +61,29 @@ export function AgentChat({ account, sessionId, sessionless = false }: {
     if (sessionId) {
       const proof = settings.chatProofs[sessionId];
       if (account.kind === "vercel" && !proof) {
-        setPreparationError("This conversation does not have a verifiable owner in this browser. Older chats are not imported automatically.");
+        setPreparationError("chatOwnershipUnavailable");
         return;
       }
       setReady({ id: sessionId, resume: true, ...(proof ? { proof } : {}) });
+      setPreparationError(undefined);
       return;
     }
     let active = true;
     if (!createRef.current) {
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 65_000);
       createRef.current = fetch("/api/chats", {
-        method: "POST", headers: { ...eveHeaders(), "content-type": "application/json" }, body: "{}",
+        method: "POST", headers: { ...eveHeaders(), "content-type": "application/json" }, body: "{}", signal: controller.signal,
       }).then(async (response) => {
-        const body = await response.json() as { sessionId?: string; ownerProof?: string; error?: string };
+        const body = await response.json() as { sessionId?: string; ownerProof?: string; code?: string };
         if (!response.ok || !body.sessionId || (account.kind === "vercel" && !body.ownerProof)) {
-          throw new Error(body.error || "Could not start a conversation.");
+          if (response.status === 401) throw new Error("chatSignInRequired");
+          if (body.code === "CHAT_STORAGE_SETUP_REQUIRED") throw new Error("chatStorageSetupRequired");
+          if (body.code === "CHAT_STORAGE_UNAVAILABLE") throw new Error("chatStorageUnavailable");
+          throw new Error("chatPreparationFailed");
         }
         return { id: body.sessionId, ...(body.ownerProof ? { proof: body.ownerProof } : {}) };
-      });
+      }).finally(() => window.clearTimeout(timeout));
     }
     createRef.current.then(({ id, proof }) => {
       if (!active) return;
@@ -84,7 +91,10 @@ export function AgentChat({ account, sessionId, sessionless = false }: {
       setReady({ id, resume: false, ...(proof ? { proof } : {}) });
       setPreparationError(undefined);
     }).catch((error: unknown) => {
-      if (active) setPreparationError(error instanceof Error ? error.message : "Could not start a conversation.");
+      if (!active) return;
+      const code = error instanceof Error ? error.message : "";
+      setPreparationError(code === "chatStorageSetupRequired" || code === "chatStorageUnavailable" || code === "chatSignInRequired"
+        ? code : "chatPreparationFailed");
     });
     return () => { active = false; };
   }, [account.kind, sessionId, hydrated, attempt, eveHeaders, registerChatProof, settings.chatProofs]);
@@ -98,7 +108,7 @@ export function AgentChat({ account, sessionId, sessionless = false }: {
     <PromptInputProvider>
       <ChatSession key={ready?.id ?? "preparing"} account={account} sessionId={ready?.id}
         resume={ready?.resume ?? false} ownerProof={ready?.proof} sessionless={sessionless}
-        preparationError={preparationError} canRetry={!sessionId} onRetry={retry} />
+        preparationError={preparationError ? t(preparationError) : undefined} canRetry={!sessionId} onRetry={retry} />
     </PromptInputProvider>
   );
 }
@@ -260,7 +270,10 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
 
   const handleSubmit = async (message: PromptInputMessage) => {
     const text = message.text.trim();
-    if ((text.length === 0 && message.files.length === 0) || isResuming || !sessionId) return;
+    if (text.length === 0 && message.files.length === 0) return;
+    // A programmatic form submission must not clear a draft while the session
+    // is unavailable, even though the visible Send button is disabled.
+    if (isResuming || !sessionId) throw new Error("Conversation is not ready.");
     setCancellationError(undefined);
     const firstUser = agent.data.messages.find((entry) => entry.role === "user");
     const firstText = firstUser?.parts.find((part) => part.type === "text");
@@ -385,9 +398,9 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
           <div className="mx-auto w-full max-w-2xl">
             {preparationError ? (
               <div className="mb-3 rounded-md border border-destructive/30 px-3 py-2 text-destructive text-sm" role="alert">
-                {preparationError}{canRetry ? <button className="ml-2 underline" onClick={onRetry} type="button">Retry</button> : null}
+                {preparationError}{canRetry ? <button className="ml-2 min-h-11 rounded px-1 underline focus-visible:outline focus-visible:outline-2" onClick={onRetry} type="button">{t("retry")}</button> : null}
               </div>
-            ) : !sessionId ? <p className="mb-2 text-muted-foreground text-xs" role="status">Preparing conversation…</p> : null}
+            ) : !sessionId ? <p className="mb-2 text-muted-foreground text-xs" role="status">{t("chatPreparing")}</p> : null}
             <ProjectPicker sessionId={sessionId} disabled={isBusy || isResuming} />
             <ChatComposer
               mode={agentMode}

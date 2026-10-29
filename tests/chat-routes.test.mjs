@@ -1,4 +1,4 @@
-import test from "node:test";
+import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { registerHooks } from "node:module";
 
@@ -30,6 +30,9 @@ process.env.VERCEL_AUTOMATION_BYPASS_SECRET = "server-only-test-bypass";
 
 let currentUser = null;
 let currentKind = "supabase";
+let selectError = null;
+let insertError = null;
+const originalGlobalFetch = globalThis.fetch;
 globalThis.__tflashMockPrincipal = () => currentUser ? { id: currentUser, kind: currentKind, name: "Test", email: "test@example.test" } : null;
 const rows = new Map();
 
@@ -44,11 +47,13 @@ class Query {
   update(patch) { this.action = "update"; this.patch = patch; return this; }
   delete() { this.action = "delete"; return this; }
   async insert(row) {
+    if (insertError) return { data: null, error: insertError };
     if (row.user_id !== this.user || rows.has(row.session_id)) return { error: { message: "RLS or duplicate" } };
     rows.set(row.session_id, { ...row, updated_at: new Date().toISOString() });
     return { error: null };
   }
   async execute(single = false) {
+    if (this.action === "select" && selectError) return { data: null, error: selectError };
     const matches = [...rows.values()].filter((row) => row.user_id === this.user && this.filters.every((filter) => filter(row)));
     if (this.action === "update") matches.forEach((row) => Object.assign(row, this.patch));
     if (this.action === "delete") matches.forEach((row) => rows.delete(row.session_id));
@@ -59,6 +64,7 @@ class Query {
 }
 
 globalThis.__tflashMockSupabase = async () => {
+  if (globalThis.__realSupabase) return globalThis.__realSupabase;
   const user = currentUser;
   return { auth: { getUser: async () => ({ data: { user: user ? { id: user } : null }, error: null }) }, from: () => new Query(user) };
 };
@@ -67,6 +73,11 @@ function jsonRequest(url, method, headers = {}, body = {}) {
   return new Request(url, { method, headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
 }
 const detail = (id) => ({ params: Promise.resolve({ sessionId: id }) });
+
+afterEach(() => {
+  currentUser = null; currentKind = "supabase"; selectError = null; insertError = null;
+  rows.clear(); delete globalThis.__realSupabase; globalThis.fetch = originalGlobalFetch;
+});
 
 test("chat routes reject unauthenticated callers and non-JSON mutations", async () => {
   currentUser = null;
@@ -192,4 +203,68 @@ test("Vercel chat proofs are issued to the authenticated owner and cannot cross 
     currentKind = "supabase";
     globalThis.fetch = originalFetch;
   }
+});
+
+
+test("missing chat storage is reported before creating an Eve workflow, without leaking database details", async () => {
+  currentUser = "user-a";
+  selectError = { code: "PGRST205", message: "private schema diagnostic" };
+  let eveCalls = 0;
+  globalThis.fetch = async () => { eveCalls++; return Response.json({ sessionId: "unused" }); };
+  const response = await POST(jsonRequest("https://app.test/api/chats", "POST"));
+  assert.equal(response.status, 503);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.deepEqual(await response.json(), {
+    code: "CHAT_STORAGE_SETUP_REQUIRED", error: "Chat storage is not configured for this deployment.",
+  });
+  assert.equal(eveCalls, 0, "do not create an orphan when storage is already unavailable");
+  assert.equal(rows.size, 0);
+});
+
+test("the real PostgREST client reports a missing table from a zero-row GET preflight", async () => {
+  const { createClient } = await import("@supabase/supabase-js");
+  currentUser = "user-a";
+  let eveCalls = 0;
+  globalThis.fetch = async () => { eveCalls++; return Response.json({ sessionId: "unused" }); };
+  const preflights = [];
+  globalThis.__realSupabase = createClient("https://supabase.example.test", "test-publishable-key", {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { fetch: async (url, options) => {
+      preflights.push({ url: String(url), method: options.method });
+      return Response.json({ code: "PGRST205", message: "could not find the table" }, { status: 404 });
+    } },
+  });
+  const response = await POST(jsonRequest("https://app.test/api/chats", "POST"));
+  assert.equal(response.status, 503);
+  assert.equal((await response.json()).code, "CHAT_STORAGE_SETUP_REQUIRED");
+  assert.equal(preflights.length, 1);
+  assert.equal(preflights[0].method, "GET");
+  assert.equal(new URL(preflights[0].url).searchParams.get("limit"), "0");
+  assert.equal(eveCalls, 0);
+});
+
+test("RLS/insert failures do not fall back to browser ownership or leak server diagnostics", async () => {
+  currentUser = "user-a";
+  insertError = { code: "42501", message: "private policy diagnostic" };
+  let eveCalls = 0;
+  globalThis.fetch = async () => { eveCalls++; return Response.json({ sessionId: "session-a" }); };
+  const response = await POST(jsonRequest("https://app.test/api/chats", "POST"));
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), {
+    code: "CHAT_STORAGE_UNAVAILABLE", error: "Could not save the conversation. Please try again.",
+  });
+  assert.equal(eveCalls, 1, "an insert can still fail after a successful preflight");
+  assert.equal(rows.size, 0);
+});
+
+test("Vercel identities do not query Supabase during session preparation", async () => {
+  currentUser = "vercel-user"; currentKind = "vercel";
+  selectError = { code: "PGRST205", message: "not applicable" };
+  globalThis.fetch = async () => Response.json({ sessionId: "vercel-session" });
+  const response = await POST(jsonRequest("https://app.test/api/chats", "POST"));
+  assert.equal(response.status, 201);
+  const body = await response.json();
+  assert.ok(body.sessionId);
+  assert.ok(body.ownerProof);
+  assert.equal(rows.size, 0);
 });
