@@ -28,6 +28,8 @@ import { SettingsDialog } from "@/components/settings/settings-dialog";
 import { sessionTitle } from "@/lib/chat-history";
 import { OWNER_PROOF_HEADER } from "@/lib/security/chat-ownership-wire";
 import { AgentMessage } from "./agent-message";
+import { AgentPlanCard, type AgentRunState } from "./agent-workspace";
+import { latestAgentPlan } from "@/lib/agent-workspace";
 
 const DEFAULT_AGENT_NAME = "Tflash";
 
@@ -131,6 +133,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
       if (hasSubmittedMessage.current && session) replaceSessionRoute(session.sessionId);
     },
   });
+  const currentPlan = latestAgentPlan(agent.data.messages);
   const isBusy = agent.status === "submitted" || agent.status === "streaming";
   const isResuming = agent.status === "resuming";
   const isEmpty = agent.data.messages.length === 0;
@@ -143,6 +146,8 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
     (agent.status === "submitted" || lastMessage?.role !== "assistant" || isPendingAssistantShell);
   const turnFailure = isBusy || isResuming ? undefined : getLatestTurnFailure(agent.events);
   const errorMessage = cancellationError ?? agent.error?.message ?? turnFailure;
+  const runState: AgentRunState = isResuming ? "resuming" : errorMessage ? "failed" : !isBusy ? "idle" :
+    Object.values(agent.data.inputs).some((input) => input.status === "open") ? "waiting" : "working";
   const hasConversationContent = sessionless || !isEmpty || errorMessage !== undefined;
   const showConversationLayout = isResuming || hasConversationContent;
   const activeSessionId = sessionId ?? agent.session?.sessionId;
@@ -290,6 +295,8 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
           onOpenSidebar={() => setSidebarOpen(true)}
           title={showConversationLayout ? title : undefined}
         />
+
+        {currentPlan ? <div className="shrink-0 px-4 py-2 sm:px-6"><AgentPlanCard compact plan={currentPlan} runState={runState} onContinue={() => handleSubmit({ text: t("continueTaskPrompt"), files: [] })} /></div> : null}
 
         {showConversationLayout ? (
           <Conversation
