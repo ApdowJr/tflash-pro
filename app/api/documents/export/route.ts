@@ -4,13 +4,18 @@ import {
   documentExportSchema,
   exportDocument,
 } from "@/lib/documents/server";
+import { guardRateLimit } from "@/lib/security/rate-limits";
+import { apiRoute } from "@/lib/http/api-route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
-export async function POST(request: Request): Promise<Response> {
-  if (!(await currentPrincipal()))
+async function handlePost(request: Request): Promise<Response> {
+  const principal = await currentPrincipal();
+  if (!principal)
     return Response.json({ error: "Sign in to continue." }, { status: 401 });
+  const limited = guardRateLimit("documents", request, principal.id);
+  if (limited) return limited;
   if (
     request.headers.get("sec-fetch-site") === "cross-site" ||
     (request.headers.get("origin") &&
@@ -49,3 +54,5 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 }
+
+export const POST = apiRoute("documents:export", handlePost);
