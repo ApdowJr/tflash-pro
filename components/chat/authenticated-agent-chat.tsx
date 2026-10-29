@@ -24,7 +24,7 @@ export async function AuthenticatedAgentChat({ sessionId, sessionless }: {
   // Vercel chat proofs live in account-scoped browser storage and are checked
   // by Eve on every session route, including streams and controls.
   return (
-    <AppSettingsProvider userId={principal.id} accountKind={principal.kind}>
+    <AppSettingsProvider key={`${principal.kind}:${principal.id}`} userId={principal.id} accountKind={principal.kind}>
       <AgentChat account={principal} sessionId={sessionId} sessionless={sessionless} />
     </AppSettingsProvider>
   );
