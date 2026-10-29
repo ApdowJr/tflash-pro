@@ -195,18 +195,37 @@ export function SettingsDialog({
         </DialogHeader>
 
         <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
-          <nav className="grid shrink-0 grid-cols-2 gap-1 border-b p-2 sm:flex sm:w-44 sm:flex-col sm:border-r sm:border-b-0 sm:p-3">
+          <nav aria-label={t("settings")} className="grid shrink-0 grid-cols-2 gap-1 border-b p-2 sm:flex sm:w-44 sm:flex-col sm:border-r sm:border-b-0 sm:p-3" role="tablist" aria-orientation="horizontal">
             {tabs.map(({ id, label, icon: Icon }) => (
               <button
-                aria-pressed={tab === id}
+                aria-controls="settings-panel"
+                aria-selected={tab === id}
                 className={cn(
                   "flex min-w-0 items-center justify-center gap-2 rounded-md px-1 py-2 text-center text-xs transition-colors min-[360px]:text-[13px] sm:justify-start sm:px-2.5 sm:text-left sm:text-[13px]",
                   tab === id
                     ? "bg-accent font-medium text-foreground"
                     : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
                 )}
+                id={`settings-tab-${id}`}
                 key={id}
                 onClick={() => setTab(id)}
+                onKeyDown={(event) => {
+                  const currentIndex = tabs.findIndex((item) => item.id === id);
+                  let nextIndex = currentIndex;
+                  if (event.key === "ArrowRight" || event.key === "ArrowDown") nextIndex = (currentIndex + 1) % tabs.length;
+                  else if (event.key === "ArrowLeft" || event.key === "ArrowUp") nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+                  else if (event.key === "Home") nextIndex = 0;
+                  else if (event.key === "End") nextIndex = tabs.length - 1;
+                  else return;
+                  event.preventDefault();
+                  const nextTab = tabs[nextIndex];
+                  if (nextTab) {
+                    setTab(nextTab.id);
+                    event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[nextIndex]?.focus();
+                  }
+                }}
+                role="tab"
+                tabIndex={tab === id ? 0 : -1}
                 type="button"
               >
                 <Icon className="hidden size-4 shrink-0 sm:block" />
@@ -219,7 +238,7 @@ export function SettingsDialog({
             </div>
           </nav>
 
-          <div className="tflash-scroll tf-safe-bottom min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
+          <div aria-labelledby={`settings-tab-${tab}`} className="tflash-scroll tf-safe-bottom min-h-0 flex-1 overflow-y-auto p-4 sm:p-5" id="settings-panel" role="tabpanel" tabIndex={0}>
             {tab === "workspace" ? <WorkspacePanel /> : null}
             {tab === "providers" ? (
               <div className="space-y-3">
