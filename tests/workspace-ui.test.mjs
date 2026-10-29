@@ -847,3 +847,31 @@ test("workspace edits merge the latest tab data, refuse corrupt overwrites and a
   assert.equal(window.localStorage.getItem(key), null);
   assert.equal(screen.queryByText("Other tab project"), null);
 });
+
+test("settings tabs expose tab semantics and support arrow, Home, and End navigation", async () => {
+  seed();
+  fakeFetch();
+  render(app(h(SettingsDialog, { open: true, onOpenChange() {} })));
+  const dialog = await screen.findByRole("dialog", { name: "Settings" });
+  const providers = within(dialog).getByRole("tab", { name: "Providers" });
+  const connections = within(dialog).getByRole("tab", { name: "Connections" });
+  const preferences = within(dialog).getByRole("tab", { name: "Preferences" });
+  const workspace = within(dialog).getByRole("tab", { name: "Workspace" });
+  assert.equal(providers.getAttribute("aria-selected"), "true");
+  assert.equal(providers.tabIndex, 0);
+  assert.equal(connections.tabIndex, -1);
+  assert.equal(within(dialog).getByRole("tabpanel").getAttribute("aria-labelledby"), providers.id);
+  const user = userEvent.setup();
+  providers.focus();
+  await user.keyboard("{ArrowRight}");
+  assert.equal(document.activeElement, connections);
+  assert.equal(connections.getAttribute("aria-selected"), "true");
+  await user.keyboard("{ArrowRight}");
+  assert.equal(document.activeElement, preferences);
+  await user.keyboard("{End}");
+  assert.equal(document.activeElement, workspace);
+  assert.equal(workspace.getAttribute("aria-selected"), "true");
+  await user.keyboard("{Home}");
+  assert.equal(document.activeElement, providers);
+  assert.equal(providers.getAttribute("aria-selected"), "true");
+});
