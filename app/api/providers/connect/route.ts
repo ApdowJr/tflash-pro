@@ -7,6 +7,8 @@ import {
   errorResponse,
   ProviderInputError,
 } from "@/lib/providers/route-helpers";
+import { guardRateLimit } from "@/lib/security/rate-limits";
+import { apiRoute } from "@/lib/http/api-route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,9 +24,11 @@ export type ConnectResponse = {
   readonly message: string;
 };
 
-export async function POST(request: Request): Promise<Response> {
+async function handlePost(request: Request): Promise<Response> {
   const principal = await currentPrincipal();
   if (!principal) return Response.json({ ok: false, error: "Sign in to continue." }, { status: 401 });
+  const limited = guardRateLimit("providerConnect", request, principal.id);
+  if (limited) return limited;
   if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) return Response.json({ ok: false, error: "Expected JSON." }, { status: 415 });
   let payload: Record<string, unknown>;
   try {
@@ -114,3 +118,5 @@ export async function POST(request: Request): Promise<Response> {
     return errorResponse(error);
   }
 }
+
+export const POST = apiRoute("providers:connect", handlePost);

@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
+import { ConnectivityBanner } from "@/components/app/connectivity-banner";
 import { ThemeInitializer } from "@/components/theme-initializer";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import "@fontsource/dm-serif-display/400.css";
@@ -52,6 +53,7 @@ export default function RootLayout({ children }: { readonly children: ReactNode 
     <html lang="en">
       <body>
         <ThemeInitializer />
+        <ConnectivityBanner />
         <a className="tf-skip-link" href="#main-content">Skip to main content · U gudub nuxurka</a>
         <TooltipProvider>
           {children}

@@ -22,7 +22,14 @@ import {
   useState,
 } from "react";
 import type { BundledLanguage, BundledTheme, HighlighterGeneric, ThemedToken } from "shiki";
-import { createHighlighter } from "shiki";
+// Shiki (Oniguruma grammar engine + themes) is a large dependency that only
+// matters once a code block actually renders. Importing it statically pulled it
+// into the chat route's first-load JS; this loader keeps it in its own chunk and
+// shows plain text until it arrives.
+const loadHighlighter = async () => {
+  const { createHighlighter } = await import("shiki");
+  return createHighlighter;
+};
 
 // Shiki uses bitflags for font styles: 1=italic, 2=bold, 4=underline
 // oxlint-disable-next-line eslint(no-bitwise)
@@ -148,11 +155,15 @@ const getHighlighter = (
     return cached;
   }
 
-  const highlighterPromise = createHighlighter({
-    langs: [language],
-    themes: ["github-light", "github-dark"],
-  });
+  const highlighterPromise = loadHighlighter().then((createHighlighter) =>
+    createHighlighter({
+      langs: [language],
+      themes: ["github-light", "github-dark"],
+    }),
+  );
 
+  // A failed dynamic import must not poison the cache for later blocks.
+  highlighterPromise.catch(() => highlighterCache.delete(language));
   highlighterCache.set(language, highlighterPromise);
   return highlighterPromise;
 };

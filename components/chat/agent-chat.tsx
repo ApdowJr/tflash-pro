@@ -188,6 +188,18 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   const activeSessionId = sessionId ?? agent.session?.sessionId;
   const title = settings.chats.find((chat) => chat.id === activeSessionId)?.title ??
     sessionTitle(agent.data.messages, t("newChat"));
+
+  // A browser tab in a long session should say which conversation it holds.
+  // The title is user/provider text, so it is truncated and never interpreted.
+  useEffect(() => {
+    const base = `${DEFAULT_AGENT_NAME} — AI workspace`;
+    if (!showConversationLayout || isEmpty || !title) {
+      document.title = base;
+      return;
+    }
+    const short = title.length > 72 ? `${title.slice(0, 71)}…` : title;
+    document.title = `${short} · ${DEFAULT_AGENT_NAME}`;
+  }, [isEmpty, showConversationLayout, title]);
   const canRespond = (requestId: string) =>
     !isResuming && agent.data.inputs[requestId]?.status === "open";
   const questionsFor = (callId: string) =>

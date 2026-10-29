@@ -2,6 +2,8 @@ import { currentPrincipal } from "@/lib/identity";
 import { getProvider } from "@/lib/providers/catalog";
 import { testConnection } from "@/lib/providers/live-models";
 import { credentialFromInput, errorResponse, ProviderInputError } from "@/lib/providers/route-helpers";
+import { guardRateLimit } from "@/lib/security/rate-limits";
+import { apiRoute } from "@/lib/http/api-route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,9 +17,11 @@ export type TestConnectionResponse = {
   readonly message: string;
 };
 
-export async function POST(request: Request): Promise<Response> {
+async function handlePost(request: Request): Promise<Response> {
   const principal = await currentPrincipal();
   if (!principal) return Response.json({ ok: false, error: "Sign in to continue." }, { status: 401 });
+  const limited = guardRateLimit("providerTest", request, principal.id);
+  if (limited) return limited;
   if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) return Response.json({ ok: false, error: "Expected JSON." }, { status: 415 });
   let payload: Record<string, unknown>;
   try {
@@ -51,3 +55,5 @@ export async function POST(request: Request): Promise<Response> {
     return errorResponse(error);
   }
 }
+
+export const POST = apiRoute("providers:test", handlePost);

@@ -2,6 +2,7 @@ import { authConfigured, missingAuthEnv } from "@/lib/auth";
 import { INTEGRATIONS } from "@/lib/integrations/catalog";
 import { oauthConfigured } from "@/lib/integrations/oauth";
 import { deploymentSecret } from "@/lib/security/deployment-secrets.mjs";
+import { apiRoute } from "@/lib/http/api-route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,7 +11,7 @@ export const dynamic = "force-dynamic";
  * One request that answers "why is this deployment unhappy?" without opening a
  * dashboard: it reports what is configured, never a value.
  */
-export async function GET(): Promise<Response> {
+async function handleGet(): Promise<Response> {
   const missing = missingAuthEnv();
   const sessionSecret = deploymentSecret("session");
   const credentialSecret = deploymentSecret("credentials");
@@ -53,3 +54,5 @@ export async function GET(): Promise<Response> {
     { headers: { "cache-control": "no-store" } },
   );
 }
+
+export const GET = apiRoute("health", handleGet);

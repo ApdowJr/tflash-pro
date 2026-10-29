@@ -125,6 +125,32 @@ Persist Eve's workflow storage (or configure a suitable workflow world) and rout
 - `lib/providers/*`, `app/api/providers/*`, `agent/agent.ts` — providers and dynamic model routing.
 - `lib/integrations/*`, `agent/connections/*`, `docs/integrations.md` — MCP connections and approval policy.
 
+## Platform hardening (2026-10-29)
+
+The 2026-10-29 upgrade hardened the parts that only matter when something fails;
+no feature or API contract was removed. See
+[docs/upgrade-2026-10-29.md](docs/upgrade-2026-10-29.md) for the full rationale.
+
+- Wrapped API routes return an `x-request-id`, log one structured line with the
+  status and duration, and turn an unexpected throw into a JSON `500` with a
+  stable `code` instead of a stack trace. Logs mask credential-shaped keys and
+  scrub credential-shaped values (vendor key prefixes, JWTs, `Bearer …`,
+  `token=…`). `TFLASH_LOG_LEVEL=debug|info|warn|error` sets the threshold.
+- **In-process** rate limits (20–60 requests/minute) cover provider test and
+  connect, live model listing, integration connect, document read/export and chat
+  creation. They blunt retry storms and casual abuse; they are not a distributed
+  quota and must not be used for billing or per-account limits. Add a platform
+  limiter or WAF before opening the deployment to the public.
+- Route, global and 404 error surfaces plus an offline banner replace blank
+  screens. Security headers (nosniff, referrer policy, a microphone-only
+  permissions policy, COOP, HSTS) are sent for every path. `X-Frame-Options` and
+  `Content-Security-Policy` are intentionally not set: the app is embedded in a
+  preview iframe, and a correct CSP needs per-request nonces. Both are tracked
+  follow-ups.
+- A web manifest makes the app installable without a service worker, so no
+  conversation data is cached on a shared device. `robots.txt` disallows chat,
+  API, auth and `/eve/` paths.
+
 ## Release security note
 
 The 2026-10-29 security update reduced the registry audit from **56 advisories (7 critical) to 0** across production and development dependencies, without advisory suppressions. Next.js, Better Auth and affected transitive dependencies were patched. CI guards both the registry audit and the separate bundled-Zod finding below.

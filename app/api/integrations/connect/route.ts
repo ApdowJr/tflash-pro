@@ -1,6 +1,8 @@
 import { currentPrincipal } from "@/lib/identity";
 import { getIntegration, type IntegrationInfo } from "@/lib/integrations/catalog";
 import { sealIntegrationToken } from "@/lib/integrations/credentials";
+import { guardRateLimit } from "@/lib/security/rate-limits";
+import { apiRoute } from "@/lib/http/api-route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -90,9 +92,11 @@ async function probeToken(
   }
 }
 
-export async function POST(request: Request): Promise<Response> {
+async function handlePost(request: Request): Promise<Response> {
   const principal = await currentPrincipal();
   if (!principal) return Response.json({ ok: false, message: "Sign in to continue." }, { status: 401 });
+  const limited = guardRateLimit("integrationConnect", request, principal.id);
+  if (limited) return limited;
   if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) return Response.json({ ok: false, message: "Expected JSON." }, { status: 415 });
   let body: ConnectRequest;
   try {
@@ -168,3 +172,5 @@ export async function POST(request: Request): Promise<Response> {
     { headers: { "cache-control": "no-store" } },
   );
 }
+
+export const POST = apiRoute("integrations:connect", handlePost);

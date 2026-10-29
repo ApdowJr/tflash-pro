@@ -4,6 +4,7 @@ import { HEADER_INTEGRATION_TOKENS } from "@/lib/integrations/wire";
 import { HEADER_PROVIDER, HEADER_MODEL, HEADER_CONTEXT, HEADER_TOKEN } from "@/lib/providers/selection";
 import { CREATE_PROOF_HEADER, signChatCreation, signChatOwnership, verifyChatOwnership } from "@/lib/security/chat-ownership";
 import { internalEveHeaders, internalOrigin } from "@/lib/security/internal-origin";
+import { guardRateLimit } from "@/lib/security/rate-limits";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,6 +49,8 @@ export async function POST(request: Request): Promise<Response> {
   }
   const principal = await currentPrincipal();
   if (!principal) return Response.json({ error: "Sign in to continue." }, { status: 401 });
+  const limited = guardRateLimit("chatCreate", request, principal.id);
+  if (limited) return limited;
 
   try {
     // Do not create an unowned workflow when the authenticated user's chat

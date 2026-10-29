@@ -3,6 +3,7 @@ import { getProvider, type ModelInfo } from "@/lib/providers/catalog";
 import { fetchLiveModels } from "@/lib/providers/live-models";
 import { credentialFromInput, errorResponse, ProviderInputError } from "@/lib/providers/route-helpers";
 import { HEADER_TOKEN } from "@/lib/providers/selection";
+import { guardRateLimit } from "@/lib/security/rate-limits";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,6 +20,8 @@ export type ModelsResponse = {
 export async function GET(request: Request): Promise<Response> {
   const principal = await currentPrincipal();
   if (!principal) return Response.json({ ok: false, error: "Sign in to continue." }, { status: 401 });
+  const limited = guardRateLimit("providerModels", request, principal.id);
+  if (limited) return limited;
   const providerId = new URL(request.url).searchParams.get("provider") ?? "";
   const provider = getProvider(providerId);
   if (!provider) return errorResponse(new ProviderInputError("Unknown provider."));
