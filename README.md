@@ -29,7 +29,7 @@ For a **Git preview only**, `TFLASH_PREVIEW_USE_AUTH_SECRET=1` explicitly permit
 
 ```bash
 corepack pnpm run audit:security    # registry dependency advisories
-corepack pnpm run audit:bundled-zod # separate release gate; currently BLOCKED
+corepack pnpm run audit:bundled-zod # compiled runtime + exact backport integrity
 corepack pnpm test        # local unit and mock-service tests
 corepack pnpm typecheck
 corepack pnpm build       # Next production build
@@ -121,4 +121,6 @@ Persist Eve's workflow storage (or configure a suitable workflow world) and rout
 
 The 2026-10-29 security update reduced the registry audit from **56 advisories (7 critical) to 0** across production and development dependencies, without advisory suppressions. Next.js, Better Auth and affected transitive dependencies were patched. CI guards both the registry audit and the separate bundled-Zod finding below.
 
-**Production remains blocked:** Eve 0.83.2 embeds **Zod 4.5.4**, affected by [GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5). Package-manager overrides do not rewrite compiled framework code. The bundled-Zod CI gate intentionally fails until an upstream patched runtime or a reviewed mitigation is validated. This is not fixed by a clean registry audit. See [dependency security](docs/dependency-security.md) for evidence and release criteria; passing tests/builds is not production security approval.
+The separate Eve/Zod finding is remediated in this patch with a **version-pinned backport of the official upstream fix**, applied by pnpm during installation. Eve still reports bundled Zod 4.5.4; we do not relabel it as a newer release. The security gate verifies the exact patched shared chunk/helper hashes and checks array/map/set rejection in synchronous, asynchronous and compiled paths. Missing, altered or unknown backports fail closed. See [dependency security](docs/dependency-security.md) for provenance, reproduction and limitations.
+
+Both security gates, local tests and builds pass for this patch. This does not establish live authentication/provider connectivity or blanket production security approval; preview validation, sandbox/workflow readiness and an authorized production rollout remain separate.

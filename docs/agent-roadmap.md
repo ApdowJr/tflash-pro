@@ -57,8 +57,10 @@ Implemented locally with an intentionally browser-local first release for **both
 
 Local tests cover strict schemas, project membership/deletion, opt-in scoped/bounded context, account/login-kind isolation in the real provider/UI, storage failures, edit/delete confirmations, actual server hook cancellation with a mocked durable slot, usage/approval/task projections, real PDF/DOCX round trips, malformed/unsafe archives, scanned/oversize PDFs, route login/origin checks for both principal kinds, and user-initiated UI import/export. Provider transports/authentication are mocked; no live model selection/tool use or production connectivity is established. Production deployment is a separate explicit step.
 
-### Dependency audit / release blocker
+### Dependency security
 
 The 2026-10-29 dependency update reduced the registry audit from **56 advisories (7 critical, 20 high, 18 moderate, 11 low) to 0**, including development dependencies and without advisory suppressions. Auth/provider, sanitizer, math and real Undici DNS-dispatch regressions accompany the update.
 
-**Separate release blocker:** Eve 0.83.2 still embeds Zod 4.5.4, affected by GHSA-mrhx-c7xc-m3w5. Package overrides cannot repair compiled code. CI intentionally fails its bundled-Zod gate until a patched framework runtime or a reviewed mitigation is validated. See [dependency security](dependency-security.md). Local tests/builds and registry-audit success do not clear this finding, establish live service connectivity or authorize production rollout.
+The separate compiled-Zod finding is addressed by a pnpm-applied, version-pinned backport of Zod's official bounded-collection fix into Eve 0.83.2. The gate still runs: it accepts only exact verified backport bytes (or a patched upstream version), plus passing sync/async/compiled array/map/set probes. It does not suppress an advisory or pretend the bundled version was upgraded. See [dependency security](dependency-security.md) for provenance, regression coverage and reproduction.
+
+Local registry/bundled audits, tests and builds pass with the fix. Live service connectivity, preview behavior and production sandbox/workflow readiness remain unverified; production rollout is a separate authorized step.

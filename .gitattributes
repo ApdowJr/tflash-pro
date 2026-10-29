@@ -1,0 +1,2 @@
+# Generated dependency patches must retain blank context lines verbatim.
+patches/*.patch whitespace=-blank-at-eol
