@@ -505,3 +505,152 @@ test("the sign-in screen keeps both login choices and bilingual email-link signu
   assert.equal(calls[0].options.method, "POST");
   assert.match(decodeURIComponent(calls[0].url), /auth\/callback\?next=/);
 });
+
+test("task progress is bilingual and a blocked step is not shown as completed", async () => {
+  const { AgentPlanCard } = await import("../components/chat/agent-workspace.tsx");
+  seed({ language: "so" });
+  fakeFetch();
+  render(app(h(AgentPlanCard, { plan: { title: "Diyaari warbixin", steps: [
+    { id: "one", title: "Akhrinta", status: "completed" },
+    { id: "two", title: "Dirista", status: "blocked", detail: "Oggolaansho ma jiro" },
+  ] } })));
+  const panel = await screen.findByRole("region", { name: "Qorshaha hawsha" });
+  assert.ok(within(panel).getByText("Xanniban", { exact: false }));
+  assert.ok(within(panel).getByText("Oggolaansho ma jiro"));
+  assert.ok(within(panel).getByText("1/2 Dhammaatay"));
+  assert.equal(within(panel).getAllByRole("listitem").length, 2);
+});
+
+test("artifact preview is inert text and downloading uses the exact generated content", async () => {
+  const { AgentArtifactCard } = await import("../components/chat/agent-workspace.tsx");
+  seed();
+  fakeFetch();
+  const content = '<script>window.injected = true</script>\n# Deliverable';
+  const originalCreate = URL.createObjectURL;
+  const originalRevoke = URL.revokeObjectURL;
+  const originalClick = window.HTMLAnchorElement.prototype.click;
+  let savedBlob;
+  let savedFilename;
+  URL.createObjectURL = (blob) => { savedBlob = blob; return "blob:artifact-test"; };
+  URL.revokeObjectURL = () => {};
+  window.HTMLAnchorElement.prototype.click = function () { savedFilename = this.download; };
+  try {
+    render(app(h(AgentArtifactCard, { artifact: { filename: "report.md", description: "Finished report", content } })));
+    await userEvent.setup().click(screen.getByText("Preview content"));
+    assert.equal(document.querySelector("pre").textContent, content);
+    assert.equal(document.querySelector("script"), null);
+    assert.equal(window.injected, undefined);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Download: report.md" }));
+    assert.equal(savedFilename, "report.md");
+    assert.equal(savedBlob.type, "text/markdown;charset=utf-8");
+    const actual = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsText(savedBlob);
+    });
+    assert.equal(actual, content);
+    // Let the component release its temporary download URL before restoring mocks.
+    await new Promise((resolve) => window.setTimeout(resolve, 1050));
+  } finally {
+    URL.createObjectURL = originalCreate;
+    URL.revokeObjectURL = originalRevoke;
+    window.HTMLAnchorElement.prototype.click = originalClick;
+  }
+});
+
+test("unfinished stopped plans can be continued explicitly, but completed or active plans cannot", async () => {
+  const { AgentPlanCard } = await import("../components/chat/agent-workspace.tsx");
+  seed();
+  fakeFetch();
+  let attempts = 0;
+  let rejectAttempt;
+  const pending = new Promise((_, reject) => { rejectAttempt = reject; });
+  const onContinue = async () => { attempts++; await pending; };
+  const plan = { title: "Write report", steps: [{ id: "write", title: "Write", status: "pending" }] };
+  const rendered = render(app(h(AgentPlanCard, { plan, runState: "idle", onContinue })));
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Continue task" }));
+  assert.equal(attempts, 1);
+  assert.equal(screen.getByRole("button", { name: "Working" }).disabled, true);
+  await React.act(async () => { rejectAttempt(new Error("offline")); try { await pending; } catch {} });
+  assert.ok(screen.getByRole("alert"));
+  assert.equal(screen.getByRole("button", { name: "Continue task" }).disabled, false);
+  rendered.rerender(app(h(AgentPlanCard, { plan, runState: "working", onContinue })));
+  assert.equal(screen.queryByRole("button", { name: "Continue task" }), null);
+  rendered.rerender(app(h(AgentPlanCard, { plan: { ...plan, steps: [{ ...plan.steps[0], status: "completed" }] }, runState: "idle", onContinue })));
+  assert.equal(screen.queryByRole("button", { name: "Continue task" }), null);
+});
+
+test("actual chat messages render authored artifacts and reject a lookalike from another tool", async () => {
+  const { AgentMessage } = await import("../components/chat/agent-message.tsx");
+  seed();
+  fakeFetch();
+  const output = { kind: "tflash-artifact", version: 1, artifact: { filename: "result.txt", description: "Result", content: "Done" } };
+  const part = { type: "dynamic-tool", toolName: "create_artifact", toolCallId: "call-1", state: "output-available", input: {}, output };
+  const props = { canRespond: () => false, isStreaming: false, onInputResponses() {}, questionsFor: () => [], message: { id: "assistant-1", role: "assistant", parts: [part] } };
+  const rendered = render(app(h(AgentMessage, props)));
+  assert.ok(await screen.findByRole("button", { name: "Download: result.txt" }));
+  rendered.rerender(app(h(AgentMessage, { ...props, message: { ...props.message, parts: [{ ...part, toolName: "unknown_tool" }] } })));
+  assert.equal(screen.queryByRole("button", { name: "Download: result.txt" }), null);
+});
+
+test("research messages show inert bilingual sources and download the actual executor-generated report", async () => {
+  const { AgentMessage } = await import("../components/chat/agent-message.tsx");
+  const fetchTool = (await import("../agent/tools/web_fetch.ts")).default;
+  const reportTool = (await import("../agent/tools/create_research_report.ts")).default;
+  const context = { session: { id: "ui-research", auth: { current: { principalId: userId, principalType: "user" } } } };
+  globalThis.fetch = async () => new Response('<script>window.researchInjected=true</script> Sample size: 42.', { headers: { "content-type": "text/plain" } });
+  const fetched = await fetchTool.execute({ url: "https://example.com/study" }, context);
+  const result = await reportTool.execute({ filename: "study.md", language: "en", title: "Study", summary: "Small sample", receipts: [fetched.receipt], findings: [{ claim: "Sample size: 42", sources: [1] }], limitations: ["Single source, not independently verified"] }, context);
+  const originalCreate = URL.createObjectURL;
+  const originalRevoke = URL.revokeObjectURL;
+  const originalClick = window.HTMLAnchorElement.prototype.click;
+  let savedBlob;
+  let savedFilename;
+  URL.createObjectURL = (blob) => { savedBlob = blob; return "blob:research-test"; };
+  URL.revokeObjectURL = () => {};
+  window.HTMLAnchorElement.prototype.click = function () { savedFilename = this.download; };
+  const props = (toolName, output, state = "output-available") => ({ canRespond: () => false, isStreaming: false, onInputResponses() {}, questionsFor: () => [], message: { id: "research-msg", role: "assistant", parts: [{ type: "dynamic-tool", toolName, toolCallId: "research-call", state, input: {}, output }] } });
+  try {
+    seed(); fakeFetch();
+    const rendered = render(app(h(AgentMessage, props("web_fetch", fetched))));
+    const card = await screen.findByRole("region", { name: "Fetched source" });
+    const link = within(card).getByRole("link");
+    assert.equal(link.href, "https://example.com/study");
+    assert.equal(link.rel, "noopener noreferrer");
+    await userEvent.setup().click(within(card).getByText("Retrieved excerpt"));
+    assert.ok(card.textContent.includes("<script>"));
+    assert.equal(card.querySelector("script"), null);
+    assert.equal(window.researchInjected, undefined);
+    assert.ok(!card.textContent.includes(fetched.receipt));
+    rendered.rerender(app(h(AgentMessage, props("create_research_report", result))));
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Download: study.md" }));
+    assert.equal(savedFilename, "study.md");
+    const actual = await new Promise((resolve, reject) => {
+      const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsText(savedBlob);
+    });
+    assert.equal(actual, result.artifact.content);
+    assert.ok(actual.includes("[1]: <https://example.com/study>"));
+    for (const [name, output, state] of [
+      ["unknown_tool", result, "output-available"],
+      ["create_research_report", result, "input-available"],
+      ["create_research_report", { ...result, sources: [{ ...fetched.source, url: "javascript:alert(1)" }] }, "output-available"],
+    ]) {
+      rendered.rerender(app(h(AgentMessage, props(name, output, state))));
+      assert.equal(screen.queryByRole("button", { name: "Download: study.md" }), null);
+    }
+    rendered.unmount();
+    seed({ language: "so" }); fakeFetch();
+    render(app(h(AgentMessage, props("create_research_report", result))));
+    assert.ok(await screen.findByRole("region", { name: "Warbixinta baarista" }));
+    assert.ok(screen.getByRole("button", { name: "Soo dejiso: study.md" }));
+    await userEvent.setup().click(screen.getByText("Ilaha la akhriyey (1)"));
+    assert.ok(screen.getByRole("region", { name: "Isha la akhriyey" }));
+    await new Promise((resolve) => window.setTimeout(resolve, 1050));
+  } finally {
+    URL.createObjectURL = originalCreate;
+    URL.revokeObjectURL = originalRevoke;
+    window.HTMLAnchorElement.prototype.click = originalClick;
+  }
+});

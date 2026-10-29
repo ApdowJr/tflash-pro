@@ -79,6 +79,18 @@ Browser-supplied keys are encrypted server-side with AES-GCM. The browser keeps 
 
 Custom, Ollama, and LM Studio endpoints are reached **from the server**, not the user's laptop. In production each custom `host[:port]` must be explicitly listed in `CUSTOM_PROVIDER_ALLOWED_HOSTS`; an empty list denies custom endpoints. HTTPS is required except for an explicitly allowed loopback HTTP endpoint. Credential-bearing URLs, internal/metadata hostnames, and redirects are rejected. Only allow hosts and DNS you control.
 
+## Task plans and downloadable results
+
+For substantial multi-step work, Tflash can publish a task checklist and update it as work progresses. The latest plan appears above the conversation; actual run status is separate from the agent's reported step status. Plans do not execute tasks or certify success.
+
+Finished Markdown, text, CSV and JSON deliverables appear as preview/download cards. Content stays in the owned conversation's workflow data, not a public bucket. Downloads are text-only and bounded to 100,000 characters; no PDF rendering or automatic code execution is added. Review generated content before using it. See [the phased agent roadmap](docs/agent-roadmap.md) for implementation details and deferred projects/memory work.
+
+## Research with traceable sources
+
+Ask Tflash to research a topic and create a downloadable report. It uses Eve's existing provider-managed search where supported, reads public HTTPS pages with per-call approval, and shows requested source URLs, retrieval times and excerpts. A Markdown report accepts only app-issued source receipts from the same account/chat and requires citations and limitations. Retrieved evidence and AI synthesis are labelled separately; retrieval does not independently verify the claims.
+
+Search depends on the selected provider/model. AI Gateway keeps its existing Exa default; supported direct OpenAI/Anthropic/Google models use native search. Direct OpenRouter/other compatible endpoints may not have search; supply public URLs instead. No provider is switched automatically. Reports are Markdown, not PDF. These tools do not need a shell sandbox; live provider search and production connectivity still need verification.
+
 ## Tools, sandbox, and storage
 
 Shell commands and **every** external MCP call require a fresh in-chat approval. Review the arguments before approving. MCP credentials are separate from model-provider keys. Local self-modification is disabled. Approvals do not replace scoped permissions, isolation, or monitoring.

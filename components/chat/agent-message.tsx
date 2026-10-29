@@ -9,6 +9,10 @@ import type {
   EveMessagePart,
 } from "eve/react";
 import type { FormEvent } from "react";
+import { planOutputSchema, artifactOutputSchema } from "@/lib/agent-workspace";
+import { AgentPlanCard, AgentArtifactCard } from "./agent-workspace";
+import { researchFetchOutputSchema, researchReportOutputSchema } from "@/lib/research";
+import { ResearchSourceCard, ResearchReportCard } from "./research";
 import {
   CheckCircleIcon,
   ExternalLinkIcon,
@@ -129,6 +133,24 @@ function AgentMessagePart({
     case "authorization":
       return <AuthorizationPrompt part={part} />;
     case "dynamic-tool": {
+      if (part.state === "output-available") {
+        if (part.toolName === "web_fetch") {
+          const parsed = researchFetchOutputSchema.safeParse(part.output);
+          if (parsed.success) return <ResearchSourceCard source={parsed.data.source} />;
+        }
+        if (part.toolName === "create_research_report") {
+          const parsed = researchReportOutputSchema.safeParse(part.output);
+          if (parsed.success) return <ResearchReportCard artifact={parsed.data.artifact} sources={parsed.data.sources} />;
+        }
+        if (part.toolName === "update_plan") {
+          const parsed = planOutputSchema.safeParse(part.output);
+          if (parsed.success) return <AgentPlanCard plan={parsed.data.plan} />;
+        }
+        if (part.toolName === "create_artifact") {
+          const parsed = artifactOutputSchema.safeParse(part.output);
+          if (parsed.success) return <AgentArtifactCard artifact={parsed.data.artifact} />;
+        }
+      }
       const questions = questionsFor(part.toolCallId);
       if (questions.length > 0) {
         return (
