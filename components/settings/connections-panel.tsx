@@ -145,7 +145,7 @@ function ConnectionRow({ integration, status, record, loading, isOpen, returnTo,
   return (
     <div className="min-w-0 rounded-xl border border-border/70 bg-card">
       <div className="flex flex-wrap items-center gap-2 px-3 py-2.5">
-        <button aria-expanded={isOpen} aria-label={`${integration.name} ${t(connected ? "connected" : record ? "expired" : "notConnected")}`} className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={onToggle} type="button">
+        <button aria-controls={`integration-panel-${integration.id}`} aria-expanded={isOpen} aria-label={`${integration.name} ${t(connected ? "connected" : record ? "expired" : "notConnected")}`} className="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" id={`integration-toggle-${integration.id}`} onClick={onToggle} type="button">
           <Icon className="size-4 shrink-0 text-muted-foreground" />
           <span className="min-w-0 flex-1">
             <span className="block text-sm font-medium">{integration.name}</span>
@@ -174,7 +174,7 @@ function ConnectionRow({ integration, status, record, loading, isOpen, returnTo,
         )}
       </div>
       {isOpen ? (
-        <div className="space-y-2 border-t border-border/70 px-3 py-3 text-xs text-muted-foreground">
+        <div aria-labelledby={`integration-toggle-${integration.id}`} className="space-y-2 border-t border-border/70 px-3 py-3 text-xs text-muted-foreground" id={`integration-panel-${integration.id}`} role="region">
           <p>{integration.summary[settings.language]}</p>
           {integration.oauth ? <p><span className="font-medium text-foreground">{t("oauthAccessTitle")}: </span>{integration.oauth.access[settings.language]}</p> : null}
           {!connected ? <p>{oauthReady ? t("oauthConsentNote") : t("oauthUnconfigured")}</p> : null}
