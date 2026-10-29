@@ -896,3 +896,22 @@ test("settings tabs expose tab semantics and support arrow, Home, and End naviga
   assert.equal(document.activeElement, providers);
   assert.equal(providers.getAttribute("aria-selected"), "true");
 });
+
+test("connection accordions expose their panel relationship and mobile focus target", async () => {
+  seed();
+  fakeFetch();
+  render(app(h(ConnectionsPanel)));
+  const toggle = await screen.findByRole("button", { name: /Linear/ });
+  assert.equal(toggle.getAttribute("aria-expanded"), "false");
+  assert.equal(toggle.getAttribute("aria-controls"), "integration-panel-linear");
+  assert.ok(toggle.className.includes("min-h-11"));
+  const user = userEvent.setup();
+  await user.click(toggle);
+  assert.equal(toggle.getAttribute("aria-expanded"), "true");
+  const panel = screen.getByRole("region", { name: toggle.getAttribute("aria-label") });
+  assert.equal(panel.id, "integration-panel-linear");
+  assert.equal(panel.getAttribute("aria-labelledby"), toggle.id);
+  await user.keyboard("{Enter}");
+  assert.equal(toggle.getAttribute("aria-expanded"), "false");
+  assert.equal(screen.queryByRole("region", { name: toggle.getAttribute("aria-label") }), null);
+});
