@@ -28,6 +28,7 @@ import { SettingsDialog } from "@/components/settings/settings-dialog";
 import { sessionTitle } from "@/lib/chat-history";
 import { OWNER_PROOF_HEADER } from "@/lib/security/chat-ownership-wire";
 import { AgentMessage } from "./agent-message";
+import { VoiceOutputButton } from "./voice-output";
 import { AgentPlanCard, type AgentRunState } from "./agent-workspace";
 import { ActivityPanel } from "./activity-panel";
 import { ProjectPicker } from "@/components/settings/workspace-panel";
@@ -360,7 +361,10 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
                       questionsFor={questionsFor}
                     />
                     {message.role === "assistant" ? (
-                      <CopyMessageButton message={message} />
+                      <MessageActions
+                        isStreaming={isBusy && index === agent.data.messages.length - 1}
+                        message={message}
+                      />
                     ) : null}
                   </div>
                 ),
@@ -417,24 +421,35 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   );
 }
 
-function CopyMessageButton({
+function MessageActions({
   message,
+  isStreaming,
 }: {
   readonly message: { parts: readonly { type: string; text?: string }[] };
+  readonly isStreaming: boolean;
 }) {
+  // Do not include reasoning, attachments, tool arguments or tool output.
+  const text = message.parts
+    .filter((part) => part.type === "text")
+    .map((part) => part.text ?? "")
+    .join("\n\n");
+  if (!text.trim()) return null;
+  return (
+    <div className="tf-reveal mt-1 flex w-fit items-center gap-1 rounded-md bg-background/85 opacity-0 backdrop-blur transition-opacity focus-within:opacity-100 group-hover/msg:opacity-100">
+      <CopyMessageButton text={text} />
+      <VoiceOutputButton disabled={isStreaming} text={text} />
+    </div>
+  );
+}
+
+function CopyMessageButton({ text }: { readonly text: string }) {
   const { t } = useAppSettings();
   const [copied, setCopied] = useState(false);
-  const hasText = message.parts.some((part) => part.type === "text" && part.text);
-  if (!hasText) return null;
   return (
     <Button
       aria-label={t("copy")}
-      className="tf-reveal absolute -bottom-5 left-0 h-6 gap-1 rounded-md bg-background/85 px-1.5 text-[10.5px] text-muted-foreground opacity-0 backdrop-blur transition-opacity focus-visible:opacity-100 group-hover/msg:opacity-100"
+      className="tf-touch-target h-6 gap-1 rounded-md px-1.5 text-[10.5px] text-muted-foreground"
       onClick={() => {
-        const text = message.parts
-          .filter((part) => part.type === "text")
-          .map((part) => part.text ?? "")
-          .join("\n\n");
         void navigator.clipboard.writeText(text).then(() => {
           setCopied(true);
           window.setTimeout(() => setCopied(false), 1500);
