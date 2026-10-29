@@ -455,3 +455,17 @@ html {
     outline: 2px solid Highlight;
   }
 }
+
+/* Touch ergonomics: keep the most-used controls comfortably tappable. */
+@media (max-width: 40rem) and (pointer: coarse) {
+  .tf-topbar > button,
+  .tf-topbar > [data-slot="dropdown-menu-trigger"] {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .tf-touch-target {
+    min-width: 44px !important;
+    min-height: 44px !important;
+  }
+}
