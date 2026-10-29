@@ -114,7 +114,25 @@ export function WorkspaceProvider({
     };
     void load();
     const onStorage = (event: StorageEvent) => {
-      if (event.key === key || event.key === null) void load();
+      if (event.key === key) {
+        // The localStorage event is the newest same-browser snapshot. Do not
+        // race it with a cloud read that may still return the previous write.
+        changeRevision.current += 1;
+        try {
+          const value = event.newValue === null
+            ? emptyWorkspace()
+            : workspaceSchema.parse(JSON.parse(event.newValue));
+          reference.current = { key, value };
+          setLoaded({ key, value });
+          setStorageError(false);
+          void syncCloud(value).catch(() => undefined);
+        } catch {
+          setStorageError(true);
+          setSyncStatus("error");
+        }
+      } else if (event.key === null) {
+        void load();
+      }
     };
     window.addEventListener("storage", onStorage);
     return () => { cancelled = true; window.removeEventListener("storage", onStorage); };
