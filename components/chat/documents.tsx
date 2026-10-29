@@ -55,6 +55,7 @@ export function DocumentExportButtons({
     <div className="space-y-1">
       <div className="flex gap-2">
         <Button
+          className="tf-touch-target min-h-11"
           disabled={pending}
           size="sm"
           variant="outline"
@@ -63,6 +64,7 @@ export function DocumentExportButtons({
           {t("exportPdf")}
         </Button>
         <Button
+          className="tf-touch-target min-h-11"
           disabled={pending}
           size="sm"
           variant="outline"
@@ -144,13 +146,14 @@ export function DocumentImportButton({
         }}
       />
       <PromptInputButton
+        className="tf-touch-target size-11 min-h-11 min-w-11 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
         aria-label={t("importDocument")}
         tooltip={t("importDocumentHint")}
         disabled={disabled || pending}
         onClick={() => input.current?.click()}
         type="button"
       >
-        <BookOpenIcon className="size-3.5" />
+        <BookOpenIcon className="size-4" />
       </PromptInputButton>
       {pending ? (
         <span role="status" className="max-w-48 break-words text-[11px]">
