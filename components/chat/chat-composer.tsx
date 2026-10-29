@@ -71,7 +71,8 @@ export function ChatComposer({
         <ComposerAttachments />
         <PromptInputTextarea
           className="min-h-[3.75rem] px-4 pt-3.5 pb-0 text-[15px] leading-relaxed placeholder:text-muted-foreground/70 md:text-[15px]"
-          disabled={isResuming}
+          // Drafts remain editable while a session prepares or after an error;
+          // Send stays disabled until it is safe to submit.
           placeholder={t("placeholder")}
         />
         <PromptInputFooter className="flex-wrap border-t-0 px-2.5 pt-1.5 pb-2.5 pr-14">

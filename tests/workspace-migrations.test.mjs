@@ -231,3 +231,42 @@ test("Supabase migrations apply in order with explicit grants, CAS-compatible RL
     await db.close();
   }
 });
+
+
+test("the chat migration enforces owner-only reads, writes and deletes with real RLS", async () => {
+  const db = new PGlite();
+  try {
+    await db.exec(`
+      create role anon nologin;
+      create role authenticated nologin;
+      create schema auth;
+      create table auth.users (id uuid primary key);
+      create function auth.uid() returns uuid language sql stable
+        as $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
+      grant usage on schema auth to authenticated;
+      grant execute on function auth.uid() to authenticated;
+      grant usage on schema public to anon, authenticated;
+    `);
+    await db.exec(await readFile(new URL("20261028075927_create_tflash_chats.sql", migrationDirectory), "utf8"));
+    await db.query("insert into auth.users(id) values ($1), ($2)", [userA, userB]);
+    const proof = "p".repeat(43);
+    await asAuthenticatedUser(db, userA,
+      "insert into public.tflash_chats(session_id,user_id,owner_proof,title) values ($1,$2,$3,$4)", ["session-a", userA, proof, "A"]);
+    await assert.rejects(
+      () => asAuthenticatedUser(db, userA, "insert into public.tflash_chats(session_id,user_id,owner_proof) values ($1,$2,$3)", ["forged", userB, proof]),
+      (error) => error.code === "42501",
+    );
+    assert.deepEqual((await asAuthenticatedUser(db, userB, "select session_id from public.tflash_chats")).rows, []);
+    assert.deepEqual((await asAuthenticatedUser(db, userB, "update public.tflash_chats set title = 'stolen' where session_id = 'session-a' returning session_id")).rows, []);
+    assert.deepEqual((await asAuthenticatedUser(db, userB, "delete from public.tflash_chats where session_id = 'session-a' returning session_id")).rows, []);
+    await asAuthenticatedUser(db, userB,
+      "insert into public.tflash_chats(session_id,user_id,owner_proof,title) values ($1,$2,$3,$4)", ["session-b", userB, proof, "B"]);
+    assert.deepEqual((await asAuthenticatedUser(db, userB, "select session_id from public.tflash_chats")).rows, [{ session_id: "session-b" }]);
+    assert.deepEqual((await asAuthenticatedUser(db, userA, "select session_id,title from public.tflash_chats")).rows, [{ session_id: "session-a", title: "A" }]);
+    assert.deepEqual((await asAuthenticatedUser(db, userA, "delete from public.tflash_chats where session_id = 'session-a' returning session_id")).rows, [{ session_id: "session-a" }]);
+    await assert.rejects(
+      () => db.exec("set role anon; select session_id from public.tflash_chats; reset role"),
+      (error) => error.code === "42501",
+    );
+  } finally { await db.close(); }
+});

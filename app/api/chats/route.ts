@@ -9,6 +9,18 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const noStore = { "cache-control": "no-store" };
 
+/** Do not expose database details or silently fall back to another account. */
+function chatStorageFailure(error: { code?: string; message?: string }): Response {
+  const missingSchema = ["42P01", "42703", "PGRST204", "PGRST205"].includes(error.code ?? "");
+  console.error("[tflash] chat storage unavailable", error.code ?? "unknown", error.message ?? "unknown");
+  return Response.json({
+    code: missingSchema ? "CHAT_STORAGE_SETUP_REQUIRED" : "CHAT_STORAGE_UNAVAILABLE",
+    error: missingSchema
+      ? "Chat storage is not configured for this deployment."
+      : "Could not save the conversation. Please try again.",
+  }, { status: 503, headers: noStore });
+}
+
 export async function GET(): Promise<Response> {
   const principal = await currentPrincipal();
   if (!principal) return Response.json({ error: "Sign in to continue." }, { status: 401 });
@@ -38,6 +50,16 @@ export async function POST(request: Request): Promise<Response> {
   if (!principal) return Response.json({ error: "Sign in to continue." }, { status: 401 });
 
   try {
+    // Do not create an unowned workflow when the authenticated user's chat
+    // index is missing or unavailable. A zero-row SELECT verifies the schema
+    // and permissions without returning chat data or weakening RLS. Use GET:
+    // PostgREST's client can treat an empty-body HEAD 404 as a successful 204.
+    const supabase = principal.kind === "supabase" ? await serverSupabase() : null;
+    if (supabase) {
+      const { error } = await supabase.from("tflash_chats")
+        .select("session_id,user_id,owner_proof,title,updated_at").limit(0);
+      if (error) return chatStorageFailure(error);
+    }
     const headers = internalEveHeaders({
       cookie: request.headers.get("cookie") ?? "",
       [CREATE_PROOF_HEADER]: signChatCreation(principal.id),
@@ -63,17 +85,14 @@ export async function POST(request: Request): Promise<Response> {
     if (principal.kind === "vercel") {
       return Response.json({ sessionId, ownerProof }, { status: 201, headers: noStore });
     }
-    const supabase = await serverSupabase();
+    if (!supabase) throw new Error("Missing authenticated chat storage client.");
     const { error } = await supabase.from("tflash_chats").insert({
       session_id: sessionId, user_id: principal.id, owner_proof: ownerProof, title: null,
     });
-    if (error) {
-      console.error("[tflash] could not register session", error.message);
-      return Response.json({ error: "Could not save the conversation. Please try again." }, { status: 503 });
-    }
+    if (error) return chatStorageFailure(error);
     return Response.json({ sessionId }, { status: 201, headers: noStore });
   } catch (error) {
     console.error("[tflash] session creation unavailable", error instanceof Error ? error.message : "unknown error");
-    return Response.json({ error: "Conversation service is unavailable. Please try again." }, { status: 503 });
+    return Response.json({ error: "Conversation service is unavailable. Please try again." }, { status: 503, headers: noStore });
   }
 }
