@@ -306,6 +306,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
           onOpenModels={() => setModelsOpen(true)}
           onOpenSettings={() => openSettings("providers")}
           onOpenSidebar={() => setSidebarOpen(true)}
+          sidebarOpen={sidebarOpen}
           title={showConversationLayout ? title : undefined}
         />
 

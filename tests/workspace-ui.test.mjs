@@ -157,6 +157,27 @@ test("Somali history actions and empty search are translated", async () => {
   assert.ok(screen.getByText("Ma jiro wada hadal ku habboon raadinta."));
 });
 
+test("mobile sidebar moves focus into navigation and restores it to the opener", async () => {
+  seed();
+  fakeFetch();
+  function SidebarHarness() {
+    const [open, setOpen] = React.useState(false);
+    return h(React.Fragment, null,
+      h("button", { type: "button", onClick: () => setOpen(true) }, "Open navigation"),
+      h(Sidebar, { open, onClose: () => setOpen(false), onNewChat() {}, onOpenSettings() {} }),
+    );
+  }
+
+  render(app(h(SidebarHarness)));
+  const opener = screen.getByRole("button", { name: "Open navigation" });
+  await userEvent.setup().click(opener);
+  const closeButton = await screen.findByRole("button", { name: "Close menu" });
+  await waitFor(() => assert.equal(document.activeElement, closeButton));
+
+  await userEvent.setup().click(closeButton);
+  await waitFor(() => assert.equal(document.activeElement, opener));
+});
+
 test("provider settings are searchable, clear unfinished keys, and connect OpenRouter", async () => {
   seed();
   const calls = fakeFetch((path, options) => {

@@ -31,6 +31,7 @@ export function TopBar({
   onExportChat,
   onNewChat,
   onOpenSidebar,
+  sidebarOpen,
   onOpenSettings,
   onOpenModels,
 }: {
@@ -39,6 +40,7 @@ export function TopBar({
   readonly onExportChat: () => void;
   readonly onNewChat: () => void;
   readonly onOpenSidebar: () => void;
+  readonly sidebarOpen: boolean;
   readonly onOpenSettings: () => void;
   readonly onOpenModels: () => void;
 }) {
@@ -51,6 +53,8 @@ export function TopBar({
     <header className="tf-topbar tf-safe-x flex h-14 shrink-0 items-center gap-1.5 px-3 sm:gap-2 sm:px-4">
       <button
         aria-label={t("openMenu")}
+        aria-controls="conversation-sidebar"
+        aria-expanded={sidebarOpen}
         className="-ml-1 flex size-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground sm:size-8 lg:hidden"
         onClick={onOpenSidebar}
         type="button"
