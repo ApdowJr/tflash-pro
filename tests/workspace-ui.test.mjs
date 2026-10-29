@@ -1016,11 +1016,18 @@ test("workspace cross-tab updates use the latest cloud revision", async () => {
   render(h(WorkspaceProvider, { kind: "supabase", userId: "cross-tab-test", children: h(Probe) }));
   await waitFor(() => assert.equal(screen.getByRole("status").textContent, "synced"));
   const updated = { ...emptyWorkspace(), projects: [{ id: "cross-tab-project", name: "Cross-tab edit", instructions: "", chatIds: [] }] };
-  window.dispatchEvent(new dom.window.StorageEvent("storage", {
-    key: workspaceStorageKey("supabase", "cross-tab-test"),
+  const eventKey = workspaceStorageKey("supabase", "cross-tab-test");
+  const eventValue = JSON.stringify(updated);
+  const storageEvent = new dom.window.StorageEvent("storage", {
+    key: eventKey,
     oldValue: null,
-    newValue: JSON.stringify(updated),
-  }));
+    newValue: eventValue,
+  });
+  assert.equal(storageEvent.key, eventKey);
+  assert.equal(storageEvent.newValue, eventValue);
+  await React.act(async () => {
+    window.dispatchEvent(storageEvent);
+  });
   await waitFor(() => assert.ok(screen.getByText("Cross-tab edit")));
   await waitFor(() => assert.equal(screen.getByRole("status").textContent, "synced"));
   assert.deepEqual(writes.at(-1).body.workspace, updated);
@@ -1041,7 +1048,9 @@ test("workspace conflicts preserve both copies until the user chooses the cloud 
   await screen.findByText("Local draft");
   await screen.findByText("This device's copy is preserved. Keeping it replaces the cloud copy; using cloud replaces this device's copy.");
   assert.equal(screen.queryByText("Cloud saved"), null);
-  await userEvent.click(screen.getByRole("button", { name: "Use cloud copy (replace this device)" }));
+  await React.act(async () => {
+    await userEvent.click(screen.getByRole("button", { name: "Use cloud copy (replace this device)" }));
+  });
   await screen.findByText("Cloud saved");
   assert.deepEqual(JSON.parse(window.localStorage.getItem(workspaceStorageKey("supabase", userId))), cloud);
   assert.equal(calls.filter((call) => call.path === "/api/workspace" && call.options.method === "PUT").length, 0);
@@ -1067,7 +1076,9 @@ test("keeping the browser copy refreshes the revision before an explicit cloud r
   });
   render(app(h(WorkspacePanel), "supabase"));
   await screen.findByText("Local draft");
-  await userEvent.click(screen.getByRole("button", { name: "Keep this device's copy (replace cloud)" }));
+  await React.act(async () => {
+    await userEvent.click(screen.getByRole("button", { name: "Keep this device's copy (replace cloud)" }));
+  });
   await waitFor(() => assert.equal(screen.getByRole("status").textContent, "Workspace synced to your signed-in account. Memory remains opt-in; avoid storing secrets."));
   assert.equal(write.expectedUserId, userId);
   assert.equal(write.body.expectedUpdatedAt, "2026-10-29T12:00:00.001Z");
