@@ -36,6 +36,7 @@ import { workspaceContext } from "@/lib/workspace";
 import { attachedText } from "@/lib/documents/contracts";
 import { HEADER_MAX_STEPS } from "@/lib/usage-limits";
 import { latestAgentPlan } from "@/lib/agent-workspace";
+import { agentModeContext, agentModeStorageKey, parseAgentMode, type AgentMode } from "@/lib/agent-modes";
 
 const DEFAULT_AGENT_NAME = "Tflash";
 
@@ -123,7 +124,23 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   const [settingsInstance, setSettingsInstance] = useState(0);
   const [modelsOpen, setModelsOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [agentMode, setAgentMode] = useState<AgentMode>("chat");
+  const [modeLoadedFor, setModeLoadedFor] = useState<string>();
   const hasSubmittedMessage = useRef(false);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    const key = agentModeStorageKey(account.kind, account.id, sessionId);
+    try { setAgentMode(parseAgentMode(window.localStorage.getItem(key))); }
+    catch { setAgentMode("chat"); }
+    setModeLoadedFor(sessionId);
+  }, [account.id, account.kind, sessionId]);
+
+  useEffect(() => {
+    if (!sessionId || modeLoadedFor !== sessionId) return;
+    try { window.localStorage.setItem(agentModeStorageKey(account.kind, account.id, sessionId), agentMode); }
+    catch { /* Mode choice is optional; sending must still work if storage is blocked. */ }
+  }, [account.id, account.kind, agentMode, modeLoadedFor, sessionId]);
 
   const replaceSessionRoute = (nextSessionId: string) => {
     if (resume) return;
@@ -257,7 +274,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
     hasSubmittedMessage.current = true;
     replaceSessionRoute(sessionId);
     const options = {
-      clientContext: turnContext() + workspaceContext(workspace.snapshot(), sessionId),
+      clientContext: turnContext() + workspaceContext(workspace.snapshot(), sessionId) + agentModeContext(agentMode, settings.language),
       ...(isBusy ? { turnPolicy: "steer" as const } : {}),
     };
 
@@ -338,7 +355,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
                       message={message}
                       onInputResponses={(inputResponses) => {
                         setCancellationError(undefined);
-                        return agent.respond(inputResponses, { clientContext: turnContext() + workspaceContext(workspace.snapshot(), sessionId) });
+                        return agent.respond(inputResponses, { clientContext: turnContext() + workspaceContext(workspace.snapshot(), sessionId) + agentModeContext(agentMode, settings.language) });
                       }}
                       questionsFor={questionsFor}
                     />
@@ -369,6 +386,8 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
             ) : !sessionId ? <p className="mb-2 text-muted-foreground text-xs" role="status">Preparing conversation…</p> : null}
             <ProjectPicker sessionId={sessionId} disabled={isBusy || isResuming} />
             <ChatComposer
+              mode={agentMode}
+              onModeChange={setAgentMode}
               isBusy={isBusy}
               isResuming={isResuming || !sessionId}
               onCancel={requestCancellation}
