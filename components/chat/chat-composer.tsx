@@ -93,7 +93,7 @@ export function ChatComposer({
   );
 }
 
-function AgentModePicker({ mode, onChange, language, disabled }: { mode: AgentMode; onChange?: (mode: AgentMode) => void; language: "en" | "so"; disabled: boolean }) {
+export function AgentModePicker({ mode, onChange, language, disabled }: { mode: AgentMode; onChange?: (mode: AgentMode) => void; language: "en" | "so"; disabled: boolean }) {
   return (
     <div aria-label={language === "so" ? "Habka agent-ka" : "Agent mode"} className="mb-2 flex flex-wrap gap-1" role="group">
       {AGENT_MODES.map((item) => (
