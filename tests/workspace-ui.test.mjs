@@ -408,7 +408,13 @@ test("a failed in-flight send does not overwrite a newer draft", async () => {
   await React.act(async () => { rejectSend(new Error("offline")); try { await pending; } catch {} });
   assert.equal(textarea.value, "New draft");
   assert.ok(screen.getByRole("alert").textContent.includes("First draft"));
-  await user.click(screen.getByRole("button", { name: "Restore draft" }));
+  const restore = screen.getByRole("button", { name: "Restore draft" });
+  const dismiss = screen.getByRole("button", { name: "Dismiss" });
+  assert.ok(restore.className.includes("min-h-11"));
+  assert.ok(restore.className.includes("focus-visible:ring-2"));
+  assert.ok(dismiss.className.includes("size-11"));
+  assert.ok(dismiss.className.includes("focus-visible:ring-2"));
+  await user.click(restore);
   assert.equal(textarea.value, "First draft\n\nNew draft");
   assert.equal(screen.queryByRole("alert"), null);
 });
