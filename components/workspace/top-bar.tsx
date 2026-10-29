@@ -55,7 +55,7 @@ export function TopBar({
         aria-label={t("openMenu")}
         aria-controls="conversation-sidebar"
         aria-expanded={sidebarOpen}
-        className="-ml-1 flex size-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground sm:size-8 lg:hidden"
+        className="-ml-1 flex size-11 min-h-11 min-w-11 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 lg:hidden"
         onClick={onOpenSidebar}
         type="button"
       >
@@ -72,7 +72,7 @@ export function TopBar({
 
       <button
         aria-label={`${t("chooseModel")}: ${modelName}${provider ? ` · ${provider.name}` : ""}`}
-        className="group flex h-9 min-w-0 max-w-[62vw] items-center gap-1.5 rounded-full border border-border/80 bg-card/70 pr-2 pl-2.5 text-[12px] transition-colors hover:border-border hover:bg-card sm:h-8 sm:max-w-none"
+        className="group flex h-11 min-h-11 min-w-0 max-w-[62vw] items-center gap-1.5 rounded-full border border-border/80 bg-card/70 pr-2 pl-2.5 text-[12px] transition-colors hover:border-border hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:max-w-none"
         onClick={onOpenModels}
         title={t("modelPickerHint")}
         type="button"
@@ -97,7 +97,7 @@ export function TopBar({
         <DropdownMenuTrigger asChild>
           <Button
             aria-label={t("moreActions")}
-            className="text-muted-foreground"
+            className="tf-touch-target min-h-11 min-w-11 text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             size="icon-sm"
             type="button"
             variant="ghost"

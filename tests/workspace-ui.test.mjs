@@ -29,6 +29,7 @@ const { render, screen, waitFor, cleanup, fireEvent, within } = await import("@t
 const userEvent = (await import("@testing-library/user-event")).default;
 const { AppSettingsProvider, useAppSettings } = await import("../components/settings/app-settings.tsx");
 const { Sidebar } = await import("../components/workspace/sidebar.tsx");
+const { TopBar } = await import("../components/workspace/top-bar.tsx");
 const { SettingsDialog } = await import("../components/settings/settings-dialog.tsx");
 const { ConnectionsPanel } = await import("../components/settings/connections-panel.tsx");
 const { INTEGRATIONS } = await import("../lib/integrations/catalog.ts");
@@ -950,4 +951,27 @@ test("connection accordions expose their panel relationship and mobile focus tar
   await user.keyboard("{Enter}");
   assert.equal(toggle.getAttribute("aria-expanded"), "false");
   assert.equal(screen.queryByRole("region", { name: toggle.getAttribute("aria-label") }), null);
+});
+
+
+test("top bar controls expose mobile-sized touch targets and visible keyboard focus", () => {
+  seed();
+  render(app(h(TopBar, {
+    title: "Test chat",
+    canExport: true,
+    onExportChat() {},
+    onNewChat() {},
+    onOpenSidebar() {},
+    sidebarOpen: false,
+    onOpenSettings() {},
+    onOpenModels() {},
+  })));
+  const header = screen.getByRole("banner");
+  const menu = within(header).getByRole("button", { name: /open menu/i });
+  const model = within(header).getByRole("button", { name: /choose (a )?model/i });
+  const more = within(header).getByRole("button", { name: /more actions/i });
+  for (const button of [menu, model, more]) {
+    assert.ok(button.className.includes("min-h-11"), "control should be at least 44px tall");
+    assert.ok(button.className.includes("focus-visible:ring-2"), "control should show keyboard focus");
+  }
 });
