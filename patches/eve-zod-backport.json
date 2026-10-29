@@ -1,0 +1,12 @@
+{
+  "package": "eve",
+  "version": "0.83.2",
+  "bundledZod": "4.5.4",
+  "advisory": "GHSA-mrhx-c7xc-m3w5",
+  "upstreamCommit": "a0ebf970f2d752e5f58527cd2942ff48be4f46bd",
+  "originalSha256": "bba2c7e5f1207a8540a34191d17304caea14d886e12acad706899437aa495acd",
+  "files": {
+    "dist/src/compiled/_chunks/client/core-CspsxXR-.js": "0fb835be9f047872af2d41bd5dda196346a474b5af017d9667af6edf09d19546",
+    "dist/src/compiled/_chunks/client/tflash-zod-size-guard.js": "b798bb9884683d00fe59e0fef8a2214703c67084c487b8fa32b926365351b7a2"
+  }
+}

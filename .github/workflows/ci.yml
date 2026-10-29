@@ -41,6 +41,6 @@ jobs:
         run: corepack pnpm build
       - name: Build Eve agent
         run: corepack pnpm build:eve
-      # Intentionally blocks release while Eve ships vulnerable compiled Zod.
+      # Verify actual compiled-runtime fix; reject missing/tampered backports.
       - name: Bundled Zod release gate
         run: corepack pnpm run audit:bundled-zod
