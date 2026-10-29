@@ -28,7 +28,7 @@ type WorkspaceStore = {
 };
 const Context = createContext<WorkspaceStore | null>(null);
 
-/** Deliberately browser-local for BOTH login systems, never a shared tenant store. */
+/** Supabase users sync to their own RLS-protected row; Vercel users stay browser-local. */
 export function WorkspaceProvider({
   kind,
   userId,
@@ -47,6 +47,25 @@ export function WorkspaceProvider({
   const syncSequence = useRef(0);
   const cloudQueue = useRef<Promise<void>>(Promise.resolve());
   reference.current = loaded;
+  const syncCloud = useCallback((value: Workspace) => {
+    if (kind !== "supabase") return Promise.resolve();
+    const sequence = ++syncSequence.current;
+    setSyncStatus("syncing");
+    const task = cloudQueue.current.catch(() => undefined).then(async () => {
+      const response = await fetch("/api/workspace", {
+        method: "PUT", headers: { "content-type": "application/json" },
+        body: JSON.stringify(value), cache: "no-store",
+      });
+      if (!response.ok) throw new Error("Workspace cloud sync failed.");
+      if (sequence === syncSequence.current) setSyncStatus("synced");
+    });
+    cloudQueue.current = task;
+    return task.catch((error: unknown) => {
+      if (sequence === syncSequence.current) setSyncStatus("error");
+      throw error;
+    });
+  }, [kind]);
+
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
@@ -100,25 +119,6 @@ export function WorkspaceProvider({
     window.addEventListener("storage", onStorage);
     return () => { cancelled = true; window.removeEventListener("storage", onStorage); };
   }, [key, kind, syncCloud]);
-  const syncCloud = useCallback((value: Workspace) => {
-    if (kind !== "supabase") return Promise.resolve();
-    const sequence = ++syncSequence.current;
-    setSyncStatus("syncing");
-    const task = cloudQueue.current.catch(() => undefined).then(async () => {
-      const response = await fetch("/api/workspace", {
-        method: "PUT", headers: { "content-type": "application/json" },
-        body: JSON.stringify(value), cache: "no-store",
-      });
-      if (!response.ok) throw new Error("Workspace cloud sync failed.");
-      if (sequence === syncSequence.current) setSyncStatus("synced");
-    });
-    cloudQueue.current = task;
-    return task.catch((error: unknown) => {
-      if (sequence === syncSequence.current) setSyncStatus("error");
-      throw error;
-    });
-  }, [kind]);
-
   const snapshot = useCallback(
     () =>
       reference.current?.key === key
@@ -145,7 +145,7 @@ export function WorkspaceProvider({
       setStorageError(false);
       void syncCloud(value).catch(() => undefined);
     },
-    [key],
+    [key, syncCloud],
   );
   const clear = useCallback(() => {
     if (reference.current?.key !== key)
