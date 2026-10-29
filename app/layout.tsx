@@ -56,6 +56,7 @@ export default function RootLayout({ children }: { readonly children: ReactNode 
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>
       <body>
+        <a className="tf-skip-link" href="#main-content">Skip to main content · U gudub nuxurka</a>
         <TooltipProvider>
           {children}
         </TooltipProvider>
