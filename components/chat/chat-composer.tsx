@@ -103,7 +103,7 @@ function ComposerAttachments() {
           <span className="truncate">{file.filename}</span>
           <button
             aria-label={`${t("removeAttachment")}: ${file.filename}`}
-            className="flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+            className="tf-touch-target flex size-11 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             onClick={() => attachments.remove(file.id)}
             type="button"
           >
