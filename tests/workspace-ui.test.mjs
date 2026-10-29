@@ -38,6 +38,7 @@ const { ChatComposer } = await import("../components/chat/chat-composer.tsx");
 const { AuthScreen } = await import("../components/app/auth-screen.tsx");
 const { browserSupabase } = await import("../lib/supabase/browser.ts");
 const { PromptInputProvider } = await import("../components/ai-elements/prompt-input.tsx");
+const { usePromptInputController } = await import("../components/ai-elements/prompt-input.tsx");
 const { TooltipProvider } = await import("../components/ui/tooltip.tsx");
 
 const realFetch = globalThis.fetch;
@@ -511,6 +512,35 @@ test("a second identical draft survives completion of an earlier send", async ()
   await user.type(textarea, "Same words");
   await React.act(async () => { finish(); await pending; });
   assert.equal(textarea.value, "Same words");
+});
+
+test("attachment removal has a 44px touch target and a visible keyboard focus indicator", async () => {
+  seed();
+  fakeFetch();
+  const originalCreate = URL.createObjectURL;
+  const originalRevoke = URL.revokeObjectURL;
+  URL.createObjectURL = () => "blob:attachment-test";
+  URL.revokeObjectURL = () => {};
+  function AttachmentHarness() {
+    const controller = usePromptInputController();
+    return h("button", { type: "button", onClick: () => controller.attachments.add([new File(["content"], "notes.txt", { type: "text/plain" })]) }, "Add test attachment");
+  }
+  try {
+    render(app(h(TooltipProvider, null, h(PromptInputProvider, null,
+      h(AttachmentHarness),
+      h(ChatComposer, { isBusy: false, isResuming: false, onCancel() {}, onSubmit: async () => {} }),
+    ))));
+    await userEvent.setup().click(screen.getByRole("button", { name: "Add test attachment" }));
+    const remove = await screen.findByRole("button", { name: "Remove attachment: notes.txt" });
+    assert.ok(remove.className.includes("size-11"));
+    assert.ok(remove.className.includes("tf-touch-target"));
+    assert.ok(remove.className.includes("focus-visible:ring-2"));
+    await userEvent.setup().click(remove);
+    assert.equal(screen.queryByText("notes.txt"), null);
+  } finally {
+    URL.createObjectURL = originalCreate;
+    URL.revokeObjectURL = originalRevoke;
+  }
 });
 
 test("the sign-in screen keeps both login choices and bilingual email-link signup", async (t) => {
