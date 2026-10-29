@@ -82,6 +82,31 @@ test("Supabase workspace reads and validates only the authenticated user's row",
   assert.equal((await route.PUT(putRequest(JSON.stringify({ ...empty, extra: true }), { expectedUserId: "user-a" }))).status, 400);
 });
 
+test("workspace request limit counts UTF-8 bytes instead of UTF-16 code units", async () => {
+  principal = { id: "user-a", kind: "supabase" };
+  const workspace = {
+    ...emptyWorkspace(),
+    projects: Array.from({ length: 20 }, (_, index) => ({
+      id: `unicode-project-${index}`,
+      name: `Unicode project ${index}`,
+      instructions: "😀".repeat(2_000),
+      chatIds: [],
+    })),
+    notes: Array.from({ length: 30 }, (_, index) => ({
+      id: `unicode-note-${index}`,
+      text: "😀".repeat(500),
+      enabled: true,
+      projectId: null,
+    })),
+  };
+  const body = JSON.stringify({ workspace, expectedUpdatedAt: null });
+  assert.ok(body.length < 200_000);
+  assert.ok(new TextEncoder().encode(body).byteLength > 200_000);
+  failDatabase = true;
+  assert.equal((await route.PUT(putRequest(body))).status, 413);
+  assert.equal(rows.size, 0);
+});
+
 test("workspace compare-and-set rejects stale writes and duplicate initial inserts", async () => {
   principal = { id: "user-a", kind: "supabase" };
   const original = emptyWorkspace();
@@ -98,6 +123,43 @@ test("workspace compare-and-set rejects stale writes and duplicate initial inser
   assert.equal((await route.PUT(putWorkspace(original, firstRevision))).status, 409);
   assert.equal((await route.PUT(putWorkspace(original, null))).status, 409);
   assert.deepEqual(rows.get("user-a").workspace, newerWorkspace);
+});
+
+test("concurrent first inserts and stale revisions admit one writer and return 409 for the other", async () => {
+  principal = { id: "user-a", kind: "supabase" };
+  const initialCandidates = [
+    { ...emptyWorkspace(), maxSteps: 10 },
+    { ...emptyWorkspace(), maxSteps: 11 },
+  ];
+  const initialResponses = await Promise.all(
+    initialCandidates.map((workspace) => route.PUT(putWorkspace(workspace, null))),
+  );
+  assert.deepEqual(
+    initialResponses.map((response) => response.status).sort((a, b) => a - b),
+    [200, 409],
+  );
+  const initialWinner = initialResponses.findIndex((response) => response.status === 200);
+  const firstRevision = rows.get("user-a").updated_at;
+  assert.deepEqual(rows.get("user-a").workspace, initialCandidates[initialWinner]);
+
+  const updateCandidates = [
+    { ...initialCandidates[initialWinner], maxSteps: 20 },
+    { ...initialCandidates[initialWinner], maxSteps: 21 },
+  ];
+  const updateResponses = await Promise.all(
+    updateCandidates.map((workspace) => route.PUT(putWorkspace(workspace, firstRevision))),
+  );
+  assert.deepEqual(
+    updateResponses.map((response) => response.status).sort((a, b) => a - b),
+    [200, 409],
+  );
+  const updateWinner = updateResponses.findIndex((response) => response.status === 200);
+  const latest = rows.get("user-a");
+  assert.notEqual(latest.updated_at, firstRevision);
+  assert.deepEqual(latest.workspace, updateCandidates[updateWinner]);
+
+  assert.equal((await route.PUT(putWorkspace(initialCandidates[initialWinner], firstRevision))).status, 409);
+  assert.deepEqual(rows.get("user-a").workspace, updateCandidates[updateWinner]);
 });
 
 test("queued writes are bound to their originating account and cannot cross accounts", async () => {
