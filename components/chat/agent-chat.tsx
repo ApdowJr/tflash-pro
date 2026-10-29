@@ -229,7 +229,8 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
     link.href = url;
     link.download = `tflash-chat-${Date.now()}.md`;
     link.click();
-    URL.revokeObjectURL(url);
+    // Let the browser start the download before releasing the object URL.
+    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
   };
 
   const requestCancellation = () => {
