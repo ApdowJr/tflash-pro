@@ -42,7 +42,7 @@ export function ChatComposer({
             <p className="mt-1 line-clamp-2 break-words text-muted-foreground">{draft.text}</p>
           </div>
           <button
-            className="shrink-0 font-medium underline underline-offset-2"
+            className="tf-touch-target min-h-11 shrink-0 rounded-md px-2 font-medium underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             onClick={() => {
               const current = controller.textInput.value;
               controller.textInput.setInput(current ? `${draft.text}\n\n${current}` : draft.text);
@@ -52,7 +52,7 @@ export function ChatComposer({
           >
             {t("restoreDraft")}
           </button>
-          <button aria-label={t("dismiss")} onClick={() => controller.textInput.discardFailed(draft.id)} type="button">
+          <button aria-label={t("dismiss")} className="tf-touch-target flex size-11 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" onClick={() => controller.textInput.discardFailed(draft.id)} type="button">
             <XIcon className="size-3.5" />
           </button>
         </div>
