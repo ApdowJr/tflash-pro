@@ -489,3 +489,81 @@ test("a failed disconnected stop preserves the draft and reports an error", asyn
   assert.equal(input.value, "Keep my draft"); assert.equal(sends.length, 0);
   assert.equal(screen.getByRole("button", { name: "Request stop for this turn" }).disabled, false);
 });
+
+test("a pending stop blocks scheduled reconnect and follow-ups until the turn settles", async () => {
+  const sends = seed({ agentStatus: "error" });
+  globalThis.__prepareAgent.error = new TypeError("Failed to fetch");
+  globalThis.__prepareAgent.data.activeTurnId = "turn-old";
+  globalThis.__prepareAgent.data.turns = { "turn-old": { status: "active" } };
+  const pending = deferred(); const attached = deferred(); let resumes = 0;
+  globalThis.__prepareAgent.resume = async () => { resumes++; await attached.promise; };
+  fakeFetch((path) => path.endsWith("/eve/v1/session/owned-chat/cancel") ? pending.promise : undefined);
+  const rendered = render(app({ sessionId: "owned-chat" }));
+  const user = userEvent.setup();
+  const input = screen.getByPlaceholderText("Ask Tflash anything…");
+  await user.type(input, "Do not send while stopping");
+  await user.click(await screen.findByRole("button", { name: "Request stop for this turn" }));
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  assert.equal(resumes, 0, "the previously scheduled automatic retry must not race the stop request");
+  await React.act(async () => { pending.resolve(Response.json({ ok: true, status: "accepted", sessionId: "owned-chat" }, { status: 202 })); await pending.promise; });
+  await waitFor(() => assert.equal(resumes, 1));
+  globalThis.__prepareAgent.status = "streaming";
+  rendered.rerender(app({ sessionId: "owned-chat" }));
+  await React.act(async () => { attached.resolve(); await attached.promise; });
+  assert.equal(screen.getByRole("button", { name: "Send" }).disabled, true);
+  assert.equal(input.value, "Do not send while stopping");
+  assert.equal(sends.length, 0);
+  globalThis.__prepareAgent.status = "ready";
+  globalThis.__prepareAgent.events = [
+    { type: "turn.started", data: { turnId: "turn-old", sequence: 1 } },
+    { type: "turn.cancelled", data: { turnId: "turn-old", sequence: 1 } },
+  ];
+  rendered.rerender(app({ sessionId: "owned-chat" }));
+  await waitFor(() => assert.equal(screen.getByRole("button", { name: "Send" }).disabled, false));
+  assert.equal(sends.length, 0);
+});
+
+test("accepted stop with a lost turn projection remains blocked but allows manual reattachment", async () => {
+  const sends = seed({ agentStatus: "error" });
+  globalThis.__prepareAgent.data.activeTurnId = "turn-old";
+  globalThis.__prepareAgent.data.turns = { "turn-old": { status: "active" } };
+  let resumes = 0;
+  globalThis.__prepareAgent.resume = async () => { resumes++; throw new Error("offline"); };
+  fakeFetch((path) => path.endsWith("/eve/v1/session/owned-chat/cancel") ? Response.json({ ok: true, status: "accepted", sessionId: "owned-chat" }, { status: 202 }) : undefined);
+  const rendered = render(app({ sessionId: "owned-chat" }));
+  const user = userEvent.setup();
+  const input = screen.getByPlaceholderText("Ask Tflash anything…");
+  await user.type(input, "Keep this draft");
+  await user.click(await screen.findByRole("button", { name: "Request stop for this turn" }));
+  await waitFor(() => assert.equal(resumes, 1));
+  globalThis.__prepareAgent.status = "ready";
+  globalThis.__prepareAgent.data.activeTurnId = undefined;
+  globalThis.__prepareAgent.data.turns = {};
+  rendered.rerender(app({ sessionId: "owned-chat" }));
+  assert.equal(screen.getByRole("button", { name: "Send" }).disabled, true);
+  assert.equal(screen.getByRole("button", { name: "Reconnect" }).disabled, false);
+  await user.click(screen.getByRole("button", { name: "Reconnect" }));
+  await waitFor(() => assert.equal(resumes, 2));
+  assert.equal(input.value, "Keep this draft");
+  assert.equal(sends.length, 0);
+});
+
+test("a stop response arriving after the terminal turn releases the composer", async () => {
+  const sends = seed({ agentStatus: "streaming" });
+  const pending = deferred();
+  globalThis.__prepareAgent.cancel = () => pending.promise;
+  globalThis.__prepareAgent.data.activeTurnId = "turn-old";
+  globalThis.__prepareAgent.data.turns = { "turn-old": { status: "active" } };
+  fakeFetch(() => undefined);
+  const rendered = render(app({ sessionId: "owned-chat" }));
+  const user = userEvent.setup();
+  await user.type(screen.getByPlaceholderText("Ask Tflash anything…"), "Keep draft");
+  await user.click(screen.getByRole("button", { name: "Stop" }));
+  globalThis.__prepareAgent.status = "ready";
+  globalThis.__prepareAgent.data.turns["turn-old"].status = "cancelled";
+  rendered.rerender(app({ sessionId: "owned-chat" }));
+  assert.equal(screen.getByRole("button", { name: "Send" }).disabled, true);
+  await React.act(async () => { pending.resolve(); await pending.promise; });
+  await waitFor(() => assert.equal(screen.getByRole("button", { name: "Send" }).disabled, false));
+  assert.equal(sends.length, 0);
+});

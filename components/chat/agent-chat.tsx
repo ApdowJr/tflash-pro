@@ -137,6 +137,9 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   const [reconnectAttempts, setReconnectAttempts] = useState(0);
   const reconnectPending = useRef(false);
   const cancellationPending = useRef(false);
+  const cancellationRequestInFlight = useRef(false);
+  const cancellationTarget = useRef<string | undefined>(undefined);
+  const [cancellationRequestActive, setCancellationRequestActive] = useState(false);
   const cancellationEpoch = useRef(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<
@@ -194,12 +197,19 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   const turnFailure = isBusy || isResuming || latest?.outcome !== "failed" ? undefined : getLatestTurnFailure(agent.events, latest.turnId);
   const errorMessage = cancellationError ?? agent.error?.message ?? turnFailure;
   const turnOutcome = latest?.outcome;
-  const disconnected = agent.status === "error" && (turnOutcome === "active" ||
-    (turnOutcome === undefined && !!agent.data.activeTurnId && agent.data.turns?.[agent.data.activeTurnId]?.status === "active"));
+  const target = cancellationTarget.current;
+  const targetStatus = target ? agent.data.turns?.[target]?.status : undefined;
+  const targetSettled = !!target && (targetStatus === "completed" || targetStatus === "failed" || targetStatus === "cancelled" ||
+    agent.events.some((event) => ["turn.completed", "turn.failed", "turn.cancelled"].includes(event.type) &&
+      event.data && typeof event.data === "object" && "turnId" in event.data && event.data.turnId === target));
+  const stopUnconfirmed = cancellationPending.current && !!target && !targetSettled;
+  const disconnected = (agent.status === "error" && !(target && targetSettled && latest?.turnId === target) && (turnOutcome === "active" ||
+    (turnOutcome === undefined && !!agent.data.activeTurnId && agent.data.turns?.[agent.data.activeTurnId]?.status === "active"))) ||
+    (stopUnconfirmed && !isBusy && !isResuming);
   const resumeRef = useRef(agent.resume);
   resumeRef.current = agent.resume;
   const reconnect = useCallback((automatic: boolean) => {
-    if (reconnectPending.current) return;
+    if (reconnectPending.current || cancellationRequestInFlight.current || (automatic && cancellationPending.current)) return;
     reconnectPending.current = true;
     setReconnecting(true);
     if (automatic) setReconnectAttempts((attempt) => attempt + 1);
@@ -212,7 +222,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   }, []);
   const recoveryTurn = turnOutcome === "active" ? latest?.turnId :
     turnOutcome === undefined && agent.data.activeTurnId && agent.data.turns?.[agent.data.activeTurnId]?.status === "active"
-      ? agent.data.activeTurnId : undefined;
+      ? agent.data.activeTurnId : stopUnconfirmed ? target : undefined;
   const recoveryTurnRef = useRef<string | undefined>(undefined);
   useEffect(() => {
     // A short-lived reconnection is not a new budget: repeated disconnects in
@@ -225,17 +235,21 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   const retryDelay = useMemo(() => disconnected ? streamReconnectDelay(agent.error, reconnectAttempts) : undefined,
     [disconnected, agent.error, reconnectAttempts]);
   useEffect(() => {
-    if (retryDelay === undefined || reconnecting || cancellationPending.current) return;
+    if (retryDelay === undefined || reconnecting || cancelling || cancellationPending.current) return;
     const timer = window.setTimeout(() => reconnect(true), retryDelay);
     return () => window.clearTimeout(timer);
-  }, [retryDelay, reconnecting, reconnect]);
+  }, [retryDelay, reconnecting, cancelling, reconnect]);
   const hasOpenInput = Object.values(agent.data.inputs).some((input) => input.status === "open");
   const runState: AgentRunState = isResuming ? "resuming" : disconnected ? "interrupted" : errorMessage || agent.status === "error" ? "failed" :
     hasOpenInput ? "waiting" : isBusy ? "working" : turnOutcome === "cancelled" ? "cancelled" : "idle";
 
   useEffect(() => {
-    if (!isBusy && !disconnected) { cancellationPending.current = false; setCancelling(false); }
-  }, [isBusy, disconnected]);
+    // A transport reattachment is not a terminal turn boundary. Keep a
+    // pending stop armed while cancellation or replay is still in flight.
+    if (!isBusy && !disconnected && !isResuming && !reconnecting && !cancellationRequestInFlight.current) {
+      cancellationPending.current = false; cancellationTarget.current = undefined; setCancelling(false);
+    }
+  }, [isBusy, disconnected, isResuming, reconnecting, cancellationRequestActive]);
   const hasConversationContent = sessionless || !isEmpty || errorMessage !== undefined;
   const showConversationLayout = isResuming || hasConversationContent;
   const activeSessionId = sessionId ?? agent.session?.sessionId;
@@ -329,11 +343,20 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   const requestCancellation = () => {
     if (cancellationPending.current) return;
     cancellationPending.current = true;
+    cancellationTarget.current = latest?.outcome === "active" ? latest.turnId : agent.data.activeTurnId;
+    cancellationRequestInFlight.current = true;
+    setCancellationRequestActive(true);
     cancellationEpoch.current++;
     setCancelling(true);
     setCancellationError(undefined);
-    void agent.cancel().catch((error: unknown) => {
+    void agent.cancel().then(() => {
+      cancellationRequestInFlight.current = false;
+      setCancellationRequestActive(false);
+    }).catch((error: unknown) => {
+      cancellationRequestInFlight.current = false;
+      setCancellationRequestActive(false);
       cancellationPending.current = false;
+      cancellationTarget.current = undefined;
       setCancelling(false);
       setCancellationError(toErrorMessage(error));
     });
@@ -342,6 +365,9 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   const cancelDisconnectedTurn = () => {
     if (!sessionId || !recoveryTurn || cancellationPending.current) return;
     cancellationPending.current = true;
+    cancellationTarget.current = recoveryTurn;
+    cancellationRequestInFlight.current = true;
+    setCancellationRequestActive(true);
     cancellationEpoch.current++;
     setCancelling(true);
     setCancellationError(undefined);
@@ -355,11 +381,16 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
       redirect: "error",
     });
     void client.sessions.attach(sessionId).cancel({ turnId: recoveryTurn }).then(() => {
-      cancellationPending.current = false;
-      setCancelling(false);
+      cancellationRequestInFlight.current = false;
+      setCancellationRequestActive(false);
+      // Accepted is not a cancellation boundary. Keep follow-ups blocked,
+      // but allow reattachment to confirm what happened to the observed turn.
       reconnect(false);
     }).catch((error: unknown) => {
+      cancellationRequestInFlight.current = false;
+      setCancellationRequestActive(false);
       cancellationPending.current = false;
+      cancellationTarget.current = undefined;
       setCancelling(false);
       setCancellationError(toErrorMessage(error));
     });
@@ -450,9 +481,9 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
         {!isEmpty ? <div className="shrink-0 px-4 py-2 sm:px-6"><ActivityPanel messages={agent.data.messages} events={agent.events} /></div> : null}
         {disconnected ? <div className="mx-auto flex w-full max-w-2xl flex-wrap items-center gap-2 px-4 py-2 text-xs text-muted-foreground" role="status">
           <span className="min-w-0 flex-1">{t("reconnectHint")}</span>
-          {retryDelay !== undefined || reconnecting ? <span>{t("reconnectAutomatic")}</span> :
+          {(!cancelling && retryDelay !== undefined) || reconnecting ? <span>{t("reconnectAutomatic")}</span> :
             reconnectAttempts >= MAX_STREAM_RECONNECTS ? <span>{t("reconnectExhausted")}</span> : null}
-          <Button type="button" size="sm" variant="outline" disabled={reconnecting || cancelling} onClick={() => reconnect(false)}>{t("reconnect")}</Button>
+          <Button type="button" size="sm" variant="outline" disabled={reconnecting || cancellationRequestActive} onClick={() => reconnect(false)}>{t("reconnect")}</Button>
           {recoveryTurn ? <Button type="button" size="sm" variant="outline" disabled={cancelling} onClick={cancelDisconnectedTurn}>{t(cancelling ? "cancelling" : "stopDisconnectedTurn")}</Button> : null}
         </div> : null}
         {runState === "cancelled" ? <p role="status" className="mx-auto w-full max-w-2xl px-4 py-2 text-xs text-muted-foreground sm:px-6">{t("turnStoppedHint")}</p> : null}

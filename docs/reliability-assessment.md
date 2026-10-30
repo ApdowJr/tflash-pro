@@ -63,3 +63,52 @@ provider connectivity as documented in the README. Migration files are included,
 ## Verification boundary
 
 The emergency-revocation migration and function ordering are tested in isolated PGlite. A local HTTP fixture exercises the real Supabase JavaScript client against PGlite-backed RPCs, including a list-only failure, but it is not hosted Supabase/PostgREST. The connected Tflash project has only its default branch; no isolated hosted database was identified, and this work does not apply migrations remotely or deploy an application. Provider, Eve Workflow-world, production sandbox and actual external effect/idempotency behavior remain unverified.
+
+## Isolated hosted validation plan (approval required)
+
+Do not use the existing Tflash production/default project or its credentials.
+Before creating a separate hosted project, obtain the owner's explicit approval,
+confirm the selected organization, plan, quotas and any possible charges, and
+agree on a spending limit and cleanup. No hosted resource has been created by
+this work. Local PGlite tests remain the only migration testing authorized at
+present; applying migrations to any hosted project requires separate approval.
+
+Once authorized, provision a disposable, clearly named nonproduction project,
+check its project reference against an explicit allowlist before each write,
+and use synthetic users and data only. Keep service-role credentials exclusively
+in the test process's secret store; never place them in browser bundles, Git,
+logs or chat. Do not point an existing production or shared preview at it. An
+isolated Next/Eve test environment with its own workflow storage and sandbox is
+also required; otherwise the project tests database behavior only.
+
+After separate approval for the hosted migration application, reconcile the
+migration history and apply the three permission/task migrations to that project
+only. Validate real PostgREST RPC privileges and error shapes, session ownership,
+concurrent transactions and grant/revoke/epoch races, expiry, missing service
+credentials, and coherent Next/Eve rollout. Exercise actual Eve fetch execution,
+DNS and redirects, interruption/cancellation and sandbox verification with safe
+local test endpoints. Test integrations only with disposable provider accounts
+and explicitly authorized operations; never use production data or replay an
+uncertain external action. Record evidence, resource cost and cleanup, then
+remove test resources only after owner authorization. These steps are a plan,
+not evidence that hosted checks or provider operations have succeeded.
+
+## Additional local checks
+
+MCP's public connection API exposes an approval policy but no neutral execution
+wrapper for rechecking a revocable grant immediately before a generic remote
+call. Its `providedArguments` changes all tool inputs and schemas; remote names
+and read-only/idempotency hints cannot establish safety. Shell commands have the
+same classification problem. Both therefore continue to require per-call
+approval. Local tests call the real Eve approval policies for every registered
+MCP connection and shell, including malicious-looking hints; these are policy
+unit tests, not live MCP execution or proof that a provider is safe.
+
+A stop request now suppresses scheduled stream reconnects until the cancellation
+request returns. Once accepted, it reattaches without sending a turn, but keeps
+follow-up submissions blocked until the observed turn has a terminal event or
+projection. If confirmation cannot be obtained, manual reconnect remains
+available; acceptance still cannot roll back an external effect. Reported cost
+is hidden when a checkpoint or later step omits cost, rather than presenting a
+known partial sum as a complete total. Provider usage remains advisory, not a
+bill or an enforced spending cap.
