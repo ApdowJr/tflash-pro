@@ -1,15 +1,17 @@
 import { redirect, notFound } from "next/navigation";
-import { currentPrincipal } from "@/lib/identity";
+import { currentPrincipal, type AppPrincipal } from "@/lib/identity";
 import { serverSupabase } from "@/lib/supabase/server";
 import { verifyChatOwnership } from "@/lib/security/chat-ownership";
 import { AppSettingsProvider } from "@/components/settings/app-settings";
 import { AgentChat } from "./agent-chat";
 
-export async function AuthenticatedAgentChat({ sessionId, sessionless }: {
+export async function AuthenticatedAgentChat({ sessionId, sessionless, principal: knownPrincipal }: {
   readonly sessionId?: string;
   readonly sessionless?: boolean;
+  /** Passed by callers that already resolved the session, to avoid a second lookup. */
+  readonly principal?: AppPrincipal;
 }) {
-  const principal = await currentPrincipal();
+  const principal = knownPrincipal ?? await currentPrincipal();
   if (!principal) {
     const next = sessionId ? `/s/${encodeURIComponent(sessionId)}` : "/";
     redirect(`/login?next=${encodeURIComponent(next)}`);

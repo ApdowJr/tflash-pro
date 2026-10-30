@@ -196,9 +196,13 @@ function PasswordInput({ id, value, onChange, placeholder, autoComplete, label, 
   );
 }
 
-export function AuthScreen({ vercelAvailable }: { readonly vercelAvailable: boolean }) {
+export function AuthScreen({ vercelAvailable, initialMode = "signin" }: {
+  readonly vercelAvailable: boolean;
+  /** `/login?mode=signup` opens the create-account tab without a click. */
+  readonly initialMode?: Mode;
+}) {
   const { language, changeLanguage, text } = useLanguage();
-  const [mode, setMode] = useState<Mode>("signin");
+  const [mode, setMode] = useState<Mode>(initialMode);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");

@@ -9,9 +9,12 @@ import "@fontsource/dm-mono/400.css";
 import "./globals.css";
 
 const DESCRIPTION =
-  "A focused AI workspace for chat and your connected tools.";
+  "A bilingual AI workspace for chat, research and finished work — Somali and English.";
+
+const SITE_URL = process.env.APP_URL?.trim().replace(/\/+$/, "") || "http://localhost:3000";
 
 export const metadata: Metadata = {
+  metadataBase: new URL(SITE_URL),
   title: {
     default: "Tflash",
     template: "%s · Tflash",
@@ -24,13 +27,20 @@ export const metadata: Metadata = {
   },
   openGraph: {
     description: DESCRIPTION,
-    title: "Tflash",
+    siteName: "Tflash",
+    title: "Tflash — an AI workspace for Somali and English",
     type: "website",
   },
   twitter: {
-    card: "summary",
+    card: "summary_large_image",
     description: DESCRIPTION,
-    title: "Tflash",
+    title: "Tflash — an AI workspace for Somali and English",
+    images: [{
+      url: "/opengraph-image",
+      width: 1200,
+      height: 630,
+      alt: "Tflash — an AI workspace that speaks Somali and English",
+    }],
   },
 };
 

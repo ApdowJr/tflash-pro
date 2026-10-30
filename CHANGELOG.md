@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-10-30 — public landing page and polish
+
+`/` is now public. A signed-out visitor sees a bilingual landing page instead of
+an immediate redirect to `/login`; a signed-in account still lands in a new chat.
+See [docs/upgrade-2026-10-30.md](docs/upgrade-2026-10-30.md) for scope and
+verification.
+
+### Added
+
+- Public, responsive landing page at `/` with EN/SO copy, feature overview,
+  provider list, approval/security explanation, FAQ and a final sign-up path.
+- Product preview and generated Open Graph card for link sharing.
+- `sitemap.xml` (only when `APP_URL` is set) and a `robots.txt` that allows the
+  landing page and `/login` while keeping chats, APIs, auth callbacks and Eve
+  routes out of indexes.
+- `/login?mode=signup` opens the create-account tab directly.
+- Five tests covering crawl policy, sitemap origin handling, the root-route
+  split, the signup deep link and the bilingual landing copy.
+
+### Changed
+
+- The root page resolves the session once and passes the principal to the chat
+  shell instead of looking it up twice.
+- Metadata now carries a canonical root, a public description, a social card and
+  `metadataBase` from `APP_URL`.
+- The manifest description matches the bilingual product copy.
+
 ## 2026-10-29 — platform hardening
 
 No user-facing feature or API contract was removed. See
