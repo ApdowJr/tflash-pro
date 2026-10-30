@@ -10,7 +10,7 @@ makes the Somali/English UI and architecture beautiful (`ah ku samee sii qurxi`)
 
 **Feature Expansion Policy:**
 - **Features ka dhimna ma jira lagu Dari karo** (Features that are missing cannot be arbitrarily added without architectural alignment): When asked to add features, verify the existing architecture in `components/`, `lib/`, and `agent/`. If a feature is missing from the core architecture, propose the architectural integration first rather than forcing an addition that breaks the `Upgrade full` consistency.
-- **Out-approve market agent shaqo lo diro (Out-approve market agent job dispatch):** When dispatching agent jobs to the market (or external channels), if the `out-approve` state is active, **suu userka permission iga qadan** (ask the user for permission) explicitly before sending the job. Use the approval flow defined in `README.md` and `agent/instructions.md`. Never dispatch an out-approve job without user confirmation.
+- **Out-approve market agent shaqo lo diro (Out-approve market agent job dispatch):** When dispatching agent jobs to the market (or external channels), if the `out-approve` state is active, **suu userka permission iga qadan** (ask the user for permission) explicitly before sending the job. If the **out approve** flag grants **full permission** (`agent get full permission`), the system must still verify the architectural alignment (`Features ka dhimna ma jira lagu Dari karo`) and confirm the user's explicit `out-approve` consent before execution. Use the approval flow defined in `README.md` and `agent/instructions.md`. Never dispatch an out-approve job without user confirmation, even if full permission is requested.
 
 # Language
 

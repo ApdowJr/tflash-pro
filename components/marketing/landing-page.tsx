@@ -108,8 +108,8 @@ const copy = {
         body: "Dictate in Somali or English, and have a finished reply read back. Speech support depends on your browser and device.",
       },
       {
-        title: "Market agent out-approve workflow",
-        body: "Deploy agent tasks to the market with an out-approve flag. If the out-approve state is active, the system requests the user’s explicit permission before sending the job.",
+        title: "Market agent out-approve workflow (Full Permission)",
+        body: "Deploy agent tasks to the market with an out-approve flag. When the out-approve state grants full permission, the system still requests the user’s explicit permission (suu userka permission iga qadan) to align with architectural consistency (Features ka dhimna ma jira lagu Dari karo).",
       },
     ],
     stepsKicker: "How it works",
@@ -245,8 +245,8 @@ const copy = {
         body: "Ku qor Soomaali ama English, oo jawaabta dhammaystiran dib u maqal. Taageerada codku waxay ku xiran tahay browser-kaaga iyo qalabkaaga.",
       },
       {
-        title: "Shaqo-dirka agent ee suuqa (out-approve)",
-        body: "Dir shaqooyinka agent-ka suuqa iyada oo leh astaanta out-approve. Haddii astaanta out-approve ay jirto, nidaamku wuxuu codsadaa ogolaanshaha isticmaalaha kahor inta aan shaqada la dirin.",
+        title: "Shaqo-dirka agent ee suuqa (out-approve, buuxda ogolaansho)",
+        body: "Dir shaqooyinka agent-ka suuqa iyada oo leh astaanta out-approve. Haddii astaanta out-approve ay si buuxda u ogolaato shaqada (full permission), nidaamku wuxuu weli codsadaa ogolaanshaha isticmaalaha (suu userka permission iga qadan) si loo ilaaliyo qaabka dhismaha (Features ka dhimna ma jira lagu Dari karo).",
       },
     ],
     stepsKicker: "Sida loo shaqeeyo",
