@@ -353,6 +353,10 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
           title={showConversationLayout ? title : undefined}
         />
 
+        <details className="shrink-0 border-b px-4 py-2 text-xs text-muted-foreground sm:px-6">
+          <summary className="w-fit cursor-pointer font-medium hover:text-foreground">{t("approvalModeStatus")}</summary>
+          <p className="mt-2 max-w-2xl leading-relaxed">{t("approvalModeDetails")}</p>
+        </details>
         {!isEmpty ? <div className="shrink-0 px-4 py-2 sm:px-6"><ActivityPanel messages={agent.data.messages} events={agent.events} /></div> : null}
         {currentPlan ? <div className="shrink-0 px-4 py-2 sm:px-6"><AgentPlanCard compact plan={currentPlan} runState={runState} onContinue={() => handleSubmit({ text: t("continueTaskPrompt"), files: [] })} /></div> : null}
 
