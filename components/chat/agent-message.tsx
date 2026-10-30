@@ -170,7 +170,7 @@ function AgentMessagePart({
 
       return (
         <>
-          <Tool key={part.state === "approval-requested" ? "review" : "activity"} defaultOpen={part.state === "approval-requested"}>
+          <Tool key={part.state === "approval-requested" ? "review" : "activity"} defaultOpen={false}>
             <ToolHeader
               state={part.state}
               title={part.toolMetadata?.eve?.label ?? part.toolName}
@@ -426,7 +426,7 @@ function formatBytes(size: number | undefined): string | undefined {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function InputRequestActions({
+export function InputRequestActions({
   canRespond,
   onInputResponses,
   part,
@@ -455,8 +455,17 @@ function InputRequestActions({
 
   return (
     <div className="space-y-3 rounded-md border border-yellow-500/30 bg-yellow-500/5 p-3">
-      <p className="text-muted-foreground text-sm">{inputRequest.prompt}</p>
-      {!inputResponse && !settledApproval && inputRequest.kind === "tool-approval" ? <p className="text-muted-foreground text-xs">{t("reviewToolAction")}</p> : null}
+      {inputRequest.kind === "tool-approval" ? (
+        <>
+          <p className="text-sm font-semibold">{t("approvalRequired")}</p>
+          <p className="line-clamp-3 break-words text-sm">{part.toolName === "bash" ? t("approvalShellSummary") : inputRequest.prompt}</p>
+          <details className="text-sm">
+            <summary className="cursor-pointer text-muted-foreground hover:text-foreground">{t("approvalDetails")}</summary>
+            <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted/50 p-3 font-mono text-xs"><code>{JSON.stringify(part.input, null, 2) ?? "—"}</code></pre>
+          </details>
+          {!inputResponse && !settledApproval ? <p className="text-muted-foreground text-xs">{t("approvalScope")}</p> : null}
+        </>
+      ) : <p className="text-muted-foreground text-sm">{inputRequest.prompt}</p>}
       {inputResponse || settledApproval ? (
         <p className="font-medium text-sm">
           Responded:{" "}
@@ -481,9 +490,10 @@ function InputRequestActions({
               }}
               size="sm"
               type="button"
-              variant={option.style === "danger" ? "destructive" : "default"}
+              variant={inputRequest.kind === "tool-approval" && option.id === "cancel" ? "outline" : option.style === "danger" ? "destructive" : "default"}
             >
-              {option.label}
+              {inputRequest.kind === "tool-approval" && option.id === "approve" ? t("approvalOnceButton") :
+                inputRequest.kind === "tool-approval" && option.id === "cancel" ? t("approvalDenyButton") : option.label}
             </Button>
           ))}
         </div>
