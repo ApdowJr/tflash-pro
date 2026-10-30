@@ -2,19 +2,27 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { registerHooks } from "node:module";
 import { createServer } from "node:http";
+import { EventEmitter } from "node:events";
 import { readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 
 // Real supabase-js HTTP serialization against an isolated local SQL-backed
 // protocol fixture. This is not a live Supabase/PostgREST deployment.
 registerHooks({ resolve(specifier, context, next) {
+  if (specifier === "node:dns/promises") return { url: "data:text/javascript,export const lookup=(...args)=>globalThis.__fixtureLookup(...args)", shortCircuit: true };
+  if (specifier === "node:https") return { url: "data:text/javascript,export const request=(...args)=>globalThis.__fixtureHttps(...args)", shortCircuit: true };
+  if (specifier === "@/lib/research-evidence") return { url: 'data:text/javascript,export const researchOwner=()=>true; export const sealSourceReceipt=async()=>"receipt"', shortCircuit: true };
   if (specifier === "@/lib/security/owned-chat") return { url: "data:text/javascript,export const ownedChat=async(req,id)=>id==='session-a'&&req.headers.get('x-test-user')==='alice'?{kind:'supabase',userId:'alice'}:null", shortCircuit: true };
   if (specifier.startsWith("@/")) return { url: new URL(`../${specifier.slice(2)}.ts`, import.meta.url).href, shortCircuit: true };
-  return next(specifier, context);
+  try { return next(specifier, context); } catch (error) {
+    if (specifier.startsWith(".") && !/\.[a-z]+$/i.test(specifier)) return next(`${specifier}.ts`, context);
+    throw error;
+  }
 } });
 const permissions = await import("../app/api/chats/[sessionId]/permissions/route.ts");
 const revoke = await import("../app/api/chats/[sessionId]/permissions/revoke-all/route.ts");
 const { hasWebGrant } = await import("../lib/permission-store.ts");
+const web = (await import("../agent/tools/web_fetch.ts")).default;
 
 test("real client HTTP to isolated SQL enforces emergency revoke despite listing failure", async () => {
   const db = new PGlite();
@@ -23,7 +31,7 @@ test("real client HTTP to isolated SQL enforces emergency revoke despite listing
   const oldUrl = process.env.TFLASH_PERMISSIONS_SUPABASE_URL, oldKey = process.env.TFLASH_PERMISSIONS_SERVICE_ROLE_KEY;
   try {
     await db.exec("create role anon; create role authenticated; create role service_role bypassrls;");
-    for (const name of ["20261030120000_create_tflash_permission_grants.sql", "20261030130000_permission_grant_revisions.sql", "20261030140000_permission_emergency_revocation.sql"]) {
+    for (const name of ["20261030120000_create_tflash_permission_grants.sql", "20261030130000_permission_grant_revisions.sql", "20261030140000_permission_emergency_revocation.sql", "20261030150000_permission_call_decisions.sql"]) {
       await db.exec(await readFile(new URL(`../supabase/migrations/${name}`, import.meta.url), "utf8"));
     }
     const calls = {
@@ -31,6 +39,9 @@ test("real client HTTP to isolated SQL enforces emergency revoke despite listing
       tflash_change_web_grant: ["p_kind", "p_owner", "p_session", "p_origin", "p_revision", "p_epoch", "p_revoke"],
       tflash_revoke_web_grants: ["p_kind", "p_owner", "p_session"],
       tflash_has_web_grant: ["p_kind", "p_owner", "p_session", "p_origin"],
+      tflash_issue_web_decision: ["p_kind", "p_owner", "p_session", "p_origin", "p_call"],
+      tflash_has_web_decision: ["p_kind", "p_owner", "p_session", "p_origin", "p_call"],
+      tflash_consume_web_decision: ["p_kind", "p_owner", "p_session", "p_origin", "p_call"],
     };
     server = createServer(async (request, response) => {
       try {
@@ -63,6 +74,53 @@ test("real client HTTP to isolated SQL enforces emergency revoke despite listing
     const pair = await Promise.all([permissions.POST(req("POST",body),route), permissions.POST(req("POST",body),route)]);
     assert.deepEqual(pair.map(r => r.status).sort(), [200,409]);
     assert.equal(await hasWebGrant(owner,"https://example.com/"), true);
+
+    // Exercise the actual Eve tool, real supabase-js HTTP and SQL decision
+    // functions. DNS and TLS are isolated fakes; no external host is contacted.
+    let sockets = 0, blockDns, resumeDns, dnsStarted;
+    globalThis.__fixtureLookup = async () => {
+      if (blockDns) { dnsStarted(); await new Promise((resolve) => { resumeDns = resolve; }); }
+      return [{ address: "8.8.8.8", family: 4 }];
+    };
+    globalThis.__fixtureHttps = (_url, _options, response) => {
+      sockets++;
+      const request = new EventEmitter();
+      request.setTimeout = () => request;
+      request.destroy = (error) => { if (error) request.emit("error",error); return request; };
+      request.end = () => {
+        const res = new EventEmitter(); res.statusCode = 200; res.headers = {"content-type":"text/plain"}; res.resume = () => {};
+        response(res); res.emit("data", Buffer.from("fixture page")); res.emit("end");
+      };
+      return request;
+    };
+    const principal = {principalId:"alice",principalType:"user",authenticator:"supabase"};
+    const ctx = (callId) => ({session:{id:"session-a",auth:{current:principal,initiator:principal}},callId,toolName:"web_fetch",toolInput:{url:"https://example.com/"},abortSignal:new AbortController().signal});
+    const first = ctx("read-1");
+    assert.equal(await web.approval(first),"not-applicable");
+    assert.equal((await web.execute({url:"https://example.com/"},first)).content,"fixture page");
+    assert.equal(sockets,1);
+    await assert.rejects(web.execute({url:"https://example.com/"},first),/no longer active/);
+    assert.equal(await web.approval(first),"user-approval");
+    assert.equal(sockets,1);
+
+    const race = ctx("read-race");
+    assert.equal(await web.approval(race),"not-applicable");
+    blockDns = true;
+    const started = new Promise(resolve => { dnsStarted = resolve; });
+    const pending = web.execute({url:"https://example.com/"},race);
+    await started;
+    assert.equal((await revoke.POST(req("POST"),route)).status,200);
+    const refreshed = await (await permissions.GET(req("GET"),route)).json();
+    const regrant = { origin:"https://example.com", expectedRevision:refreshed.grants[0].revision, expectedEpoch:refreshed.epoch };
+    assert.equal((await permissions.POST(req("POST",regrant),route)).status,200);
+    resumeDns();
+    await assert.rejects(pending,/no longer active/);
+    assert.equal(sockets,1, "revoked-and-regranted call cannot open a socket");
+    assert.equal(await web.approval(race),"user-approval");
+    const fresh = ctx("read-fresh"); blockDns = false;
+    assert.equal(await web.approval(fresh),"not-applicable");
+    assert.equal((await web.execute({url:"https://example.com/"},fresh)).content,"fixture page");
+    assert.equal(sockets,2);
     failList = true;
     assert.equal((await permissions.GET(req("GET"),route)).status,503);
     assert.equal(await hasWebGrant(owner,"https://example.com/"), true);

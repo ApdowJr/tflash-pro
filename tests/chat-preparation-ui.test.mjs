@@ -98,6 +98,7 @@ afterEach(() => {
   window.setTimeout = realSetTimeout;
   window.clearTimeout = realClearTimeout;
   window.localStorage.clear();
+  window.sessionStorage.clear();
   window.history.replaceState({}, "", "/");
   delete globalThis.__prepareAgent;
   delete globalThis.__prepareOptions;
@@ -604,4 +605,59 @@ test("turn projection is not rescanned on unrelated renders and updates on new e
   globalThis.__prepareAgent.events = [...initial, { type: "turn.cancelled", data: { turnId: "turn-a", sequence: 1 } }];
   rendered.rerender(app({ sessionId: "owned-chat" }));
   await waitFor(() => assert.ok(screen.getByText(/The turn stopped before finishing/)));
+});
+
+test("an unacknowledged dispatch blocks retry across a tab reload until explicit review", async () => {
+  const sends = seed();
+  fakeFetch(() => undefined);
+  let resumes = 0;
+  globalThis.__prepareAgent.resume = async () => { resumes++; };
+  // Eve's store reports stream/transport errors via onError and can resolve
+  // send() rather than reject. Exercise that real callback contract.
+  globalThis.__prepareAgent.send = async (message) => { sends.push({message}); globalThis.__prepareOptions.onError(new Error("connection lost")); };
+  const view = render(app({sessionId:"owned-chat"}));
+  const user = userEvent.setup();
+  const input = await screen.findByPlaceholderText("Ask Tflash anything…");
+  await user.type(input, "Do not repeat this");
+  await user.keyboard("{Enter}");
+  await screen.findByText(/A message dispatch may have reached the agent/);
+  assert.equal(sends.length, 1);
+  assert.equal(input.value, "Do not repeat this");
+  fireEvent.submit(input.closest("form"));
+  assert.equal(sends.length, 1);
+  view.unmount();
+  render(app({sessionId:"owned-chat"}));
+  await screen.findByText(/A message dispatch may have reached the agent/);
+  assert.equal(screen.getByRole("button", {name:"Finish review and allow a new message"}).disabled,true);
+  await user.click(screen.getByRole("button", {name:"Reconnect"}));
+  assert.equal(resumes,1);
+  assert.equal(sends.length,1);
+  await user.click(screen.getByRole("checkbox", {name:/I checked the turn/}));
+  await user.click(screen.getByRole("button", {name:"Finish review and allow a new message"}));
+  assert.equal(screen.queryByText(/A message dispatch may have reached the agent/),null);
+  assert.equal(sends.length,1, "review never dispatches a turn itself");
+});
+
+test("an active turn can still be explicitly steered without erasing its dispatch marker", async () => {
+  seed();
+  fakeFetch(() => undefined);
+  const original = deferred();
+  const sent = [];
+  globalThis.__prepareAgent.send = async (message, options) => { sent.push({message,options}); if (sent.length === 1) await original.promise; };
+  const view = render(app({sessionId:"owned-chat"}));
+  const user = userEvent.setup();
+  const input = await screen.findByPlaceholderText("Ask Tflash anything…");
+  await user.type(input,"First message");
+  await user.keyboard("{Enter}");
+  await waitFor(() => assert.equal(sent.length,1));
+  globalThis.__prepareAgent.status = "streaming";
+  view.rerender(app({sessionId:"owned-chat"}));
+  await user.clear(input);
+  await user.type(input,"Steer it");
+  await user.keyboard("{Enter}");
+  await waitFor(() => assert.equal(sent.length,2));
+  assert.equal(sent[1].options.turnPolicy,"steer");
+  assert.ok(window.sessionStorage.getItem("tflash:dispatch-review:v1:supabase:prepare-user:owned-chat"), "steer must not clear the original pending marker");
+  await React.act(async () => original.resolve());
+  await waitFor(() => assert.equal(window.sessionStorage.getItem("tflash:dispatch-review:v1:supabase:prepare-user:owned-chat"),null));
 });

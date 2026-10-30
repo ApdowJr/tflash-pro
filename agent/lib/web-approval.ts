@@ -1,5 +1,5 @@
 import type { ApprovalContext, ApprovalStatus } from "eve/tools/approval";
-import { hasWebGrant, type PermissionOwner } from "@/lib/permission-store";
+import { issueWebDecision, type PermissionOwner } from "@/lib/permission-store";
 export function permissionOwner(
   session: ApprovalContext["session"],
 ): PermissionOwner | undefined {
@@ -33,9 +33,10 @@ export async function webApproval(
   const owner = permissionOwner(ctx.session);
   if (!owner) return "user-approval";
   try {
-    return (await hasWebGrant(
+    return (await issueWebDecision(
       owner,
       (ctx.toolInput as { url?: unknown } | undefined)?.url,
+      ctx.callId,
       ctx.abortSignal,
     ))
       ? "not-applicable"

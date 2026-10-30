@@ -32,7 +32,7 @@ test("real Supabase client aborts stalled grant checks and fails closed after th
     await assert.rejects(cancelled, { name: "AbortError" });
     const principal = { principalId: "alice", principalType: "user", authenticator: "supabase" };
     const ctx = { session: { id: "session-a", auth: { current: principal, initiator: principal } },
-      toolInput: { url: "https://example.com/" }, abortSignal: new AbortController().signal };
+      toolInput: { url: "https://example.com/" }, callId: "call-1", abortSignal: new AbortController().signal };
     const start = Date.now();
     const [timeout, policy] = await Promise.all([
       assert.rejects(hasWebGrant(owner, "https://example.com/"), { name: "TimeoutError" }),

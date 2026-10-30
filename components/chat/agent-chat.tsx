@@ -1,5 +1,7 @@
 "use client";
 
+import { clearDispatchReview, clearReviewedDispatches, dispatchReviewKey, dispatchStorage, markDispatchReview, readDispatchReview } from "@/lib/dispatch-review";
+
 import type { UserContent } from "ai";
 import { Client } from "eve/client";
 import { useEveAgent } from "eve/react";
@@ -152,6 +154,16 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   const [agentMode, setAgentMode] = useState<AgentMode>("chat");
   const [modeLoadedFor, setModeLoadedFor] = useState<string>();
   const hasSubmittedMessage = useRef(false);
+  const submissionPending = useRef<symbol | undefined>(undefined);
+  const dispatchInProgress = useRef(0);
+  const dispatchError = useRef(false);
+  const [unknownDispatch, setUnknownDispatch] = useState(false);
+  const [dispatchReviewed, setDispatchReviewed] = useState(false);
+  const reviewKey = sessionId ? dispatchReviewKey(account.kind, account.id, sessionId) : undefined;
+  useEffect(() => {
+    setUnknownDispatch(!!reviewKey && !!readDispatchReview(dispatchStorage(), reviewKey));
+    setDispatchReviewed(false);
+  }, [reviewKey]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -178,6 +190,15 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
     prewarm: false,
     initialSession: sessionId ? { sessionId, streamIndex: 0 } : undefined,
     resume,
+    // Eve may resolve send() after reporting a transport error through this
+    // callback. Do not mistake that resolution for a dispatch acknowledgement.
+    onError() {
+      if (dispatchInProgress.current > 0) {
+        dispatchError.current = true;
+        setUnknownDispatch(true);
+        setDispatchReviewed(false);
+      }
+    },
     onSessionChange(session) {
       if (hasSubmittedMessage.current && session) replaceSessionRoute(session.sessionId);
     },
@@ -404,53 +425,76 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
     if (text.length === 0 && message.files.length === 0) return;
     // A programmatic form submission must not clear a draft while the session
     // is unavailable, even though the visible Send button is disabled.
-    if (isResuming || disconnected || !sessionId || cancellationPending.current) throw new Error("Conversation is not ready.");
-    const sendEpoch = cancellationEpoch.current;
-    setCancellationError(undefined);
-    const firstUser = agent.data.messages.find((entry) => entry.role === "user");
-    const firstText = firstUser?.parts.find((part) => part.type === "text");
-    const title = settings.chats.find((chat) => chat.id === sessionId)?.title ||
-      (firstText?.type === "text" ? firstText.text : "") || text || t("attach");
+    if (isResuming || disconnected || !sessionId || cancellationPending.current || submissionPending.current || unknownDispatch ||
+      (reviewKey && readDispatchReview(dispatchStorage(), reviewKey) && !(isBusy && dispatchInProgress.current > 0))) throw new Error("Conversation is not ready.");
+    const preparation = Symbol("submission");
+    submissionPending.current = preparation;
     try {
-      await recordChatActivity(sessionId, title);
-    } catch (error) {
-      setCancellationError(t("historySaveFailed"));
-      throw error; // Keep the draft when history could not be saved.
-    }
-    // A stop may arrive while the chat-index write is pending. Never schedule
-    // the old submission after cancellation, even if the stream has settled.
-    if (sendEpoch !== cancellationEpoch.current) throw new Error("Turn was stopped.");
-    hasSubmittedMessage.current = true;
-    replaceSessionRoute(sessionId);
-    const options = {
-      clientContext: turnContext() + workspaceContext(workspace.snapshot(), sessionId) + agentModeContext(agentMode, settings.language),
-      ...(isBusy ? { turnPolicy: "steer" as const } : {}),
-    };
-
-    if (message.files.length === 0) {
-      await agent.send(text, options);
-      return;
-    }
-
-    const parts: UserContent = [];
-    if (text.length > 0) {
-      parts.push({ text, type: "text" });
-    }
-    for (const file of message.files) {
-      const extracted = file.mediaType === "text/plain" || file.mediaType === "text/markdown" ? attachedText(file.url) : undefined;
-      if (extracted !== undefined) {
-        parts.push({ type: "text", text: `Untrusted attached text ${JSON.stringify(file.filename ?? "attachment")}:\n${extracted}` });
-        continue;
+      const sendEpoch = cancellationEpoch.current;
+      setCancellationError(undefined);
+      const firstUser = agent.data.messages.find((entry) => entry.role === "user");
+      const firstText = firstUser?.parts.find((part) => part.type === "text");
+      const title = settings.chats.find((chat) => chat.id === sessionId)?.title ||
+        (firstText?.type === "text" ? firstText.text : "") || text || t("attach");
+      try {
+        await recordChatActivity(sessionId, title);
+      } catch (error) {
+        setCancellationError(t("historySaveFailed"));
+        throw error; // Keep the draft when history could not be saved.
       }
-      parts.push({
-        data: file.url,
-        filename: file.filename,
-        mediaType: file.mediaType,
-        type: "file",
-      });
-    }
+      // A stop may arrive while the chat-index write is pending. Never schedule
+      // the old submission after cancellation, even if the stream has settled.
+      if (sendEpoch !== cancellationEpoch.current) throw new Error("Turn was stopped.");
+      hasSubmittedMessage.current = true;
+      replaceSessionRoute(sessionId);
+      const options = {
+        clientContext: turnContext() + workspaceContext(workspace.snapshot(), sessionId) + agentModeContext(agentMode, settings.language),
+        ...(isBusy ? { turnPolicy: "steer" as const } : {}),
+      };
 
-    await agent.send(parts, options);
+      const parts: UserContent = [];
+      if (text.length > 0) {
+        parts.push({ text, type: "text" });
+      }
+      for (const file of message.files) {
+        const extracted = file.mediaType === "text/plain" || file.mediaType === "text/markdown" ? attachedText(file.url) : undefined;
+        if (extracted !== undefined) {
+          parts.push({ type: "text", text: `Untrusted attached text ${JSON.stringify(file.filename ?? "attachment")}:\n${extracted}` });
+          continue;
+        }
+        parts.push({
+          data: file.url,
+          filename: file.filename,
+          mediaType: file.mediaType,
+          type: "file",
+        });
+      }
+
+      // The marker is a recovery hint for this tab, not an Eve idempotency key.
+      // It is written before dispatch so a reload after a lost response does not
+      // silently invite a retry. Storage can be unavailable; then the in-memory
+      // guard still applies for this tab's lifetime.
+      const token = crypto.randomUUID();
+      if (reviewKey) markDispatchReview(dispatchStorage(), reviewKey, token);
+      if (dispatchInProgress.current === 0) dispatchError.current = false;
+      dispatchInProgress.current++;
+      if (submissionPending.current === preparation) submissionPending.current = undefined;
+      try {
+        await agent.send(message.files.length === 0 ? text : parts, options);
+        if (dispatchError.current || sendEpoch !== cancellationEpoch.current) throw new Error("Dispatch outcome requires review.");
+        if (reviewKey) {
+          clearDispatchReview(dispatchStorage(), reviewKey, token);
+          // Other in-flight sends (for example, an explicit steer) keep their
+          // own marker. If ours remains, fail closed rather than losing it.
+          const remaining = readDispatchReview(dispatchStorage(), reviewKey);
+          if (remaining && remaining.includes(token)) throw new Error("Dispatch review could not be cleared.");
+        }
+      } catch (error) {
+        setUnknownDispatch(true);
+        setDispatchReviewed(false);
+        throw error;
+      } finally { dispatchInProgress.current--; }
+    } finally { if (submissionPending.current === preparation) submissionPending.current = undefined; }
   };
 
   return (
@@ -489,8 +533,19 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
           <Button type="button" size="sm" variant="outline" disabled={reconnecting || cancellationRequestActive} onClick={() => reconnect(false)}>{t("reconnect")}</Button>
           {recoveryTurn ? <Button type="button" size="sm" variant="outline" disabled={cancelling} onClick={cancelDisconnectedTurn}>{t(cancelling ? "cancelling" : "stopDisconnectedTurn")}</Button> : null}
         </div> : null}
+        {unknownDispatch ? <section className="mx-auto w-full max-w-2xl space-y-2 px-4 py-2 text-xs text-muted-foreground" role="alert">
+          <p>{t("dispatchUnknown")}</p>
+          <ol className="list-decimal space-y-1 pl-5"><li>{t("dispatchReconnectStep")}</li><li>{t("dispatchExternalStep")}</li><li>{t("dispatchNoReplayStep")}</li></ol>
+          {!disconnected ? <Button type="button" size="sm" variant="outline" disabled={isBusy || isResuming || reconnecting || cancellationRequestActive} onClick={() => reconnect(false)}>{t("reconnect")}</Button> : null}
+          <label className="flex items-start gap-2"><input type="checkbox" checked={dispatchReviewed} onChange={(event) => setDispatchReviewed(event.target.checked)} />{t("dispatchReviewed")}</label>
+          <Button type="button" size="sm" variant="outline" disabled={!dispatchReviewed || disconnected || isBusy || isResuming || reconnecting || cancelling || dispatchInProgress.current > 0} onClick={() => {
+            if (dispatchInProgress.current > 0) return;
+            if (reviewKey) clearReviewedDispatches(dispatchStorage(), reviewKey);
+            setUnknownDispatch(!!reviewKey && !!readDispatchReview(dispatchStorage(), reviewKey)); setDispatchReviewed(false);
+          }}>{t("dispatchUnlock")}</Button>
+        </section> : null}
         {runState === "cancelled" ? <p role="status" className="mx-auto w-full max-w-2xl px-4 py-2 text-xs text-muted-foreground sm:px-6">{t("turnStoppedHint")}</p> : null}
-        {currentPlan ? <div className="shrink-0 px-4 py-2 sm:px-6"><AgentPlanCard compact plan={currentPlan} runState={runState} onContinue={() => handleSubmit({ text: t("continueTaskPrompt"), files: [] })} /></div> : null}
+        {currentPlan ? <div className="shrink-0 px-4 py-2 sm:px-6"><AgentPlanCard compact plan={currentPlan} runState={unknownDispatch ? "interrupted" : runState} onContinue={() => handleSubmit({ text: t("continueTaskPrompt"), files: [] })} /></div> : null}
 
         {showConversationLayout ? (
           <Conversation
@@ -554,7 +609,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
               mode={agentMode}
               onModeChange={setAgentMode}
               isBusy={isBusy}
-              isResuming={isResuming || disconnected || !sessionId}
+              isResuming={isResuming || disconnected || unknownDispatch || !sessionId}
               cancelling={cancelling}
               onCancel={requestCancellation}
               onSubmit={handleSubmit}

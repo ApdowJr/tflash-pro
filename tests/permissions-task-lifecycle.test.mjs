@@ -19,6 +19,19 @@ globalThis.__db = () => ({
       if (!epochs.has(key)) epochs.set(key, {revision: randomUUID()});
       return { data: epochs.get(key).revision, error: null };
     }
+    if (name === "tflash_issue_web_decision" || name === "tflash_has_web_decision" || name === "tflash_consume_web_decision") {
+      if (pendingGrant) return await pendingGrant;
+      const row = grants.get(`${key}|${p.p_origin}`), epoch = epochs.get(key);
+      const decisions = table("tflash_web_call_decisions"), decisionKey = `${key}|${p.p_call}`;
+      const active = !!(row && epoch && Date.parse(row.expires_at) > Date.now());
+      if (name === "tflash_issue_web_decision" && active && !decisions.has(decisionKey)) {
+        decisions.set(decisionKey, { origin: p.p_origin, grantRevision: row.revision, epochRevision: epoch.revision });
+      }
+      const decision = decisions.get(decisionKey);
+      const valid = !!(active && decision && !decision.consumed && decision.origin === p.p_origin && decision.grantRevision === row.revision && decision.epochRevision === epoch.revision);
+      if (valid && name === "tflash_consume_web_decision") decision.consumed = true;
+      return { data: valid, error: null };
+    }
     if (name === "tflash_has_web_grant") {
       if (pendingGrant) return await pendingGrant;
       const row = grants.get(`${key}|${p.p_origin}`);
@@ -206,6 +219,7 @@ function permissionReq(method = "GET", user = "supabase:alice", body = { origin:
   const row = tables.get("tflash_permission_grants")?.get(`${key}|${normalized}`);
   return req(method, user, { ...body, expectedRevision: row?.revision ?? null, expectedEpoch: epochs.get(key).revision }, origin);
 }
+let nextCallId = 0;
 function context(
   kind = "supabase",
   id = "alice",
@@ -221,6 +235,7 @@ function context(
     session: { id: "session-a", auth: { current: p, initiator: p } },
     toolInput: { url },
     toolName: "web_fetch",
+    callId: `call-${++nextCallId}`,
     abortSignal: new AbortController().signal,
   };
 }
@@ -304,7 +319,8 @@ test("permission route and actual Eve gate enforce identity, scope, expiry, revo
   assert.equal((await permissions.GET(req("GET"), route)).status, 503);
   unavailable = false;
   assert.equal((await permissions.POST(permissionReq("POST"), route)).status, 200);
-  assert.equal(await web.approval(ctx), "not-applicable");
+  assert.equal(await web.approval(ctx), "user-approval"); // Old call remains bound to the revoked revision.
+  assert.equal(await web.approval(context()), "not-applicable");
   const otherSession = context();
   otherSession.session = { ...otherSession.session, id: "session-b" };
   assert.equal(await web.approval(otherSession), "user-approval");
@@ -462,7 +478,8 @@ test("emergency revoke works without listing and blocks delayed grants, then per
   assert.equal(await web.approval(ctx), "user-approval");
   assert.equal((await permissions.POST(staleNew, route)).status, 409);
   assert.equal((await permissions.POST(permissionReq("POST"), route)).status, 200);
-  assert.equal(await web.approval(ctx), "not-applicable");
+  assert.equal(await web.approval(ctx), "user-approval");
+  assert.equal(await web.approval(context()), "not-applicable");
   assert.equal((await revokeAll.POST(req("POST", "supabase:alice", {}, "https://evil.test"), route)).status, 403);
   assert.equal((await revokeAll.POST(req("POST", "supabase:bob"), route)).status, 404);
   unavailable = true;

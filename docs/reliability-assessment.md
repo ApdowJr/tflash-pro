@@ -82,7 +82,7 @@ isolated Next/Eve test environment with its own workflow storage and sandbox is
 also required; otherwise the project tests database behavior only.
 
 After separate approval for the hosted migration application, reconcile the
-migration history and apply the three permission/task migrations to that project
+migration history and apply the four permission/task migrations to that project
 only. Validate real PostgREST RPC privileges and error shapes, session ownership,
 concurrent transactions and grant/revoke/epoch races, expiry, missing service
 credentials, and coherent Next/Eve rollout. Exercise actual Eve fetch execution,
@@ -135,3 +135,30 @@ new transcript/turn snapshots invalidate them. See the separate
 [bounded-continuation design](bounded-continuation-design.md) and
 [preview-control investigation](preview-control-investigation.md). These are
 not a scheduler, hosted proof or authorization to push/deploy.
+
+
+## Call-bound homepage decisions and dispatch review
+
+The local call-decision migration binds an automatic homepage decision to the
+owner, session, tool call ID, exact origin, grant revision and epoch. Revoking
+and regranting does not revive an old decision. The post-DNS check atomically
+consumes the decision before the socket attempt; a lost database response or
+failed request remains consumed and is not automatically replayed. The service
+retains at most 2,000 decisions per conversation and requires per-call approval
+after the limit; it must not evict old decisions while calls can replay. A GET
+can have effects on a remote server; this is at-most-one grant-authorized
+socket attempt, not proof of exactly-once external effects. Revocation cannot
+recall a request whose consume check already succeeded. Old Eve deployments can
+bypass the new protocol; coordinated rollout and separate migration approval
+are prerequisites, not actions performed here. Local PGlite and fake DNS/TLS
+fixtures do not establish real concurrent PostgreSQL or hosted behavior.
+
+A browser-tab marker is written before message dispatch. If dispatch fails, Eve
+reports an error, a stop races it, or the tab reloads with the marker, the UI
+blocks a new message and directs the user to reconnect, inspect activity and
+external services, and explicitly review before unlocking. Eve's `onError`
+callback matters because its send promise can resolve after an error. This is
+a practical recovery aid only: sessionStorage can be unavailable or cleared,
+is tab-local, and is neither a remote idempotency key nor a cross-tab lock.
+Unlocking does not prove reconciliation. The UI never automatically resends
+an uncertain turn.
