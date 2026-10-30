@@ -62,3 +62,10 @@ test("text artifact generation returns real bounded content with a compact model
   assert.equal(artifactMediaType("report.md"), "text/markdown;charset=utf-8");
   assert.equal(artifactMediaType("data.json"), "application/json;charset=utf-8");
 });
+
+test("provisional plan snapshots never replace a settled plan", () => {
+  const settled = { role: "assistant", parts: [{ type: "dynamic-tool", toolName: "update_plan", state: "output-available", output: { kind: "tflash-plan", version: 1, plan } }] };
+  const provisional = { ...settled.parts[0], partial: true, output: { kind: "tflash-plan", version: 1, plan: { ...plan, title: "Provisional" } } };
+  assert.deepEqual(latestAgentPlan([settled, { role: "assistant", parts: [provisional] }]), plan);
+  assert.equal(latestAgentPlan([{ role: "assistant", parts: [provisional] }]), undefined);
+});

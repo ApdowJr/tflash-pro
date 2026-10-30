@@ -24,6 +24,7 @@ import { AGENT_MODES, type AgentMode } from "@/lib/agent-modes";
 export function ChatComposer({
   isBusy,
   isResuming,
+  cancelling = false,
   onCancel,
   onSubmit,
   mode = "chat",
@@ -31,6 +32,7 @@ export function ChatComposer({
 }: {
   readonly isBusy: boolean;
   readonly isResuming: boolean;
+  readonly cancelling?: boolean;
   readonly onCancel: () => void;
   readonly onSubmit: (message: PromptInputMessage) => Promise<void>;
   readonly mode?: AgentMode;
@@ -75,7 +77,7 @@ export function ChatComposer({
           // Send stays disabled until it is safe to submit.
           placeholder={t("placeholder")}
         />
-        <PromptInputFooter className="flex-wrap border-t-0 px-2.5 pt-1.5 pb-2.5 pr-14">
+        <PromptInputFooter className={`flex-wrap border-t-0 px-2.5 pt-1.5 pb-2.5 ${isBusy && (controller.textInput.value.trim() || controller.attachments.files.length) ? "pr-24" : "pr-14"}`}>
           <PromptInputTools className="gap-1">
             <ComposerAttachButton />
             <DocumentImportButton disabled={isResuming} />
@@ -89,6 +91,7 @@ export function ChatComposer({
           hasInputText={controller.textInput.value.trim().length > 0}
           isBusy={isBusy}
           isResuming={isResuming}
+          cancelling={cancelling}
           onCancel={onCancel}
         />
       </PromptInput>
@@ -165,35 +168,40 @@ function ComposerAction({
   hasInputText,
   isBusy,
   isResuming,
+  cancelling,
   onCancel,
 }: {
   readonly hasInputText: boolean;
   readonly isBusy: boolean;
   readonly isResuming: boolean;
+  readonly cancelling: boolean;
   readonly onCancel: () => void;
 }) {
   const attachments = usePromptInputAttachments();
   const { t } = useAppSettings();
   const canSubmit = hasInputText || attachments.files.length > 0;
 
-  if (!isBusy || canSubmit) {
-    return (
-      <PromptInputSubmit
-        aria-label={t("send")}
-        className="tf-touch-target right-2 bottom-2 size-9 bg-foreground text-background transition-opacity hover:opacity-90 disabled:opacity-40 sm:right-2.5 sm:bottom-2.5 sm:size-8"
-        disabled={isResuming || (!canSubmit && !isBusy)}
-      />
-    );
-  }
-
   return (
-    <PromptInputButton
-      aria-label={t("stop")}
-      className="tf-touch-target absolute right-2 bottom-2 size-9 rounded-full border-border bg-card sm:right-2.5 sm:bottom-2.5 sm:size-8"
-      onClick={onCancel}
-      variant="outline"
-    >
-      <SquareIcon className="size-3 fill-current" />
-    </PromptInputButton>
+    <>
+      {isBusy ? (
+        <PromptInputButton
+          aria-label={t(cancelling ? "cancelling" : "stop")}
+          className={`tf-touch-target absolute bottom-2 size-9 rounded-full border-border bg-card sm:bottom-2.5 sm:size-8 ${canSubmit ? "right-14 sm:right-12" : "right-2 sm:right-2.5"}`}
+          disabled={cancelling}
+          onClick={onCancel}
+          type="button"
+          variant="outline"
+        >
+          <SquareIcon className="size-3 fill-current" />
+        </PromptInputButton>
+      ) : null}
+      {!isBusy || canSubmit ? (
+        <PromptInputSubmit
+          aria-label={t("send")}
+          className="tf-touch-target right-2 bottom-2 size-9 bg-foreground text-background transition-opacity hover:opacity-90 disabled:opacity-40 sm:right-2.5 sm:bottom-2.5 sm:size-8"
+          disabled={isResuming || cancelling || !canSubmit}
+        />
+      ) : null}
+    </>
   );
 }

@@ -2,7 +2,6 @@
 import { useState } from "react";
 import type { EveMessage } from "eve/react";
 import { useAppSettings } from "@/components/settings/app-settings";
-import { useWorkspace } from "@/components/settings/workspace-store";
 import { activityRows, reportedUsage } from "@/lib/activity";
 import { downloadBlob } from "@/lib/download";
 import { Button } from "@/components/ui/button";
@@ -11,6 +10,8 @@ const stateKeys = {
   "approval-requested": "activityPending",
   "approval-responded": "activityPending",
   cancelled: "activityCancelled",
+  "background-unknown": "activityBackgroundUnknown",
+  "outcome-unknown": "activityOutcomeUnknown",
   "output-available": "activitySucceeded",
   "output-error": "activityFailed",
   "output-denied": "activityDenied",
@@ -23,39 +24,14 @@ export function ActivityPanel({
   events: Parameters<typeof reportedUsage>[0];
 }) {
   const { t } = useAppSettings();
-  const { workspace } = useWorkspace();
   const rows = activityRows(messages, events);
   const usage = reportedUsage(events);
-  const cancelled = events.filter((e) => e.type === "turn.cancelled").at(-1);
-  // Only label a cancellation as a budget stop if that turn requested > cap steps.
-  const turnId =
-    cancelled &&
-    cancelled.data &&
-    typeof cancelled.data === "object" &&
-    "turnId" in cancelled.data
-      ? cancelled.data.turnId
-      : undefined;
-  const limitStopped =
-    turnId &&
-    new Set(
-      events
-        .filter(
-          (e) =>
-            e.type === "step.started" &&
-            e.data &&
-            typeof e.data === "object" &&
-            "turnId" in e.data &&
-            e.data.turnId === turnId,
-        )
-        .map((e) => (e.data as { stepIndex: number }).stepIndex),
-    ).size > workspace.maxSteps;
   return (
     <details className="mx-auto w-full max-w-2xl rounded-lg border bg-card text-xs">
       <summary className="tf-touch-target min-h-11 cursor-pointer rounded-lg px-3 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
         {t("activityUsage")} · {rows.length}
       </summary>
       <div className="max-h-[40dvh] space-y-3 overflow-auto p-3 pt-0">
-        {limitStopped ? <p role="status">{t("stepLimitReached")}</p> : null}
         <dl className="grid grid-cols-3 gap-2">
           {(
             [

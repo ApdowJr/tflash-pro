@@ -8,7 +8,7 @@ import type {
   EveMessageInputRequest,
   EveMessagePart,
 } from "eve/react";
-import type { FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { planOutputSchema, artifactOutputSchema } from "@/lib/agent-workspace";
 import { AgentPlanCard, AgentArtifactCard } from "./agent-workspace";
 import { researchFetchOutputSchema, researchReportOutputSchema } from "@/lib/research";
@@ -133,7 +133,7 @@ function AgentMessagePart({
     case "authorization":
       return <AuthorizationPrompt part={part} />;
     case "dynamic-tool": {
-      if (part.state === "output-available") {
+      if (part.state === "output-available" && !part.partial) {
         if (part.toolName === "web_fetch") {
           const parsed = researchFetchOutputSchema.safeParse(part.output);
           if (parsed.success) return <ResearchSourceCard source={parsed.data.source} />;
@@ -436,6 +436,9 @@ export function InputRequestActions({
   readonly part: EveDynamicToolPart;
 }) {
   const { t } = useAppSettings();
+  const [submitting, setSubmitting] = useState(false);
+  const [submitFailed, setSubmitFailed] = useState(false);
+  const submittingRef = useRef(false);
   const inputRequest = part.toolMetadata?.eve?.inputRequest;
   if (!inputRequest) {
     return null;
@@ -478,15 +481,20 @@ export function InputRequestActions({
         <div className="flex flex-wrap gap-2">
           {inputRequest.options?.map((option) => (
             <Button
-              disabled={!canRespond(inputRequest.requestId)}
+              className="min-h-11"
+              disabled={submitting || !canRespond(inputRequest.requestId)}
               key={option.id}
               onClick={() => {
-                void onInputResponses([
-                  {
-                    optionId: option.id,
-                    requestId: inputRequest.requestId,
-                  },
-                ]);
+                if (submittingRef.current) return;
+                submittingRef.current = true;
+                setSubmitting(true);
+                setSubmitFailed(false);
+                void Promise.resolve().then(() => onInputResponses([
+                  { optionId: option.id, requestId: inputRequest.requestId },
+                ])).catch(() => setSubmitFailed(true)).finally(() => {
+                  submittingRef.current = false;
+                  setSubmitting(false);
+                });
               }}
               size="sm"
               type="button"
@@ -498,6 +506,7 @@ export function InputRequestActions({
           ))}
         </div>
       )}
+      {submitFailed ? <p className="text-xs text-destructive" role="alert">{t("approvalSendFailed")}</p> : null}
     </div>
   );
 }

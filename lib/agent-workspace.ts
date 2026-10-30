@@ -57,7 +57,7 @@ export function artifactMediaType(filename: string): string {
 export function latestAgentPlan(messages: readonly {
   readonly role: string;
   readonly parts: readonly {
-    readonly type: string; readonly toolName?: string; readonly state?: string; readonly output?: unknown;
+    readonly type: string; readonly toolName?: string; readonly state?: string; readonly output?: unknown; readonly partial?: boolean;
   }[];
 }[]): AgentPlan | undefined {
   for (let m = messages.length - 1; m >= 0; m--) {
@@ -65,7 +65,7 @@ export function latestAgentPlan(messages: readonly {
     if (message.role !== "assistant") continue;
     for (let p = message.parts.length - 1; p >= 0; p--) {
       const part = message.parts[p];
-      if (part.type !== "dynamic-tool" || part.toolName !== "update_plan" || part.state !== "output-available") continue;
+      if (part.type !== "dynamic-tool" || part.toolName !== "update_plan" || part.state !== "output-available" || part.partial === true) continue;
       const parsed = planOutputSchema.safeParse(part.output);
       if (parsed.success) return parsed.data.plan;
     }
