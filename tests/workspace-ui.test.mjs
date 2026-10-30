@@ -1584,8 +1584,8 @@ test("unmount during delayed continuation begin never starts the agent", async (
   });
   const task={objective:'Task',path:'out.txt',sha256:'a'.repeat(64),revision:'r1',continuationBudget:1,state:'awaiting_evidence',verifiedAt:null,reason:null};
   const view=render(app(h(TaskContinuation,{sessionId:'chat-a',task,disabled:false,onContinue:async()=>{sends++;},onRefreshTask:()=>{}})));
-  const user=userEvent.setup(); await screen.findByText('Turns remaining: 1');
-  await user.click(screen.getByRole('checkbox',{name:/explicitly authorize one new turn/}));
+  const user=userEvent.setup();
+  await user.click(await screen.findByRole('checkbox',{name:/explicitly authorize one new turn/}));
   await user.click(screen.getByRole('button',{name:'Start one budgeted turn'}));
   await waitFor(()=>assert.equal(begun,true)); view.unmount();
   await React.act(async()=>release()); assert.equal(sends,0);
