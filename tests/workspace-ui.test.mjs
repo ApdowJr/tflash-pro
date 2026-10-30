@@ -602,7 +602,7 @@ test("task progress is bilingual and a blocked step is not shown as completed", 
   const panel = await screen.findByRole("region", { name: "Qorshaha hawsha" });
   assert.ok(within(panel).getByText("Xanniban", { exact: false }));
   assert.ok(within(panel).getByText("Oggolaansho ma jiro"));
-  assert.ok(within(panel).getByText("1/2 Dhammaatay"));
+  assert.ok(within(panel).getByText(/1\/2 Dhammaatay/));
   assert.equal(within(panel).getAllByRole("listitem").length, 2);
 });
 
@@ -665,6 +665,7 @@ test("unfinished stopped plans can be continued explicitly, but completed or act
   assert.equal(screen.queryByRole("button", { name: "Continue task" }), null);
   rendered.rerender(app(h(AgentPlanCard, { plan: { ...plan, steps: [{ ...plan.steps[0], status: "completed" }] }, runState: "idle", onContinue })));
   assert.equal(screen.queryByRole("button", { name: "Continue task" }), null);
+  assert.ok(screen.getByRole("button", { name: "Review / continue task" }));
 });
 
 test("actual chat messages render authored artifacts and reject a lookalike from another tool", async () => {
@@ -1273,4 +1274,14 @@ test("Supabase searches its account history without a browser ownership proof", 
   assert.equal(calls.filter((call) => call.path.endsWith("/search")).length, 0);
   await user.type(search, "eedle");
   assert.ok(await screen.findByRole("link", { name: /Synced title.*needle/ }));
+});
+
+test("provisional tool output cannot produce a completed artifact card", async () => {
+  const { AgentMessage } = await import("../components/chat/agent-message.tsx");
+  seed(); fakeFetch();
+  const output = { kind: "tflash-artifact", version: 1, artifact: { filename: "draft.txt", description: "Draft", content: "Provisional" } };
+  const part = { type: "dynamic-tool", toolName: "create_artifact", toolCallId: "call-partial", state: "output-available", partial: true, input: {}, output };
+  const props = { canRespond: () => false, isStreaming: true, onInputResponses() {}, questionsFor: () => [], message: { id: "assistant-partial", role: "assistant", parts: [part] } };
+  render(app(h(AgentMessage, props)));
+  assert.equal(screen.queryByRole("button", { name: "Download: draft.txt" }), null);
 });

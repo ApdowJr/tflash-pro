@@ -10,8 +10,8 @@ import { Button } from "@/components/ui/button";
 const stepIcons = { pending: CircleIcon, in_progress: Loader2Icon, completed: CheckIcon, blocked: TriangleAlertIcon };
 const stepKeys = { pending: "stepPending", in_progress: "stepInProgress", completed: "stepCompleted", blocked: "stepBlocked" } as const;
 
-export type AgentRunState = "working" | "waiting" | "idle" | "resuming" | "failed";
-const runKeys = { working: "agentWorking", waiting: "agentWaiting", idle: "agentIdle", resuming: "loadingChat", failed: "requestFailed" } as const;
+export type AgentRunState = "working" | "waiting" | "idle" | "resuming" | "failed" | "cancelled" | "interrupted";
+const runKeys = { working: "agentWorking", waiting: "agentWaiting", idle: "agentIdle", resuming: "loadingChat", failed: "requestFailed", cancelled: "agentCancelled", interrupted: "agentDisconnected" } as const;
 
 export function AgentPlanCard({ plan, compact = false, runState, onContinue }: {
   readonly plan: AgentPlan; readonly compact?: boolean; readonly runState?: AgentRunState;
@@ -38,27 +38,27 @@ export function AgentPlanCard({ plan, compact = false, runState, onContinue }: {
           );
         })}
       </ol>
-      {onContinue && completed < plan.steps.length && (runState === "idle" || runState === "failed") ? (
+      {onContinue && (runState === "idle" || runState === "failed" || runState === "cancelled") ? (
         <div className="space-y-2">
           <Button disabled={continuing} onClick={async () => {
             setContinuing(true);
             setContinueFailed(false);
             try { await onContinue(); } catch { setContinueFailed(true); }
             finally { setContinuing(false); }
-          }} size="sm" type="button" variant="outline">{t(continuing ? "agentWorking" : "continueTask")}</Button>
+          }} size="sm" type="button" variant="outline">{t(continuing ? "agentWorking" : completed === plan.steps.length ? "verifyOrContinue" : "continueTask")}</Button>
           {continueFailed ? <p className="text-xs text-destructive" role="alert">{t("continueTaskFailed")}</p> : null}
         </div>
       ) : null}
     </div>
   );
-  const heading = <>{runState ? <span className="shrink-0 text-xs text-muted-foreground" role="status">{t(runKeys[runState])}</span> : null}<span className="min-w-0 flex-1 break-words font-medium">{plan.title}</span><span className="shrink-0 text-xs text-muted-foreground">{completed}/{plan.steps.length} {t("stepCompleted")}</span></>;
+  const heading = <>{runState ? <span className="shrink-0 text-xs text-muted-foreground" role="status">{t(runKeys[runState])}</span> : null}<span className="min-w-0 flex-1 break-words font-medium">{plan.title}</span><span className="shrink-0 text-xs text-muted-foreground">{completed}/{plan.steps.length} {t("stepCompleted")} · {t("planReportedCount")}</span></>;
   if (compact) return (
     <details className="mx-auto w-full max-w-2xl rounded-lg border bg-card">
-      <summary className="flex cursor-pointer items-center gap-3 px-3 py-2 text-sm" aria-label={t("taskPlan")}>{heading}</summary>
+      <summary className="flex min-h-11 cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm" aria-label={t("taskPlan")}>{heading}</summary>
       <div className="max-h-[35dvh] overflow-y-auto">{body}</div>
     </details>
   );
-  return <section aria-label={t("taskPlan")} className="min-w-0 rounded-lg border bg-card"><div className="flex items-center gap-3 p-3 text-sm">{heading}</div>{body}</section>;
+  return <section aria-label={t("taskPlan")} className="min-w-0 rounded-lg border bg-card"><div className="flex flex-wrap items-center gap-x-3 gap-y-1 p-3 text-sm">{heading}</div>{body}</section>;
 }
 
 export function AgentArtifactCard({ artifact }: { readonly artifact: AgentArtifact }) {

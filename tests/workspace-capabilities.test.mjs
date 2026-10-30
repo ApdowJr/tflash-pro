@@ -61,7 +61,7 @@ test("usage limits are bounded, step counting is replay-safe and new turns get a
 });
 
 test("activity excludes inputs/results/secrets, partial results aren't success and provider cost absence stays unknown", () => {
-  const part = { type: "dynamic-tool", toolName: "bash", toolCallId: "a", input: { secret: "DO-NOT-EXPORT" }, output: "secret output", state: "output-available" };
+  const part = { type: "dynamic-tool", toolName: "bash", toolCallId: "a", input: { secret: "DO-NOT-EXPORT" }, output: { status: "completed", exitCode: 0, text: "secret output" }, state: "output-available" };
   const rows = activityRows([{ role: "assistant", parts: [{ ...part, partial: true }, part] }, { role: "user", parts: [part] }]);
   assert.equal(rows.length, 1); assert.equal(rows[0].state, "output-available");
   assert.ok(!JSON.stringify(rows).includes("secret"));
@@ -77,4 +77,41 @@ test("activity excludes inputs/results/secrets, partial results aren't success a
   assert.deepEqual(reportedUsage([step, checkpoint, next]), { inputTokens: 142, outputTokens: 37, costUsd: 0.01 });
   assert.equal(attachedText("https://remote.test/private"), undefined);
   assert.equal(attachedText(`data:text/plain;base64,${Buffer.from("Soomaali — tijaabo").toString("base64")}`), "Soomaali — tijaabo");
+});
+
+test("replayed task starts and contradictory late successes cannot undo settled cancellation", () => {
+  const part = { type: "dynamic-tool", toolName: "bash", toolCallId: "a", state: "output-available" };
+  const messages = [{ role: "assistant", parts: [part] }];
+  const start = { type: "task.started", meta: { id: "start" }, data: { callId: "a" } };
+  const cancel = { type: "task.settled", meta: { id: "cancel" }, data: { callId: "a", status: "cancelled" } };
+  const lateSuccess = { type: "task.settled", meta: { id: "late" }, data: { callId: "a", status: "completed" } };
+  assert.equal(activityRows(messages, [start, cancel, start, lateSuccess])[0].state, "cancelled");
+  assert.equal(activityRows(messages, [cancel, start])[0].state, "cancelled");
+  const timed = { type: "action.result", meta: { at: "2026-10-30T10:00:00.000Z" }, data: { result: { callId: "a" } } };
+  assert.equal(activityRows(messages, [timed])[0].at, "2026-10-30T10:00:00.000Z");
+  assert.equal(activityRows(messages, [start, { ...cancel, data: { callId: "a", status: "unknown" } }])[0].state, "running");
+});
+
+test("turn status uses turn sequence and never infers task completion from a finished turn", async () => {
+  const { latestTurnOutcome } = await import("../lib/activity.ts");
+  const e = (type, turnId, sequence) => ({ type, data: { turnId, sequence } });
+  const cancelled = e("turn.cancelled", "a", 1);
+  assert.equal(latestTurnOutcome([e("turn.started", "a", 1), cancelled, e("turn.completed", "a", 1)]), "cancelled");
+  assert.equal(latestTurnOutcome([e("turn.started", "b", 2), cancelled]), "active");
+  assert.equal(latestTurnOutcome([cancelled, e("turn.completed", "b", 2), cancelled]), "completed");
+  assert.equal(latestTurnOutcome([{ type: "task.settled", data: { callId: "a", status: "completed" } }]), undefined);
+});
+
+test("bash activity does not equate a failed or background command with success", () => {
+  const part = { type: "dynamic-tool", toolName: "bash", toolCallId: "a", state: "output-available" };
+  const row = (output) => activityRows([{ role: "assistant", parts: [{ ...part, output }] }])[0].state;
+  assert.equal(row({ status: "completed", exitCode: 0 }), "output-available");
+  assert.equal(row({ status: "completed", exitCode: 1 }), "output-error");
+  assert.equal(row({ status: "running", pid: 123 }), "background-unknown");
+  assert.equal(row(undefined), "outcome-unknown");
+  const messages = [{ role: "assistant", parts: [{ ...part, output: { status: "completed", exitCode: 0 } }] }];
+  const settled = (output) => [{ type: "task.settled", data: { callId: "a", status: "completed", output } }];
+  assert.equal(activityRows(messages, settled({ status: "completed", exitCode: 1 }))[0].state, "output-error");
+  assert.equal(activityRows(messages, settled({ status: "running" }))[0].state, "background-unknown");
+  assert.equal(activityRows(messages, settled(undefined))[0].state, "outcome-unknown");
 });

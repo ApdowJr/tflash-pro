@@ -24,3 +24,17 @@ test("actual server hook cancels before the excess step and persists an idempote
   hook.events["step.started"]({ data: { stepIndex: 3 } }, ctx);
   assert.equal(cancelled, 1);
 });
+
+
+test("budget stop telemetry includes only bounded coordinates, not credentials or tool inputs", () => {
+  const original = console.warn;
+  const lines = [];
+  console.warn = (...args) => lines.push(args.join(" "));
+  try {
+    const ctx = { session: { turn: { id: "telemetry-turn" }, auth: { current: { attributes: { "tflash:max-steps": "1", cookie: "private-cookie-value" } } } }, cancel() {} };
+    hook.events["step.started"]({ data: { stepIndex: 0, command: "private-command-value" } }, ctx);
+    hook.events["step.started"]({ data: { stepIndex: 1, command: "private-command-value" } }, ctx);
+    assert.match(lines.join("\n"), /model step limit reached/);
+    assert.doesNotMatch(lines.join("\n"), /private-cookie-value|private-command-value/);
+  } finally { console.warn = original; }
+});

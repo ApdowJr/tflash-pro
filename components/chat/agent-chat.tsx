@@ -3,7 +3,7 @@
 import type { UserContent } from "ai";
 import { useEveAgent } from "eve/react";
 import { AlertCircleIcon, CheckIcon, CopyIcon } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Conversation,
   ConversationContent,
@@ -37,6 +37,8 @@ import { workspaceContext } from "@/lib/workspace";
 import { attachedText } from "@/lib/documents/contracts";
 import { HEADER_MAX_STEPS } from "@/lib/usage-limits";
 import { latestAgentPlan } from "@/lib/agent-workspace";
+import { latestTurn } from "@/lib/activity";
+import { MAX_STREAM_RECONNECTS, streamReconnectDelay } from "@/lib/stream-recovery";
 import { agentModeContext, agentModeStorageKey, parseAgentMode, type AgentMode } from "@/lib/agent-modes";
 
 const DEFAULT_AGENT_NAME = "Tflash";
@@ -127,6 +129,12 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   const controller = usePromptInputController();
   const workspace = useWorkspace();
   const [cancellationError, setCancellationError] = useState<string>();
+  const [cancelling, setCancelling] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
+  const [reconnectAttempts, setReconnectAttempts] = useState(0);
+  const reconnectPending = useRef(false);
+  const cancellationPending = useRef(false);
+  const cancellationEpoch = useRef(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<
     "providers" | "connections" | "preferences"
@@ -179,10 +187,52 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   const showPendingThinking =
     isBusy &&
     (agent.status === "submitted" || lastMessage?.role !== "assistant" || isPendingAssistantShell);
-  const turnFailure = isBusy || isResuming ? undefined : getLatestTurnFailure(agent.events);
+  const latest = latestTurn(agent.events);
+  const turnFailure = isBusy || isResuming || latest?.outcome !== "failed" ? undefined : getLatestTurnFailure(agent.events, latest.turnId);
   const errorMessage = cancellationError ?? agent.error?.message ?? turnFailure;
-  const runState: AgentRunState = isResuming ? "resuming" : errorMessage ? "failed" : !isBusy ? "idle" :
-    Object.values(agent.data.inputs).some((input) => input.status === "open") ? "waiting" : "working";
+  const turnOutcome = latest?.outcome;
+  const disconnected = agent.status === "error" && (turnOutcome === "active" ||
+    (turnOutcome === undefined && !!agent.data.activeTurnId && agent.data.turns?.[agent.data.activeTurnId]?.status === "active"));
+  const resumeRef = useRef(agent.resume);
+  resumeRef.current = agent.resume;
+  const reconnect = useCallback((automatic: boolean) => {
+    if (reconnectPending.current) return;
+    reconnectPending.current = true;
+    setReconnecting(true);
+    if (automatic) setReconnectAttempts((attempt) => attempt + 1);
+    setCancellationError(undefined);
+    // resume() only reattaches to the existing stream; it never sends a turn.
+    void resumeRef.current().catch((error: unknown) => setCancellationError(toErrorMessage(error))).finally(() => {
+      reconnectPending.current = false;
+      setReconnecting(false);
+    });
+  }, []);
+  const recoveryTurn = turnOutcome === "active" ? latest?.turnId :
+    turnOutcome === undefined && agent.data.activeTurnId && agent.data.turns?.[agent.data.activeTurnId]?.status === "active"
+      ? agent.data.activeTurnId : undefined;
+  const recoveryTurnRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    // A short-lived reconnection is not a new budget: repeated disconnects in
+    // the same turn remain bounded. A different turn starts a fresh allowance.
+    if (recoveryTurnRef.current !== recoveryTurn) {
+      recoveryTurnRef.current = recoveryTurn;
+      setReconnectAttempts(0);
+    }
+  }, [recoveryTurn]);
+  const retryDelay = useMemo(() => disconnected ? streamReconnectDelay(agent.error, reconnectAttempts) : undefined,
+    [disconnected, agent.error, reconnectAttempts]);
+  useEffect(() => {
+    if (retryDelay === undefined || reconnecting || cancellationPending.current) return;
+    const timer = window.setTimeout(() => reconnect(true), retryDelay);
+    return () => window.clearTimeout(timer);
+  }, [retryDelay, reconnecting, reconnect]);
+  const hasOpenInput = Object.values(agent.data.inputs).some((input) => input.status === "open");
+  const runState: AgentRunState = isResuming ? "resuming" : disconnected ? "interrupted" : errorMessage || agent.status === "error" ? "failed" :
+    hasOpenInput ? "waiting" : isBusy ? "working" : turnOutcome === "cancelled" ? "cancelled" : "idle";
+
+  useEffect(() => {
+    if (!isBusy) { cancellationPending.current = false; setCancelling(false); }
+  }, [isBusy]);
   const hasConversationContent = sessionless || !isEmpty || errorMessage !== undefined;
   const showConversationLayout = isResuming || hasConversationContent;
   const activeSessionId = sessionId ?? agent.session?.sessionId;
@@ -201,7 +251,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
     document.title = `${short} · ${DEFAULT_AGENT_NAME}`;
   }, [isEmpty, showConversationLayout, title]);
   const canRespond = (requestId: string) =>
-    !isResuming && agent.data.inputs[requestId]?.status === "open";
+    !isResuming && !disconnected && !cancelling && agent.data.inputs[requestId]?.status === "open";
   const questionsFor = (callId: string) =>
     Object.values(agent.data.inputs).filter(
       (input) => input.request.kind === "question" && input.request.action.callId === callId,
@@ -274,8 +324,14 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   };
 
   const requestCancellation = () => {
+    if (cancellationPending.current) return;
+    cancellationPending.current = true;
+    cancellationEpoch.current++;
+    setCancelling(true);
     setCancellationError(undefined);
     void agent.cancel().catch((error: unknown) => {
+      cancellationPending.current = false;
+      setCancelling(false);
       setCancellationError(toErrorMessage(error));
     });
   };
@@ -285,7 +341,8 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
     if (text.length === 0 && message.files.length === 0) return;
     // A programmatic form submission must not clear a draft while the session
     // is unavailable, even though the visible Send button is disabled.
-    if (isResuming || !sessionId) throw new Error("Conversation is not ready.");
+    if (isResuming || disconnected || !sessionId || cancellationPending.current) throw new Error("Conversation is not ready.");
+    const sendEpoch = cancellationEpoch.current;
     setCancellationError(undefined);
     const firstUser = agent.data.messages.find((entry) => entry.role === "user");
     const firstText = firstUser?.parts.find((part) => part.type === "text");
@@ -297,6 +354,9 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
       setCancellationError(t("historySaveFailed"));
       throw error; // Keep the draft when history could not be saved.
     }
+    // A stop may arrive while the chat-index write is pending. Never schedule
+    // the old submission after cancellation, even if the stream has settled.
+    if (sendEpoch !== cancellationEpoch.current) throw new Error("Turn was stopped.");
     hasSubmittedMessage.current = true;
     replaceSessionRoute(sessionId);
     const options = {
@@ -358,6 +418,13 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
           <p className="mt-2 max-w-2xl leading-relaxed">{t("approvalModeDetails")}</p>
         </details>
         {!isEmpty ? <div className="shrink-0 px-4 py-2 sm:px-6"><ActivityPanel messages={agent.data.messages} events={agent.events} /></div> : null}
+        {disconnected ? <div className="mx-auto flex w-full max-w-2xl flex-wrap items-center gap-2 px-4 py-2 text-xs text-muted-foreground" role="status">
+          <span className="min-w-0 flex-1">{t("reconnectHint")}</span>
+          {retryDelay !== undefined || reconnecting ? <span>{t("reconnectAutomatic")}</span> :
+            reconnectAttempts >= MAX_STREAM_RECONNECTS ? <span>{t("reconnectExhausted")}</span> : null}
+          <Button type="button" size="sm" variant="outline" disabled={reconnecting} onClick={() => reconnect(false)}>{t("reconnect")}</Button>
+        </div> : null}
+        {runState === "cancelled" ? <p role="status" className="mx-auto w-full max-w-2xl px-4 py-2 text-xs text-muted-foreground sm:px-6">{t("turnStoppedHint")}</p> : null}
         {currentPlan ? <div className="shrink-0 px-4 py-2 sm:px-6"><AgentPlanCard compact plan={currentPlan} runState={runState} onContinue={() => handleSubmit({ text: t("continueTaskPrompt"), files: [] })} /></div> : null}
 
         {showConversationLayout ? (
@@ -422,7 +489,8 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
               mode={agentMode}
               onModeChange={setAgentMode}
               isBusy={isBusy}
-              isResuming={isResuming || !sessionId}
+              isResuming={isResuming || disconnected || !sessionId}
+              cancelling={cancelling}
               onCancel={requestCancellation}
               onSubmit={handleSubmit}
             />
@@ -544,11 +612,12 @@ function toErrorMessage(error: unknown): string {
 
 function getLatestTurnFailure(
   events: ReturnType<typeof useEveAgent>["events"],
+  turnId: string,
 ): string | undefined {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index];
 
-    if (event.type === "turn.failed") {
+    if (event.type === "turn.failed" && event.data.turnId === turnId) {
       if (event.data.code === "MODEL_CALL_FAILED") {
         const detail = (event.data as { details?: { message?: string } }).details?.message;
         return detail
@@ -558,13 +627,6 @@ function getLatestTurnFailure(
       return event.data.message;
     }
 
-    if (event.type === "turn.completed" || event.type === "turn.cancelled") {
-      return undefined;
-    }
-
-    if (event.type === "message.received") {
-      return undefined;
-    }
   }
 
   return undefined;
