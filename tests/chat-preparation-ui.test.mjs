@@ -498,13 +498,26 @@ test("a pending stop blocks scheduled reconnect and follow-ups until the turn se
   globalThis.__prepareAgent.data.turns = { "turn-old": { status: "active" } };
   const pending = deferred(); const attached = deferred(); let resumes = 0;
   globalThis.__prepareAgent.resume = async () => { resumes++; await attached.promise; };
+  // Hold the exact reconnect timer. Typing can take longer than its 500ms
+  // delay on a loaded CI runner, before the user has even requested stop.
+  let scheduledRetry;
+  window.setTimeout = (handler, delay, ...args) => {
+    if (delay >= 500 && delay <= 600 && typeof handler === "function") {
+      scheduledRetry = () => handler(...args);
+      return -12345;
+    }
+    return realSetTimeout(handler, delay, ...args);
+  };
+  window.clearTimeout = (timer) => { if (timer !== -12345) realClearTimeout(timer); };
   fakeFetch((path) => path.endsWith("/eve/v1/session/owned-chat/cancel") ? pending.promise : undefined);
   const rendered = render(app({ sessionId: "owned-chat" }));
   const user = userEvent.setup();
   const input = screen.getByPlaceholderText("Ask Tflash anything…");
   await user.type(input, "Do not send while stopping");
   await user.click(await screen.findByRole("button", { name: "Request stop for this turn" }));
-  await new Promise((resolve) => setTimeout(resolve, 800));
+  assert.equal(typeof scheduledRetry, "function");
+  // Simulate a callback already queued when clearTimeout runs.
+  await React.act(async () => scheduledRetry());
   assert.equal(resumes, 0, "the previously scheduled automatic retry must not race the stop request");
   await React.act(async () => { pending.resolve(Response.json({ ok: true, status: "accepted", sessionId: "owned-chat" }, { status: 202 })); await pending.promise; });
   await waitFor(() => assert.equal(resumes, 1));
