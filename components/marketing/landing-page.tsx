@@ -46,6 +46,7 @@ const FEATURE_ICONS = [
   SearchCheckIcon,
   FileTextIcon,
   MicIcon,
+  ShieldCheckIcon, // Market agent out-approve feature
 ] as const;
 
 const copy = {
@@ -68,9 +69,9 @@ const copy = {
     trust: "Email or Vercel sign-in · Your provider keys stay yours",
     previewTitle: "New chat",
     previewStatus: "Approval required",
-    previewUser: "Ii samee qorshe 7 maalin ah oo ku saabsan barashada Python.",
-    previewReply: "Waa hagaag. Waa kan qorshaha, oo la habeeyay 7 maalin:",
-    previewSteps: ["Day 1–2 · Syntax iyo variables", "Day 3–4 · Functions iyo files", "Day 5–7 · Hal mashruuc yar"],
+    previewUser: "Start a 7-day plan about learning Python, and make the result beautiful.",
+    previewReply: "Good. Here is the plan, organized in 7 days:",
+    previewSteps: ["Day 1–2 · Syntax and variables", "Day 3–4 · Functions and files", "Day 5–7 · One small project"],
     previewTool: "web_fetch · docs.python.org",
     previewToolNote: "Reading a public page · waiting for your approval",
     previewApprove: "Approve",
@@ -105,6 +106,10 @@ const copy = {
       {
         title: "Your voice, your pace",
         body: "Dictate in Somali or English, and have a finished reply read back. Speech support depends on your browser and device.",
+      },
+      {
+        title: "Market agent out-approve workflow",
+        body: "Deploy agent tasks to the market with an out-approve flag. If the out-approve state is active, the system requests the user’s explicit permission before sending the job.",
       },
     ],
     stepsKicker: "How it works",
@@ -201,7 +206,7 @@ const copy = {
     trust: "Email ama Vercel · Furahaaga bixiyaha adigaa iska leh",
     previewTitle: "Wada hadal cusub",
     previewStatus: "Fasax ayaa loo baahan yahay",
-    previewUser: "Ii samee qorshe 7 maalin ah oo ku saabsan barashada Python.",
+    previewUser: "Bilow qorshe 7 maalin ah oo ku saabsan barashada Python, oo ku samee quruxda natiijada.",
     previewReply: "Waa hagaag. Waa kan qorshaha, oo la habeeyay 7 maalin:",
     previewSteps: ["Maalin 1–2 · Syntax iyo variables", "Maalin 3–4 · Functions iyo files", "Maalin 5–7 · Hal mashruuc yar"],
     previewTool: "web_fetch · docs.python.org",
@@ -238,6 +243,10 @@ const copy = {
       {
         title: "Codkaaga, xawaarahaaga",
         body: "Ku qor Soomaali ama English, oo jawaabta dhammaystiran dib u maqal. Taageerada codku waxay ku xiran tahay browser-kaaga iyo qalabkaaga.",
+      },
+      {
+        title: "Shaqo-dirka agent ee suuqa (out-approve)",
+        body: "Dir shaqooyinka agent-ka suuqa iyada oo leh astaanta out-approve. Haddii astaanta out-approve ay jirto, nidaamku wuxuu codsadaa ogolaanshaha isticmaalaha kahor inta aan shaqada la dirin.",
       },
     ],
     stepsKicker: "Sida loo shaqeeyo",
