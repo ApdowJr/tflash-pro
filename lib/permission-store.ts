@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { homepageOrigin } from "@/lib/permission-scope";
+import { waitWithAbort } from "@/lib/abortable";
 export type PermissionOwner = {
   kind: "supabase" | "vercel";
   id: string;
@@ -41,10 +42,17 @@ export async function listWebGrants(owner: PermissionOwner): Promise<WebGrant[]>
   if (error || count == null || count > 1000 || (data?.length ?? 0) !== count) throw new Error("Permission storage unavailable or grant limit exceeded.");
   return (data ?? []).map((r) => ({ origin: r.origin as string, expiresAt: r.expires_at as string, revision: r.revision as string }));
 }
-export async function hasWebGrant(owner: PermissionOwner, url: unknown): Promise<boolean> {
+export async function hasWebGrant(owner: PermissionOwner, url: unknown, abortSignal?: AbortSignal): Promise<boolean> {
   const origin = homepageOrigin(url);
   if (!origin) return false;
-  const { data, error } = await permissionDatabase().rpc("tflash_has_web_grant", { ...ownerArgs(owner), p_origin: origin });
+  // Grant checks must not hold a cancelled turn or wait indefinitely for the
+  // service store. Abort the HTTP request and fail closed if it times out.
+  const timeout = AbortSignal.timeout(5_000);
+  const signal = abortSignal ? AbortSignal.any([abortSignal, timeout]) : timeout;
+  signal.throwIfAborted();
+  const query = permissionDatabase().rpc("tflash_has_web_grant", { ...ownerArgs(owner), p_origin: origin }).abortSignal(signal);
+  const { data, error } = await waitWithAbort(query, signal);
+  signal.throwIfAborted();
   if (error || typeof data !== "boolean") throw new Error("Permission storage unavailable.");
   return data;
 }

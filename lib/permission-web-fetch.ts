@@ -2,6 +2,7 @@ import { lookup } from "node:dns/promises";
 import { request } from "node:https";
 import { BlockList, isIP } from "node:net";
 import { homepageOrigin } from "@/lib/permission-scope";
+import { waitWithAbort } from "@/lib/abortable";
 const blocked = new BlockList();
 for (const [ip, bits] of [
   ["0.0.0.0", 8],
@@ -40,7 +41,7 @@ export function publicAddress(ip: string): boolean {
 export async function fetchGrantedHomepage(
   url: string,
   abortSignal?: AbortSignal,
-  stillAuthorized?: () => Promise<boolean>,
+  stillAuthorized?: (signal: AbortSignal) => Promise<boolean>,
 ) {
   if (!homepageOrigin(url))
     throw new Error("This URL is outside the permission scope.");
@@ -70,7 +71,7 @@ export async function fetchGrantedHomepage(
     addresses.some(({ address }) => !publicAddress(address))
   )
     throw new Error("The address is not public.");
-  if (stillAuthorized && !(await stillAuthorized()))
+  if (stillAuthorized && !(await waitWithAbort(stillAuthorized(signal), signal)))
     throw new Error(
       "The reusable permission is no longer active; request approval again.",
     );

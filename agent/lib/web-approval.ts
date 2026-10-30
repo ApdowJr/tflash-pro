@@ -28,6 +28,7 @@ export function permissionOwner(
 export async function webApproval(
   ctx: ApprovalContext,
 ): Promise<ApprovalStatus> {
+  ctx.abortSignal.throwIfAborted();
   if (!ctx.session) return "user-approval";
   const owner = permissionOwner(ctx.session);
   if (!owner) return "user-approval";
@@ -35,10 +36,12 @@ export async function webApproval(
     return (await hasWebGrant(
       owner,
       (ctx.toolInput as { url?: unknown } | undefined)?.url,
+      ctx.abortSignal,
     ))
       ? "not-applicable"
       : "user-approval";
   } catch {
+    ctx.abortSignal.throwIfAborted();
     return "user-approval";
   }
 }

@@ -102,3 +102,22 @@ test("granted homepage pins public DNS, fails closed on revoked grants and never
     /outside/,
   );
 });
+
+
+test("cancellation while the pre-socket recheck stalls never starts the granted request", async () => {
+  calls = [];
+  answers = [{ address: "8.8.8.8", family: 4 }];
+  const controller = new AbortController();
+  let release, signalSeen;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const result = fetchGrantedHomepage("https://example.com/", controller.signal, (signal) => { signalSeen = signal; return gate; });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(signalSeen);
+  controller.abort(new DOMException("Cancelled", "AbortError"));
+  await assert.rejects(result, { name: "AbortError" });
+  assert.equal(signalSeen.aborted, true);
+  release(true);
+  await gate;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls.length, 0);
+});

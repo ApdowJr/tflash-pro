@@ -5,9 +5,11 @@ import { registerHooks } from "node:module";
 const tables = new Map();
 let unavailable = false,
   listUnavailable = false,
-  fetches = 0;
+  fetches = 0,
+  pendingGrant;
 globalThis.__db = () => ({
-  async rpc(name, p) {
+  rpc(name, p) {
+    const result = (async () => {
     if (unavailable) return { data: null, error: new Error("unavailable") };
     const table = (name) => { if (!tables.has(name)) tables.set(name, new Map()); return tables.get(name); };
     const key = [p.p_kind,p.p_owner,p.p_session].join("|");
@@ -17,6 +19,7 @@ globalThis.__db = () => ({
       return { data: epochs.get(key).revision, error: null };
     }
     if (name === "tflash_has_web_grant") {
+      if (pendingGrant) return await pendingGrant;
       const row = grants.get(`${key}|${p.p_origin}`);
       return { data: !!(epochs.has(key) && row && Date.parse(row.expires_at) > Date.now()), error: null };
     }
@@ -32,6 +35,8 @@ globalThis.__db = () => ({
       return {data:true,error:null};
     }
     throw new Error(`Unexpected RPC ${name}`);
+    })();
+    return Object.assign(result, { abortSignal() { return result; } });
   },
   from(name) {
     let filters = [],
@@ -461,4 +466,23 @@ test("emergency revoke works without listing and blocks delayed grants, then per
   unavailable = true;
   assert.equal((await revokeAll.POST(req("POST"), route)).status, 503);
   unavailable = false;
+});
+
+
+test("an interrupted reusable-grant check cannot approve or start a fetch after a late store result", async () => {
+  let release;
+  pendingGrant = new Promise((resolve) => { release = resolve; });
+  const controller = new AbortController(), ctx = { ...context(), abortSignal: controller.signal };
+  const previousFetches = fetches;
+  try {
+    const gate = web.approval(ctx);
+    const execution = web.execute({ url: "https://example.com/" }, ctx);
+    controller.abort(new DOMException("Cancelled", "AbortError"));
+    await assert.rejects(gate, { name: "AbortError" });
+    await assert.rejects(execution, { name: "AbortError" });
+    release({ data: true, error: null });
+    await pendingGrant;
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(fetches, previousFetches);
+  } finally { pendingGrant = undefined; }
 });

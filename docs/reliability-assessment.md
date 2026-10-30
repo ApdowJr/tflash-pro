@@ -112,3 +112,13 @@ available; acceptance still cannot roll back an external effect. Reported cost
 is hidden when a checkpoint or later step omits cost, rather than presenting a
 known partial sum as a complete total. Provider usage remains advisory, not a
 bill or an enforced spending cap.
+
+The homepage grant check now has a five-second service-store deadline and
+propagates Eve cancellation to the Supabase request. At the approval gate, a
+timeout requires individual approval; before a grant-authorized socket it fails
+closed. Late results cannot authorize a request after cancellation. Local tests
+cover the real Supabase client against a deliberately stalled local HTTP server,
+plus the approval and pre-socket paths; they do not prove hosted latency or
+cancellation behavior. Already-started network requests cannot be recalled.
+See [the separate hosted validation cost plan](hosted-validation-plan.md) for the
+proposed $0 configuration and required prior approvals.

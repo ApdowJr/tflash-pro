@@ -17,8 +17,8 @@ export default defineTool({
     const { url } = researchFetchInputSchema.parse(input);
     researchOwner(ctx); // Fail before network access if the session is unauthenticated.
     const owner = ctx.approval ? undefined : permissionOwner(ctx.session);
-    if (!ctx.approval && (!owner || !await hasWebGrant(owner, url))) throw new Error("The reusable permission is no longer active; request approval again.");
-    const execution = ctx.approval ? await webFetch.execute({ url, format: "markdown", timeout: 20 }, ctx) : await fetchGrantedHomepage(url, ctx.abortSignal, async () => !!owner && await hasWebGrant(owner, url));
+    if (!ctx.approval && (!owner || !await hasWebGrant(owner, url, ctx.abortSignal))) throw new Error("The reusable permission is no longer active; request approval again.");
+    const execution = ctx.approval ? await webFetch.execute({ url, format: "markdown", timeout: 20 }, ctx) : await fetchGrantedHomepage(url, ctx.abortSignal, async (signal) => !!owner && await hasWebGrant(owner, url, signal));
     let result: WebFetchToolOutput | undefined;
     if (Symbol.asyncIterator in execution) {
       for await (const snapshot of execution) result = snapshot;
