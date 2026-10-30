@@ -1447,9 +1447,9 @@ test("budgeted continuation reserves and begins once, then requires a recorded h
     if (!path.endsWith('/task/continuations')) return;
     if (options.method==='GET') return Response.json({attempt,history});
     const input=JSON.parse(options.body); calls.push(input.action);
-    if(input.action==='reserve') attempt={attemptId:input.attemptId,state:'reserved',createdAt:new Date().toISOString()};
-    if(input.action==='begin') attempt={...attempt,state:'dispatching'};
-    if(input.action==='review') {history=[{attemptId:attempt.attemptId,reviewedAt:new Date().toISOString(),note:input.note}]; attempt=null;}
+    if(input.action==='reserve') attempt={attemptId:input.attemptId,state:'reserved',createdAt:new Date().toISOString(),reviewRevision:crypto.randomUUID(),holdNote:null,holdAt:null};
+    if(input.action==='begin') attempt={...attempt,state:'dispatching',reviewRevision:crypto.randomUUID()};
+    if(input.action==='resolve') {history=[{attemptId:attempt.attemptId,reviewedAt:new Date().toISOString(),note:input.note}]; attempt=null;}
     return Response.json({ok:true});
   });
   const task={objective:'Task',path:'out.txt',sha256:'a'.repeat(64),revision:'r1',continuationBudget:2,state:'awaiting_evidence',verifiedAt:null,reason:null};
@@ -1458,15 +1458,15 @@ test("budgeted continuation reserves and begins once, then requires a recorded h
   const authorize=await screen.findByRole('checkbox',{name:/explicitly authorize one new turn/});
   assert.equal(screen.getByRole('button',{name:'Start one budgeted turn'}).disabled,true);
   await user.click(authorize); await user.click(screen.getByRole('button',{name:'Start one budgeted turn'}));
-  await screen.findByText(/An attempt requires review/);
+  await screen.findByText(/Dispatch began but the outcome is unknown/);
   assert.deepEqual(calls,['reserve','begin','send']); assert.equal(sends,1);
   assert.equal(screen.queryByRole('button',{name:'Start one budgeted turn'}),null);
   await user.click(screen.getByRole('checkbox',{name:/I inspected the conversation/}));
-  assert.equal(screen.getByRole('button',{name:'Record my review'}).disabled,true);
+  assert.equal(screen.getByRole('button',{name:'Confirm review and release hold'}).disabled,true);
   await user.type(screen.getByLabelText(/What did you check/),'Checked service; result remains unknown.');
-  await user.click(screen.getByRole('button',{name:'Record my review'}));
+  await user.click(screen.getByRole('button',{name:'Confirm review and release hold'}));
   await screen.findByText('Checked service; result remains unknown.');
-  assert.deepEqual(calls,['reserve','begin','send','review']); assert.equal(sends,1);
+  assert.deepEqual(calls,['reserve','begin','send','resolve']); assert.equal(sends,1);
 });
 
 test("an uncertain begin is never sent or retried automatically and survives a component reload", async () => {
@@ -1476,8 +1476,8 @@ test("an uncertain begin is never sent or retried automatically and survives a c
     if (!path.endsWith('/task/continuations')) return;
     if(options.method==='GET') return Response.json({attempt,history:[]});
     const input=JSON.parse(options.body);
-    if(input.action==='reserve') { attempt={attemptId:input.attemptId,state:'reserved',createdAt:new Date().toISOString()}; return Response.json({ok:true}); }
-    if(input.action==='begin') { begins++; attempt={...attempt,state:'dispatching'}; return Response.json({error:'response lost'},{status:503}); }
+    if(input.action==='reserve') { attempt={attemptId:input.attemptId,state:'reserved',createdAt:new Date().toISOString(),reviewRevision:crypto.randomUUID(),holdNote:null,holdAt:null}; return Response.json({ok:true}); }
+    if(input.action==='begin') { begins++; attempt={...attempt,state:'dispatching',reviewRevision:crypto.randomUUID()}; return Response.json({error:'response lost'},{status:503}); }
     throw new Error('unexpected mutation');
   });
   const task={objective:'Task',path:'out.txt',sha256:'a'.repeat(64),revision:'r1',continuationBudget:1,state:'awaiting_evidence',verifiedAt:null,reason:null};
@@ -1485,13 +1485,13 @@ test("an uncertain begin is never sent or retried automatically and survives a c
   const rendered=render(app(h(TaskContinuation,props))); const user=userEvent.setup();
   await user.click(await screen.findByRole('checkbox',{name:/explicitly authorize/}));
   await user.click(screen.getByRole('button',{name:'Start one budgeted turn'}));
-  await screen.findByText(/An attempt requires review/); assert.equal(sends,0); assert.equal(begins,1);
+  await screen.findByText(/Dispatch began but the outcome is unknown/); assert.equal(sends,0); assert.equal(begins,1);
   rendered.unmount(); render(app(h(TaskContinuation,props)));
-  await screen.findByText(/An attempt requires review/); assert.equal(sends,0); assert.equal(begins,1);
+  await screen.findByText(/Dispatch began but the outcome is unknown/); assert.equal(sends,0); assert.equal(begins,1);
   assert.equal(screen.queryByRole('button',{name:'Start one budgeted turn'}),null);
 });
 
-test("continuation does not send after cancellation or unmount while begin response is delayed", async () => {
+test("continuation does not send after cancellation while begin response is delayed", async () => {
   const { TaskContinuation } = await import("../components/chat/task-continuation.tsx"); seed();
   let attempt=null, release, begins=0, sends=0;
   const delayed=new Promise(resolve=>{release=resolve;});
@@ -1499,8 +1499,8 @@ test("continuation does not send after cancellation or unmount while begin respo
     if(!path.endsWith('/task/continuations')) return;
     if(options.method==='GET') return Response.json({attempt,history:[]});
     const input=JSON.parse(options.body);
-    if(input.action==='reserve') {attempt={attemptId:input.attemptId,state:'reserved',createdAt:new Date().toISOString()};return Response.json({ok:true});}
-    if(input.action==='begin') {begins++;attempt={...attempt,state:'dispatching'};return delayed;}
+    if(input.action==='reserve') {attempt={attemptId:input.attemptId,state:'reserved',createdAt:new Date().toISOString(),reviewRevision:crypto.randomUUID(),holdNote:null,holdAt:null};return Response.json({ok:true});}
+    if(input.action==='begin') {begins++;attempt={...attempt,state:'dispatching',reviewRevision:crypto.randomUUID()};return delayed;}
   });
   const task={objective:'Task',path:'out.txt',sha256:'a'.repeat(64),revision:'r1',continuationBudget:1,state:'awaiting_evidence',verifiedAt:null,reason:null};
   const props={sessionId:'chat-a',task,disabled:false,onContinue:async()=>{sends++;},onRefreshTask:()=>{}};
@@ -1511,8 +1511,124 @@ test("continuation does not send after cancellation or unmount while begin respo
   // Another part of the UI observes an active/stopped turn before the reply.
   view.rerender(app(h(TaskContinuation,{...props,disabled:true})));
   await React.act(async()=>release(Response.json({ok:true})));
-  await screen.findByText(/An attempt requires review/); assert.equal(sends,0);
-  assert.equal(screen.getByRole('button',{name:'Record my review'}).disabled,true);
+  await screen.findByText(/Dispatch began but the outcome is unknown/); assert.equal(sends,0);
+  assert.equal(screen.getByRole('button',{name:'Confirm review and release hold'}).disabled,true);
   view.unmount();
   assert.equal(sends,0); assert.equal(begins,1);
+});
+
+test("unresolved continuation can be held across reloads without releasing its web-approval fence", async () => {
+  const { TaskContinuation } = await import("../components/chat/task-continuation.tsx"); seed();
+  let attempt={attemptId:crypto.randomUUID(),state:'dispatching',createdAt:new Date().toISOString(),reviewRevision:crypto.randomUUID(),holdNote:null,holdAt:null}, history=[], sends=0;
+  const calls=[];
+  fakeFetch((path,options)=>{
+    if(!path.endsWith('/task/continuations')) return;
+    if(options.method==='GET') return Response.json({attempt,history});
+    const data=JSON.parse(options.body); calls.push(data.action);
+    assert.equal(data.expectedRevision,attempt.reviewRevision);
+    if(data.action==='hold') attempt={...attempt,holdNote:data.note,holdAt:new Date().toISOString(),reviewRevision:crypto.randomUUID()};
+    else if(data.action==='resolve') {history=[{attemptId:attempt.attemptId,reviewedAt:new Date().toISOString(),note:data.note}]; attempt=null;}
+    else throw new Error('unexpected action');
+    return Response.json({ok:true});
+  });
+  const task={objective:'Task',path:'out.txt',sha256:'a'.repeat(64),revision:'r1',continuationBudget:1,state:'awaiting_evidence',verifiedAt:null,reason:null};
+  const props={sessionId:'chat-a',task,disabled:false,onContinue:async()=>{sends++;},onRefreshTask:()=>{}};
+  const view=render(app(h(TaskContinuation,props))); const user=userEvent.setup();
+  await screen.findByText(/Dispatch began but the outcome is unknown/);
+  await user.type(screen.getByLabelText(/What did you check/),'Remote service outcome is still uncertain.');
+  await user.click(screen.getByRole('button',{name:'Save note and keep on hold'}));
+  await screen.findByText(/Last unresolved note: Remote service outcome is still uncertain/);
+  assert.equal(screen.queryByRole('button',{name:'Start one budgeted turn'}),null);
+  assert.equal(sends,0); assert.deepEqual(calls,['hold']);
+  view.unmount(); render(app(h(TaskContinuation,props)));
+  await screen.findByText(/Last unresolved note: Remote service outcome is still uncertain/);
+  assert.equal(screen.getByRole('button',{name:'Confirm review and release hold'}).disabled,true);
+  await user.type(screen.getByLabelText(/What did you check/),'Confirmed the prior turn stopped and checked the remote record.');
+  await user.click(screen.getByRole('checkbox',{name:/I inspected the conversation/}));
+  await user.click(screen.getByRole('button',{name:'Confirm review and release hold'}));
+  await screen.findByText(/Confirmed the prior turn stopped/);
+  assert.deepEqual(calls,['hold','resolve']); assert.equal(sends,0);
+});
+
+test("a late initial continuation read cannot overwrite a fresher manual refresh", async () => {
+  const { TaskContinuation } = await import("../components/chat/task-continuation.tsx"); seed();
+  let release, reads=0;
+  const old=new Promise(resolve=>{release=resolve;});
+  const attempt={attemptId:crypto.randomUUID(),state:'dispatching',createdAt:new Date().toISOString(),reviewRevision:crypto.randomUUID(),holdNote:null,holdAt:null};
+  fakeFetch((path,options)=>{
+    if(!path.endsWith('/task/continuations')) return;
+    if(options.method==='GET') return ++reads===1 ? old : Response.json({attempt,history:[]});
+    throw new Error('must not mutate');
+  });
+  const task={objective:'Task',path:'out.txt',sha256:'a'.repeat(64),revision:'r1',continuationBudget:1,state:'awaiting_evidence',verifiedAt:null,reason:null};
+  render(app(h(TaskContinuation,{sessionId:'chat-a',task,disabled:false,onContinue:async()=>{throw new Error('must not send');},onRefreshTask:()=>{}})));
+  const user=userEvent.setup();
+  await user.click(screen.getByRole('button',{name:'Refresh permissions'}));
+  await screen.findByText(/Dispatch began but the outcome is unknown/);
+  await React.act(async()=>release(Response.json({attempt:null,history:[]})));
+  assert.ok(screen.getByText(/Dispatch began but the outcome is unknown/));
+  assert.equal(screen.queryByRole('button',{name:'Start one budgeted turn'}),null);
+});
+
+test("unmount during delayed continuation begin never starts the agent", async () => {
+  const { TaskContinuation } = await import("../components/chat/task-continuation.tsx"); seed();
+  let attempt=null, release, begun=false, sends=0;
+  const blocked=new Promise(resolve=>{release=resolve;});
+  fakeFetch(async(path,options)=>{
+    if(!path.endsWith('/task/continuations')) return;
+    if(options.method==='GET') return Response.json({attempt,history:[]});
+    const input=JSON.parse(options.body);
+    if(input.action==='reserve') {attempt={attemptId:input.attemptId,state:'reserved',createdAt:new Date().toISOString(),reviewRevision:crypto.randomUUID(),holdNote:null,holdAt:null}; return Response.json({ok:true});}
+    if(input.action==='begin') {begun=true; await blocked; return Response.json({ok:true});}
+    throw new Error('unexpected action');
+  });
+  const task={objective:'Task',path:'out.txt',sha256:'a'.repeat(64),revision:'r1',continuationBudget:1,state:'awaiting_evidence',verifiedAt:null,reason:null};
+  const view=render(app(h(TaskContinuation,{sessionId:'chat-a',task,disabled:false,onContinue:async()=>{sends++;},onRefreshTask:()=>{}})));
+  const user=userEvent.setup(); await screen.findByText('Turns remaining: 1');
+  await user.click(screen.getByRole('checkbox',{name:/explicitly authorize one new turn/}));
+  await user.click(screen.getByRole('button',{name:'Start one budgeted turn'}));
+  await waitFor(()=>assert.equal(begun,true)); view.unmount();
+  await React.act(async()=>release()); assert.equal(sends,0);
+});
+
+test("continuation timeout stops waiting for a fetch that ignores its signal", async () => {
+  const { TaskContinuation } = await import("../components/chat/task-continuation.tsx"); seed();
+  const timeout=AbortSignal.timeout, deadline=new AbortController();
+  AbortSignal.timeout=()=>deadline.signal;
+  let release;
+  try {
+    const stalled=new Promise(resolve=>{release=resolve;});
+    fakeFetch((path)=>path.endsWith('/task/continuations') ? stalled : undefined);
+    const task={objective:'Task',path:'out.txt',sha256:'a'.repeat(64),revision:'r1',continuationBudget:1,state:'awaiting_evidence',verifiedAt:null,reason:null};
+    render(app(h(TaskContinuation,{sessionId:'chat-a',task,disabled:false,onContinue:async()=>{},onRefreshTask:()=>{}})));
+    await React.act(async()=>deadline.abort());
+    await screen.findByRole('alert');
+    await React.act(async()=>release(Response.json({attempt:null,history:[]})));
+    assert.ok(screen.getByRole('alert')); assert.equal(screen.queryByRole('button',{name:'Start one budgeted turn'}),null);
+  } finally { AbortSignal.timeout=timeout; }
+});
+
+test("changing continuation sessions clears busy and ignores an old mutation response", async () => {
+  const { TaskContinuation } = await import("../components/chat/task-continuation.tsx"); seed();
+  let release, requested=false;
+  const stalled=new Promise(resolve=>{release=resolve;});
+  const attempt={attemptId:crypto.randomUUID(),state:'dispatching',createdAt:new Date().toISOString(),reviewRevision:crypto.randomUUID(),holdNote:null,holdAt:null};
+  fakeFetch((path,options)=>{
+    if(!path.endsWith('/task/continuations')) return;
+    if(path.includes('/chat-a/') && options.method==='POST') {requested=true; return stalled;}
+    return Response.json({attempt:path.includes('/chat-a/') ? attempt : null,history:[]});
+  });
+  const task={objective:'Task',path:'out.txt',sha256:'a'.repeat(64),revision:'r1',continuationBudget:1,state:'awaiting_evidence',verifiedAt:null,reason:null};
+  const props={task,disabled:false,onContinue:async()=>{throw new Error('must not send');},onRefreshTask:()=>{}};
+  const view=render(app(h(TaskContinuation,{...props,sessionId:'chat-a'}))), user=userEvent.setup();
+  await screen.findByText(/Dispatch began but the outcome is unknown/);
+  await user.type(screen.getByLabelText(/What did you check/),'The remote effect is not yet clear.');
+  await user.click(screen.getByRole('button',{name:'Save note and keep on hold'}));
+  await waitFor(()=>assert.equal(requested,true));
+  view.rerender(app(h(TaskContinuation,{...props,sessionId:'chat-b'})));
+  await screen.findByRole('checkbox',{name:/explicitly authorize one new turn/});
+  assert.equal(screen.getByRole('button',{name:'Refresh permissions'}).disabled,false);
+  await React.act(async()=>release(Response.json({ok:true})));
+  assert.equal(screen.queryByText(/Dispatch began but the outcome is unknown/),null);
+  assert.equal(screen.getByRole('button',{name:'Refresh permissions'}).disabled,false);
 });

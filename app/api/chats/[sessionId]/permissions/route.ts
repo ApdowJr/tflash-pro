@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { readBoundedJson } from "@/lib/bounded-json";
 import { ownedChat } from "@/lib/security/owned-chat";
 import { homepageOrigin } from "@/lib/permission-scope";
 import { changeWebGrant, listWebGrants, permissionEpoch } from "@/lib/permission-store";
@@ -38,21 +39,9 @@ async function change(req: Request, ctx: Context, revoke: boolean) {
     return reply({ error: "Expected JSON." }, 415);
   const o = await ownerFor(req, ctx);
   if (!o) return reply({ error: "Conversation not available." }, 404);
-  let raw: string;
-  try {
-    raw = await req.text();
-  } catch {
-    return reply({ error: "Invalid request." }, 400);
-  }
-  if (new TextEncoder().encode(raw).length > 4096)
-    return reply({ error: "Request too large." }, 413);
-  let input: unknown;
-  try {
-    input = JSON.parse(raw);
-  } catch {
-    return reply({ error: "Invalid JSON." }, 400);
-  }
-  const parsed = z.object({ origin: z.string(), expectedRevision: z.uuid().nullable(), expectedEpoch: z.uuid() }).strict().safeParse(input);
+  const body = await readBoundedJson(req);
+  if (!body.ok) return reply({ error: body.error }, body.status);
+  const parsed = z.object({ origin: z.string(), expectedRevision: z.uuid().nullable(), expectedEpoch: z.uuid() }).strict().safeParse(body.value);
   if (!parsed.success || (revoke && parsed.data.expectedRevision === null)) return reply({ error: "Invalid scope or revision." }, 400);
   const origin = homepageOrigin(parsed.data.origin);
   if (!origin)

@@ -683,8 +683,8 @@ test("tracked manual continuation reserves and begins before the real chat send 
     if(!path.endsWith('/task/continuations')) return;
     if(options.method==='GET') return Response.json({attempt,history:[]});
     const input=JSON.parse(options.body); steps.push(input.action);
-    if(input.action==='reserve') attempt={attemptId:input.attemptId,state:'reserved',createdAt:new Date().toISOString()};
-    if(input.action==='begin') attempt={...attempt,state:'dispatching'};
+    if(input.action==='reserve') attempt={attemptId:input.attemptId,state:'reserved',createdAt:new Date().toISOString(),reviewRevision:crypto.randomUUID(),holdNote:null,holdAt:null};
+    if(input.action==='begin') attempt={...attempt,state:'dispatching',reviewRevision:crypto.randomUUID()};
     return Response.json({ok:true});
   });
   globalThis.__prepareAgent.send=async(message,options)=>{steps.push('send');sends.push({message,options});};
@@ -696,5 +696,5 @@ test("tracked manual continuation reserves and begins before the real chat send 
   assert.deepEqual(steps,['reserve','begin','send']);
   assert.match(sends[0].message,new RegExp(`Tracked continuation attempt: ${attempt.attemptId}`));
   assert.match(sends[0].message,/not proof of execution or an idempotency key/);
-  await screen.findByText(/An attempt requires review/);
+  await screen.findByText(/Dispatch began but the outcome is unknown/);
 });

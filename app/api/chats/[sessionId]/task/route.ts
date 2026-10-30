@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { readBoundedJson } from "@/lib/bounded-json";
 import { ownedChat } from "@/lib/security/owned-chat";
 import { taskDefinitionSchema } from "@/lib/tracked-task";
 import { getTask, setTask, settleTask } from "@/lib/tracked-task-store";
@@ -34,21 +35,9 @@ export async function PUT(req: Request, ctx: Context) {
     return reply({ error: "Expected JSON." }, 415);
   const o = await ownerFor(req, ctx);
   if (!o) return reply({ error: "Conversation not available." }, 404);
-  let raw: string;
-  try {
-    raw = await req.text();
-  } catch {
-    return reply({ error: "Invalid request." }, 400);
-  }
-  if (new TextEncoder().encode(raw).length > 4096)
-    return reply({ error: "Request too large." }, 413);
-  let data: unknown;
-  try {
-    data = JSON.parse(raw);
-  } catch {
-    return reply({ error: "Invalid JSON." }, 400);
-  }
-  const p = z.object({ task: taskDefinitionSchema, expectedRevision: z.uuid().nullable() }).strict().safeParse(data);
+  const body = await readBoundedJson(req);
+  if (!body.ok) return reply({ error: body.error }, body.status);
+  const p = z.object({ task: taskDefinitionSchema, expectedRevision: z.uuid().nullable() }).strict().safeParse(body.value);
   if (!p.success) return reply({ error: "Invalid task." }, 400);
   try {
     if (!await setTask(o, p.data.task, p.data.expectedRevision)) return reply({ error: "Task changed elsewhere; refresh before replacing it." }, 409);
@@ -62,13 +51,9 @@ export async function DELETE(req: Request, ctx: Context) {
     return reply({ error: "Same-origin request required." }, 403);
   const o = await ownerFor(req, ctx);
   if (!o) return reply({ error: "Conversation not available." }, 404);
-  let input: unknown;
-  try {
-    const raw = await req.text();
-    if (new TextEncoder().encode(raw).length > 4096) return reply({ error: "Request too large." }, 413);
-    input = JSON.parse(raw);
-  } catch { return reply({ error: "Invalid request." }, 400); }
-  const parsed = z.object({ expectedRevision: z.uuid() }).strict().safeParse(input);
+  const body = await readBoundedJson(req);
+  if (!body.ok) return reply({ error: body.error }, body.status);
+  const parsed = z.object({ expectedRevision: z.uuid() }).strict().safeParse(body.value);
   if (!parsed.success) return reply({ error: "Invalid task revision." }, 400);
   try {
     if (

@@ -7,8 +7,13 @@ new turn. Cancellation, replacement or a changed criterion revision before
 that transition fences it. A pending attempt blocks another budgeted start
 across tabs, including after a lost response. Reservation advances the permission epoch, invalidating previous automatic web
 call decisions, and homepage fetches require individual approval while the
-attempt is pending. The owner must confirm the turn has stopped, inspect
-external services and save a review note; this is not proof of a remote effect. Never
+attempt is pending. The owner can save an unresolved hold note without releasing the attempt or
+its individual-approval restriction. If the hold precedes begin, begin fails;
+a hold after begin cannot recall the request. Only an explicit human review
+release, with the observed review revision, removes the restriction. The owner
+must confirm the turn has stopped and inspect external services; that assessment
+is not proof of a remote effect. Begin and each hold advance the review revision,
+so stale tabs cannot release a changed attempt. Never
 resend an uncertain attempt automatically. The last 20 human review notes are
 visible in the panel; up to 2,000 attempt tombstones are retained per chat.
 
@@ -22,6 +27,43 @@ objective. Do not enable unattended continuation by changing the budget alone.
 
 The rest of this document describes requirements for future **automatic**
 continuation, not guarantees of the manual path.
+
+
+## Eve delivery identity investigation
+
+The public browser `ClientSession.send` does not offer an idempotency key, and
+`clientContext` is ephemeral. Session history IDs are client-supplied, may be
+reused, and do not deduplicate delivery. The installed Eve documentation *does*
+expose `attachSession(sessionId).send(..., { auth, idempotencyKey })` to authored
+channel routes, and allows channels to wrap existing routes. Its documented
+key window is only the last 1,024 keys per durable session; eviction, reset or
+replacement can allow an old key to execute again. The existing-session return
+indicates storage, not whether the command was duplicate or which turn ran, and
+tool/provider side effects are not exactly-once.
+
+That is a potential future adapter, not a guarantee in Tflash today. The current
+`useEveAgent` path sends directly through the Eve HTTP session API with
+per-turn client context, authenticated model/provider and integration
+attributes, streaming, steering and cancellation behavior. Safely inserting a
+key requires an owner-checked route or wrapper that binds a server-reserved
+attempt to the exact immutable payload and context, prevents key collision or
+reuse after eviction, preserves all those behaviors and proves the actual
+existing Eve-channel session accepts the command under the correct principal.
+A shared dynamic header alone can accidentally label concurrent sends or
+cancellation. This PR does not route sends through that unverified adapter and
+does not retry uncertain effects. A disposable Workflow World and actual
+end-to-end session tests, without production services or paid resources, are
+required before enabling it.
+
+## MCP and shell boundary
+
+The real generic MCP connection factory and the Bash tool each use Eve's
+`always()` per-call approval. Neither adapter has an enforced, revocable,
+expiring exact-operation scope and cancellation contract; generic MCP argument
+injection can violate third-party schemas, and arbitrary shell can spawn
+background processes. A call ID or human approval is not provider-side
+idempotency. They remain individually approved; no reusable blanket grant was
+added. The separately bounded homepage fetch grant is the only reusable scope.
 
 ## Required safety properties
 
