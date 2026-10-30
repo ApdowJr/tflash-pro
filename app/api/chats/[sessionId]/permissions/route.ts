@@ -1,6 +1,7 @@
+import { z } from "zod";
 import { ownedChat } from "@/lib/security/owned-chat";
 import { homepageOrigin } from "@/lib/permission-scope";
-import { grantWeb, listWebGrants, revokeWeb } from "@/lib/permission-store";
+import { changeWebGrant, listWebGrants } from "@/lib/permission-store";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const headers = { "cache-control": "no-store" };
@@ -50,23 +51,16 @@ async function change(req: Request, ctx: Context, revoke: boolean) {
   } catch {
     return reply({ error: "Invalid JSON." }, 400);
   }
-  if (
-    !input ||
-    typeof input !== "object" ||
-    Array.isArray(input) ||
-    Object.keys(input).length !== 1 ||
-    !("origin" in input)
-  )
-    return reply({ error: "Invalid scope." }, 400);
-  const origin = homepageOrigin(input.origin);
+  const parsed = z.object({ origin: z.string(), expectedRevision: z.uuid().nullable() }).strict().safeParse(input);
+  if (!parsed.success || (revoke && parsed.data.expectedRevision === null)) return reply({ error: "Invalid scope or revision." }, 400);
+  const origin = homepageOrigin(parsed.data.origin);
   if (!origin)
     return reply(
       { error: "Enter an HTTPS homepage without path or query." },
       400,
     );
   try {
-    if (revoke) await revokeWeb(o, origin);
-    else await grantWeb(o, origin);
+    if (!await changeWebGrant(o, origin, parsed.data.expectedRevision, revoke)) return reply({ error: "Permissions changed; refresh before trying again." }, 409);
     return reply({ grants: await listWebGrants(o) });
   } catch {
     return reply(

@@ -1,9 +1,9 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAppSettings } from "@/components/settings/app-settings";
 import { Button } from "@/components/ui/button";
 import { OWNER_PROOF_HEADER } from "@/lib/security/chat-ownership-wire";
-type Grant = { origin: string; expiresAt: string };
+type Grant = { origin: string; expiresAt: string; revision: string };
 export function PermissionsPanel({
   sessionId,
   ownerProof,
@@ -16,37 +16,46 @@ export function PermissionsPanel({
     [grants, setGrants] = useState<Grant[]>(),
     [origin, setOrigin] = useState(""),
     [busy, setBusy] = useState(false),
-    [error, setError] = useState(false),
+    [error, setError] = useState<"unavailable" | "conflict">(),
     [checked, setChecked] = useState<number>(),
     [now, setNow] = useState(() => Date.now());
   const url = `/api/chats/${encodeURIComponent(sessionId)}/permissions`;
+  const pending = useRef<AbortController | undefined>(undefined);
+  useEffect(() => {
+    setGrants(undefined); setChecked(undefined); setError(undefined); setBusy(false); setOrigin("");
+    return () => { const active = pending.current; pending.current = undefined; active?.abort(); };
+  }, [url, ownerProof]);
   const request = useCallback(
-    async (method: "GET" | "POST" | "DELETE", value?: string) => {
+    async (method: "GET" | "POST" | "DELETE", value?: string, revision?: string | null) => {
+      if (pending.current) return;
+      const controller = new AbortController();
+      pending.current = controller;
       setBusy(true);
-      setError(false);
+      setError(undefined);
       try {
         const r = await fetch(url, {
           method,
           cache: "no-store",
+          signal: controller.signal,
           headers: {
             ...(ownerProof ? { [OWNER_PROOF_HEADER]: ownerProof } : {}),
             ...(method === "GET" ? {} : { "content-type": "application/json" }),
           },
           ...(method === "GET"
             ? {}
-            : { body: JSON.stringify({ origin: value }) }),
+            : { body: JSON.stringify({ origin: value, expectedRevision: revision }) }),
         });
         const body = (await r.json()) as { grants?: Grant[] };
-        if (!r.ok || !Array.isArray(body.grants)) throw new Error();
+        if (!r.ok || !Array.isArray(body.grants)) throw new Error(r.status === 409 ? "conflict" : "unavailable");
+        if (pending.current !== controller) return;
         setGrants(body.grants);
         setChecked(Date.now());
         setNow(Date.now());
         if (method === "POST") setOrigin("");
-      } catch {
-        setGrants(undefined);
-        setError(true);
+      } catch (reason) {
+        if (pending.current === controller) { setGrants(undefined); setError(reason instanceof Error && reason.message === "conflict" ? "conflict" : "unavailable"); }
       } finally {
-        setBusy(false);
+        if (pending.current === controller) { pending.current = undefined; setBusy(false); }
       }
     },
     [url, ownerProof],
@@ -82,7 +91,7 @@ export function PermissionsPanel({
           <p className="text-muted-foreground">{t("permissionsLimits")}</p>
           {error ? (
             <p role="alert" className="text-destructive">
-              {t("permissionsUnavailable")}
+              {t(error === "conflict" ? "permissionsConflict" : "permissionsUnavailable")}
             </p>
           ) : null}
           {checked && active ? (
@@ -106,7 +115,7 @@ export function PermissionsPanel({
                       size="sm"
                       variant="outline"
                       disabled={busy}
-                      onClick={() => void request("DELETE", g.origin)}
+                      onClick={() => void request("DELETE", g.origin, g.revision)}
                     >
                       {t("permissionsRevoke")}
                     </Button>
@@ -121,7 +130,10 @@ export function PermissionsPanel({
             className="flex flex-wrap gap-2"
             onSubmit={(e) => {
               e.preventDefault();
-              if (origin.trim()) void request("POST", origin.trim());
+              if (!origin.trim() || !grants) return;
+              let normalized: string;
+              try { normalized = new URL(origin.trim()).origin; } catch { normalized = origin.trim(); }
+              void request("POST", origin.trim(), grants.find((g) => g.origin === normalized)?.revision ?? null);
             }}
           >
             <label className="flex min-w-48 flex-1 flex-col gap-1">
@@ -135,7 +147,7 @@ export function PermissionsPanel({
                 onChange={(e) => setOrigin(e.target.value)}
               />
             </label>
-            <Button className="self-end" type="submit" disabled={busy}>
+            <Button className="self-end" type="submit" disabled={busy || !grants}>
               {t("permissionsGrant")}
             </Button>
           </form>

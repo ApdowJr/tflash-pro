@@ -6,8 +6,8 @@ local tests use mocks and do not establish live provider or sandbox behavior.
 ## Confirmed causes and boundaries
 
 - Shell and catalog MCP tools retain per-call approval. An owner can grant repeated reads of one exact HTTPS homepage for one hour. The server checks the grant at the Eve gate and before the request. Redirects, paths and queries are excluded; public DNS answers are pinned to the TLS socket. Already-started requests cannot be recalled. This is not Full Permissions.
-- The service-only Supabase tables namespace grants and tasks by identity type, owner and session. Both authentication modes use this store. Missing configuration fails closed. Setup requires the included migration and server-only `TFLASH_PERMISSIONS_SERVICE_ROLE_KEY` and `TFLASH_PERMISSIONS_SUPABASE_URL` on Next and Eve; no migration or configuration is applied here.
-- One user-defined objective and file SHA-256 criterion may be persisted. Verification reads sandbox bytes and records a point-in-time result using revision/state compare-and-set. A digest match does not verify the overall task; automatic cross-turn scheduling remains disabled.
+- The service-only Supabase tables namespace grants and tasks by identity type, owner and session. Both authentication modes use this store. Missing configuration fails closed. Setup requires the included migrations and server-only `TFLASH_PERMISSIONS_SERVICE_ROLE_KEY` and `TFLASH_PERMISSIONS_SUPABASE_URL` on Next and Eve; no migration or configuration is applied here.
+- One user-defined objective and file SHA-256 criterion may be persisted. Verification reads sandbox bytes and records a point-in-time result using revision/state compare-and-set. Reverification can invalidate a previous match; every settlement changes the revision. Edits and tracking cancellation require the last observed revision, so stale tabs must refresh. A digest match does not verify the overall task; automatic cross-turn scheduling remains disabled.
 - Eve normally advances from a settled tool result to another model step within
   the same turn, and checkpoints completed workflow steps. A tool receipt from
   a task is not its settlement. Existing explicit approval or input waits hold
@@ -37,7 +37,7 @@ The task card labels its counts as agent-reported and permits an explicit
 review/continue even when the checklist says it is complete. The UI retains a
 visible Stop button while drafting a follow-up, blocks a pending submission if
 Stop occurs during chat-index persistence, and offers reconnect for a stream
-error with an active turn. Transient stream errors trigger at most three
+error with an active turn. A disconnected Stop targets the observed turn using Eve's fixed-session cancel API, and then reconnects to observe its boundary; acceptance is not proof of cancellation. Transient stream errors trigger at most three
 reconnection attempts for the same turn with exponential backoff and jitter;
 HTTP Retry-After is respected up to 30 seconds, while authorization errors and
 other permanent failures are not automatically retried. Reconnection uses Eve's
@@ -51,4 +51,11 @@ verify final deliverables, establish exact task state, implement bounded
 cross-turn continuation, or provide general-purpose durable permission management.
 
 Production requires separately verified workflow storage, routes, sandbox and
-provider connectivity as documented in the README. A migration file is included, but no production migration or configuration change was applied.
+provider connectivity as documented in the README. Migration files are included, but no production migration or configuration change was applied.
+
+## Remaining security and recovery caveats
+
+- Grant and revoke mutations now use per-origin revision checks; revoked/expired rows remain as tombstones so stale tabs cannot recreate a permission. Refresh after a conflict. This relies on the follow-up revision migration being applied to the same service store. A revoke cannot recall an already-started request, and individually approved fetches use their original policy. Permission snapshots currently fail closed if a conversation has over 1,000 distinct stored origins or the backend truncates results; administrator intervention is then required. Do not delete tombstones while stale clients or requests can still exist.
+- An explicit continuation is a new model turn, not a durable execution ledger; the user must inspect ambiguous effects. Eve workflow steps can retry, and external systems may not expose idempotency keys or status. Without integration-specific reconciliation and a durable attempt ledger, safely automating cross-turn continuation is not established.
+- The optional service store uses a broad service-role key. Restrict distribution, rotate it through the deployment secret manager, and validate project identity and permissions before release. Hosted Supabase, the Eve workflow world, sandbox and actual providers have not been exercised by the isolated SQL/mocked tests.
+- Changing the internal task and permissions mutation payloads is incompatible with a pre-update open tab. Reload tabs on release. A conflict preserves the form draft and requires refresh. Tracking cancellation and stopping an Eve turn are separate operations.

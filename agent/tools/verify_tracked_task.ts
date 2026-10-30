@@ -12,10 +12,10 @@ export default defineTool({
     const owner = permissionOwner(ctx.session);
     if (!owner) throw new Error("An authenticated task owner is required.");
     const task = await getTask(owner);
-    if (!task || task.state !== "awaiting_evidence")
+    if (!task || task.state === "cancelled")
       return {
         status: "unavailable",
-        message: "No active task awaiting evidence.",
+        message: "No active task available for verification.",
       };
     let reason = "The expected file was not found.",
       matched = false;
@@ -58,6 +58,7 @@ export default defineTool({
           ? error.message
           : "The file could not be read.";
     }
+    ctx.abortSignal.throwIfAborted();
     if (
       !(await settleTask(
         owner,
@@ -68,7 +69,7 @@ export default defineTool({
     )
       return {
         status: "changed",
-        message: "The task was cancelled or replaced during verification.",
+        message: "The task changed during verification; refresh and retry if needed.",
       };
     return {
       status: matched ? "criterion_matched" : "awaiting_evidence",

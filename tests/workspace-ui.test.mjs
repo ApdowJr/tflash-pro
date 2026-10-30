@@ -655,7 +655,8 @@ test("unfinished stopped plans can be continued explicitly, but completed or act
   const plan = { title: "Write report", steps: [{ id: "write", title: "Write", status: "pending" }] };
   const rendered = render(app(h(AgentPlanCard, { plan, runState: "idle", onContinue })));
   const user = userEvent.setup();
-  await user.click(await screen.findByRole("button", { name: "Continue task" }));
+  const continueButton = await screen.findByRole("button", { name: "Continue task" });
+  fireEvent.click(continueButton); fireEvent.click(continueButton);
   assert.equal(attempts, 1);
   assert.equal(screen.getByRole("button", { name: "Working" }).disabled, true);
   await React.act(async () => { rejectAttempt(new Error("offline")); try { await pending; } catch {} });
@@ -806,7 +807,8 @@ test("activity UI uses authoritative results, hides arguments and keeps unreport
   render(app(h(ActivityPanel, { messages: [{ id: "msg", role: "assistant", parts: [
     { type: "dynamic-tool", toolName: "bash", toolCallId: "call", state: "output-denied", input: { token: "DO-NOT-SHOW" }, approval: { id: "approval", approved: false } },
   ] }], events: [{ type: "step.completed", data: { turnId: "t", stepIndex: 0, usage: { inputTokens: 5, outputTokens: 2 } } }] })));
-  await userEvent.setup().click(await screen.findByText("Ficillada iyo isticmaalka · 1"));
+  await userEvent.setup().click(await screen.findByText("Ficillada iyo isticmaalka"));
+  assert.ok(await screen.findByText("Ficillada iyo isticmaalka · 1"));
   assert.ok(screen.getByText("La diiday")); assert.ok(screen.getByText("Lama soo sheegin"));
   assert.ok(!document.body.textContent.includes("DO-NOT-SHOW"));
 });
@@ -1288,10 +1290,113 @@ test("provisional tool output cannot produce a completed artifact card", async (
 
 test("permissions panel loads, creates and revokes the limited grant", async () => {
   const { PermissionsPanel } = await import("../components/chat/permissions-panel.tsx"); seed(); let grants=[];
-  const calls=fakeFetch((path,options)=>{if(!path.endsWith("/permissions"))return;if(options.method==="POST")grants=[{origin:JSON.parse(options.body).origin,expiresAt:"2030-01-01T00:00:00Z"}];if(options.method==="DELETE")grants=[];return Response.json({grants});});
+  const calls=fakeFetch((path,options)=>{if(!path.endsWith("/permissions"))return;if(options.method==="POST")grants=[{origin:JSON.parse(options.body).origin,expiresAt:"2030-01-01T00:00:00Z",revision:"11111111-1111-4111-8111-111111111111"}];if(options.method==="DELETE")grants=[];return Response.json({grants});});
   render(app(h(PermissionsPanel,{sessionId:"chat-a",ownerProof:"proof"})));const user=userEvent.setup();await user.click(screen.getByText("Permissions for this conversation"));await screen.findByText("No active reusable permissions.");await user.type(screen.getByLabelText("HTTPS homepage"),"https://example.com");await user.click(screen.getByRole("button",{name:"Allow homepage for one hour"}));await screen.findByText(/https:\/\/example.com/);assert.ok(calls.some(c=>c.options.method==="POST"&&c.options.headers["x-tflash-owner-proof"]==="proof"));await user.click(screen.getByRole("button",{name:"Revoke"}));await screen.findByText("No active reusable permissions.");
 });
 
 test("tracked task panel distinguishes missing evidence from cancellation", async () => {
   const {TrackedTaskPanel}=await import("../components/chat/tracked-task-panel.tsx");seed();let task={objective:"My objective",path:"out.txt",sha256:"a".repeat(64),revision:"revision",continuationBudget:0,state:"awaiting_evidence",verifiedAt:null,reason:null};fakeFetch((path,options)=>{if(!path.endsWith("/task"))return;if(options.method==="DELETE")task={...task,state:"cancelled"};return Response.json({task});});render(app(h(TrackedTaskPanel,{sessionId:"chat-a"})));const user=userEvent.setup();await user.click(screen.getByText("Track a file criterion"));await screen.findByText("Awaiting file evidence.");await user.click(screen.getByRole("button",{name:"Cancel tracking"}));await screen.findByText("Tracking cancelled.");assert.equal(screen.queryByText(/File criterion matched/),null);
+});
+
+test("collapsed activity panel does not scan streaming history until opened", async () => {
+  const { ActivityPanel } = await import("../components/chat/activity-panel.tsx");
+  seed(); fakeFetch();
+  let scans = 0;
+  const watch = (array) => new Proxy(array, { get(target, property, receiver) {
+    if (property === Symbol.iterator) scans++;
+    return Reflect.get(target, property, receiver);
+  } });
+  const messages = watch([{ role: "assistant", parts: [{ type: "dynamic-tool", toolName: "bash", toolCallId: "a", state: "output-available", output: { status: "completed", exitCode: 0 } }] }]);
+  const events = watch([]);
+  const rendered = render(app(h(ActivityPanel, { messages, events })));
+  for (let i = 0; i < 20; i++) rendered.rerender(app(h(ActivityPanel, { messages, events })));
+  assert.equal(scans, 0);
+  await userEvent.setup().click(screen.getByText("Activity & usage"));
+  await screen.findByText("Tool returned");
+  assert.ok(scans > 0);
+});
+
+test("permission submissions are single-flight and aborted on unmount", async () => {
+  const { PermissionsPanel } = await import("../components/chat/permissions-panel.tsx");
+  seed(); let release; let posts = 0; let signal;
+  fakeFetch((path, options) => {
+    if (!path.endsWith("/permissions")) return;
+    if (options.method === "GET") return Response.json({ grants: [] });
+    posts++; signal = options.signal;
+    return new Promise((resolve) => { release = resolve; });
+  });
+  const rendered = render(app(h(PermissionsPanel, { sessionId: "chat-a" })));
+  await userEvent.setup().click(screen.getByText("Permissions for this conversation"));
+  await screen.findByText("No active reusable permissions.");
+  const input = screen.getByLabelText("HTTPS homepage");
+  fireEvent.change(input, { target: { value: "https://example.com" } });
+  const form = input.closest("form");
+  fireEvent.submit(form); fireEvent.submit(form);
+  await waitFor(() => assert.equal(posts, 1));
+  rendered.unmount(); assert.equal(signal.aborted, true);
+  release(Response.json({ grants: [] }));
+});
+
+test("a task revision conflict keeps the draft and requires refresh before replacement", async () => {
+  const { TrackedTaskPanel } = await import("../components/chat/tracked-task-panel.tsx");
+  seed(); let task = null;
+  fakeFetch((path, options) => {
+    if (!path.endsWith("/task")) return;
+    if (options.method === "PUT") return Response.json({ error: "conflict" }, { status: 409 });
+    return Response.json({ task });
+  });
+  render(app(h(TrackedTaskPanel, { sessionId: "chat-a" })));
+  const user = userEvent.setup();
+  await user.click(screen.getByText("Track a file criterion"));
+  await waitFor(() => assert.equal(screen.getByRole("button", { name: "Save or replace tracked task" }).disabled, false));
+  await user.type(screen.getByLabelText("Objective"), "My draft");
+  await user.type(screen.getByLabelText("Workspace-relative file path"), "result.txt");
+  await user.type(screen.getByLabelText("Expected SHA-256 (64 hexadecimal characters)"), "a".repeat(64));
+  await user.click(screen.getByRole("button", { name: "Save or replace tracked task" }));
+  await screen.findByText(/task changed elsewhere/i);
+  assert.equal(screen.getByLabelText("Objective").value, "My draft");
+  assert.equal(screen.getByRole("button", { name: "Save or replace tracked task" }).disabled, true);
+  await user.click(screen.getByRole("button", { name: "Refresh permissions" }));
+  await waitFor(() => assert.equal(screen.getByRole("button", { name: "Save or replace tracked task" }).disabled, false));
+});
+
+test("permission conflicts preserve the address and require refresh", async () => {
+  const { PermissionsPanel } = await import("../components/chat/permissions-panel.tsx");
+  seed(); let attempts = 0;
+  fakeFetch((path, options) => {
+    if (!path.endsWith("/permissions")) return;
+    if (options.method === "POST") { attempts++; return Response.json({ error: "conflict" }, { status: 409 }); }
+    return Response.json({ grants: [] });
+  });
+  render(app(h(PermissionsPanel, { sessionId: "chat-a" })));
+  const user = userEvent.setup();
+  await user.click(screen.getByText("Permissions for this conversation"));
+  await screen.findByText("No active reusable permissions.");
+  const input = screen.getByLabelText("HTTPS homepage");
+  await user.type(input, "https://example.com");
+  await user.click(screen.getByRole("button", { name: "Allow homepage for one hour" }));
+  await screen.findByText(/permissions changed elsewhere/i);
+  assert.equal(input.value, "https://example.com"); assert.equal(attempts, 1);
+  assert.equal(screen.getByRole("button", { name: "Allow homepage for one hour" }).disabled, true);
+  await user.click(screen.getByRole("button", { name: "Refresh permissions" }));
+  await waitFor(() => assert.equal(screen.getByRole("button", { name: "Allow homepage for one hour" }).disabled, false));
+});
+
+test("switching sessions aborts old panel loads and ignores late results", async () => {
+  const { PermissionsPanel } = await import("../components/chat/permissions-panel.tsx");
+  seed(); let release, oldSignal;
+  fakeFetch((path, options) => {
+    if (!path.endsWith("/permissions")) return;
+    if (path.includes("chat-a")) { oldSignal = options.signal; return new Promise(resolve => { release = resolve; }); }
+    return Response.json({ grants: [{ origin: "https://new.example", expiresAt: "2030-01-01T00:00:00Z", revision: "11111111-1111-4111-8111-111111111111" }] });
+  });
+  const rendered = render(app(h(PermissionsPanel, { sessionId: "chat-a" })));
+  await userEvent.setup().click(screen.getByText("Permissions for this conversation"));
+  await waitFor(() => assert.ok(oldSignal));
+  rendered.rerender(app(h(PermissionsPanel, { sessionId: "chat-b" })));
+  assert.equal(oldSignal.aborted, true);
+  await screen.findByText(/https:\/\/new.example/);
+  await React.act(async () => { release(Response.json({ grants: [{ origin: "https://old.example", expiresAt: "2030-01-01T00:00:00Z", revision: "22222222-2222-4222-8222-222222222222" }] })); });
+  assert.equal(screen.queryByText(/https:\/\/old.example/), null);
+  assert.ok(screen.getByText(/https:\/\/new.example/));
 });

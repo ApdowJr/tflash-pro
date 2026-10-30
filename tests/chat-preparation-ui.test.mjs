@@ -446,3 +446,46 @@ test("intermittent streaming does not reset the automatic retry budget for the s
   await new Promise((resolve) => setTimeout(resolve, 650));
   assert.equal(resumes, 3);
 });
+
+test("a disconnected stop targets only the observed turn and reattaches to confirm", async () => {
+  const sends = seed({ agentStatus: "error" });
+  globalThis.__prepareAgent.data.activeTurnId = "turn-old";
+  globalThis.__prepareAgent.data.turns = { "turn-old": { status: "active" } };
+  let resumes = 0;
+  globalThis.__prepareAgent.resume = async () => { resumes++; };
+  const pending = deferred(); let calls = 0, body, proof;
+  fakeFetch((path, options) => {
+    if (path.endsWith("/eve/v1/session/owned-chat/cancel")) {
+      calls++; body = JSON.parse(options.body); proof = new Headers(options.headers).get("x-tflash-owner-proof");
+      return pending.promise;
+    }
+  });
+  window.localStorage.setItem("tflash:settings:v1:prepare-user", JSON.stringify({ language: "en", chatProofs: { "owned-chat": "proof-value" } }));
+  render(app({ sessionId: "owned-chat" }, "vercel"));
+  const user = userEvent.setup();
+  const stop = await screen.findByRole("button", { name: "Request stop for this turn" });
+  await user.click(stop);
+  await waitFor(() => assert.equal(calls, 1)); assert.equal(body.turnId, "turn-old"); assert.equal(proof, "proof-value");
+  assert.equal(screen.getByRole("button", { name: "Stopping…" }).disabled, true);
+  assert.equal(sends.length, 0); assert.equal(resumes, 0);
+  await React.act(async () => { pending.resolve(Response.json({ ok: true, status: "accepted", sessionId: "owned-chat" }, { status: 202 })); await pending.promise; });
+  await waitFor(() => assert.equal(resumes, 1));
+  assert.ok(screen.getByText(/stream disconnected while a turn was active/));
+  assert.equal(sends.length, 0);
+});
+
+test("a failed disconnected stop preserves the draft and reports an error", async () => {
+  const sends = seed({ agentStatus: "error" });
+  globalThis.__prepareAgent.data.activeTurnId = "turn-old";
+  globalThis.__prepareAgent.data.turns = { "turn-old": { status: "active" } };
+  globalThis.__prepareAgent.resume = async () => {};
+  fakeFetch((path) => path.endsWith("/eve/v1/session/owned-chat/cancel") ? Response.json({ error: "offline" }, { status: 503 }) : undefined);
+  render(app({ sessionId: "owned-chat" }));
+  const user = userEvent.setup();
+  const input = screen.getByPlaceholderText("Ask Tflash anything…");
+  await user.type(input, "Keep my draft");
+  await user.click(await screen.findByRole("button", { name: "Request stop for this turn" }));
+  await waitFor(() => assert.ok(screen.getByText("offline")));
+  assert.equal(input.value, "Keep my draft"); assert.equal(sends.length, 0);
+  assert.equal(screen.getByRole("button", { name: "Request stop for this turn" }).disabled, false);
+});

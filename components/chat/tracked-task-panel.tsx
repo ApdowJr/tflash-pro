@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useAppSettings } from "@/components/settings/app-settings";
 import { OWNER_PROOF_HEADER } from "@/lib/security/chat-ownership-wire";
@@ -18,30 +18,42 @@ export function TrackedTaskPanel({
     [path, setPath] = useState(""),
     [sha256, setSha256] = useState(""),
     [busy, setBusy] = useState(false),
-    [error, setError] = useState(false);
+    [error, setError] = useState<"unavailable" | "conflict">();
   const url = `/api/chats/${encodeURIComponent(sessionId)}/task`;
+  const pending = useRef<AbortController | undefined>(undefined);
+  useEffect(() => {
+    setTask(undefined); setError(undefined); setBusy(false); setObjective(""); setPath(""); setSha256("");
+    return () => { const active = pending.current; pending.current = undefined; active?.abort(); };
+  }, [url, ownerProof]);
   const request = useCallback(
     async (method: "GET" | "PUT" | "DELETE", body?: object) => {
+      if (pending.current) return;
+      const controller = new AbortController();
+      pending.current = controller;
       setBusy(true);
-      setError(false);
+      setError(undefined);
       try {
         const r = await fetch(url, {
           method,
           cache: "no-store",
+          signal: controller.signal,
           headers: {
             ...(ownerProof ? { [OWNER_PROOF_HEADER]: ownerProof } : {}),
-            ...(method === "PUT" ? { "content-type": "application/json" } : {}),
+            ...(method !== "GET" ? { "content-type": "application/json" } : {}),
           },
           ...(body ? { body: JSON.stringify(body) } : {}),
         });
         const result = (await r.json()) as { task?: TrackedTask | null };
-        if (!r.ok || result.task === undefined) throw new Error();
+        if (!r.ok || result.task === undefined) throw new Error(r.status === 409 ? "conflict" : "unavailable");
+        if (pending.current !== controller) return;
         setTask(result.task);
-      } catch {
-        setTask(undefined);
-        setError(true);
+      } catch (reason) {
+        if (pending.current === controller) {
+          setTask(undefined);
+          setError(reason instanceof Error && reason.message === "conflict" ? "conflict" : "unavailable");
+        }
       } finally {
-        setBusy(false);
+        if (pending.current === controller) { pending.current = undefined; setBusy(false); }
       }
     },
     [url, ownerProof],
@@ -63,7 +75,7 @@ export function TrackedTaskPanel({
           <p className="text-muted-foreground">{t("trackedTaskLimit")}</p>
           {error ? (
             <p role="alert" className="text-destructive">
-              {t("trackedTaskUnavailable")}
+              {t(error === "conflict" ? "trackedTaskConflict" : "trackedTaskUnavailable")}
             </p>
           ) : null}
           {task ? (
@@ -91,13 +103,13 @@ export function TrackedTaskPanel({
                   {new Date(task.verifiedAt).toLocaleString()}
                 </p>
               ) : null}
-              {task.state === "awaiting_evidence" ? (
+              {task.state !== "cancelled" ? (
                 <Button
                   size="sm"
                   variant="outline"
                   type="button"
                   disabled={busy}
-                  onClick={() => void request("DELETE")}
+                  onClick={() => void request("DELETE", { expectedRevision: task.revision })}
                 >
                   {t("trackedTaskCancel")}
                 </Button>
@@ -108,11 +120,10 @@ export function TrackedTaskPanel({
             className="space-y-2"
             onSubmit={(e) => {
               e.preventDefault();
+              if (task === undefined) return;
               void request("PUT", {
-                objective,
-                path,
-                sha256,
-                continuationBudget: 0,
+                task: { objective, path, sha256, continuationBudget: 0 },
+                expectedRevision: task?.revision ?? null,
               });
             }}
           >
@@ -147,7 +158,7 @@ export function TrackedTaskPanel({
                 onChange={(e) => setSha256(e.target.value)}
               />
             </label>
-            <Button type="submit" size="sm" disabled={busy}>
+            <Button type="submit" size="sm" disabled={busy || task === undefined}>
               {t("trackedTaskSave")}
             </Button>
           </form>

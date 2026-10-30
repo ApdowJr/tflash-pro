@@ -29,6 +29,15 @@ globalThis.__db = () => ({
         filters.push((r) => r[k] === v);
         return this;
       },
+      in(k, values) {
+        filters.push((r) => values.includes(r[k]));
+        return this;
+      },
+      insert(v) {
+        action = "insert";
+        value = v;
+        return this;
+      },
       gt(k, v) {
         filters.push((r) => r[k] > v);
         return this;
@@ -36,6 +45,7 @@ globalThis.__db = () => ({
       order() {
         return this;
       },
+      limit() { return this; },
       upsert(v) {
         action = "upsert";
         value = v;
@@ -59,7 +69,8 @@ globalThis.__db = () => ({
           .then(() => {
             if (unavailable)
               return { data: null, error: new Error("unavailable") };
-            if (action === "upsert") rows().set(key(value), { ...value });
+            if (action === "insert" && rows().has(key(value))) return { data: null, error: { code: "23505" } };
+            if (action === "upsert" || action === "insert") rows().set(key(value), { ...value });
             const selected = [...rows().values()].filter((r) =>
               filters.every((f) => f(r)),
             );
@@ -67,7 +78,7 @@ globalThis.__db = () => ({
               for (const r of selected) rows().delete(key(r));
             if (action === "update")
               for (const r of selected) Object.assign(r, value);
-            return { data: selected, error: null };
+            return { data: selected, error: null, count: selected.length };
           })
           .then(resolve, reject);
       },
@@ -150,6 +161,12 @@ function req(
       : {}),
   });
 }
+function permissionReq(method = "GET", user = "supabase:alice", body = { origin: "https://example.com" }, origin = "https://app.test") {
+  const [kind, id] = user.split(":");
+  let normalized; try { normalized = new URL(body.origin).origin; } catch { normalized = body.origin; }
+  const row = tables.get("tflash_permission_grants")?.get([kind, id, "session-a", normalized].join("|"));
+  return req(method, user, { ...body, expectedRevision: row?.revision ?? null }, origin);
+}
 function context(
   kind = "supabase",
   id = "alice",
@@ -190,7 +207,7 @@ test("permission route and actual Eve gate enforce identity, scope, expiry, revo
   fetches = 0;
   const ctx = context();
   assert.equal(await web.approval(ctx), "user-approval");
-  assert.equal((await permissions.POST(req("POST"), route)).status, 200);
+  assert.equal((await permissions.POST(permissionReq("POST"), route)).status, 200);
   assert.equal(await web.approval(ctx), "not-applicable");
   assert.equal(await web.approval(ctx), "not-applicable");
   await web.execute({ url: "https://example.com/" }, ctx);
@@ -213,7 +230,7 @@ test("permission route and actual Eve gate enforce identity, scope, expiry, revo
   assert.equal(
     (
       await permissions.POST(
-        req("POST", "supabase:alice", { origin: "https://example.com/path" }),
+        permissionReq("POST", "supabase:alice", { origin: "https://example.com/path" }),
         route,
       )
     ).status,
@@ -222,13 +239,13 @@ test("permission route and actual Eve gate enforce identity, scope, expiry, revo
   assert.equal(
     (
       await permissions.DELETE(
-        req("DELETE", "supabase:alice", {}, "https://evil.test"),
+        permissionReq("DELETE", "supabase:alice", {}, "https://evil.test"),
         route,
       )
     ).status,
     403,
   );
-  assert.equal((await permissions.DELETE(req("DELETE"), route)).status, 200);
+  assert.equal((await permissions.DELETE(permissionReq("DELETE"), route)).status, 200);
   assert.equal(await web.approval(ctx), "user-approval");
   await assert.rejects(
     web.execute({ url: "https://example.com/" }, ctx),
@@ -236,7 +253,7 @@ test("permission route and actual Eve gate enforce identity, scope, expiry, revo
   );
   assert.equal(fetches, 1);
   assert.equal(
-    (await permissions.POST(req("POST", "vercel:alice"), route)).status,
+    (await permissions.POST(permissionReq("POST", "vercel:alice"), route)).status,
     200,
   );
   assert.equal(await web.approval(context("vercel")), "not-applicable");
@@ -247,7 +264,7 @@ test("permission route and actual Eve gate enforce identity, scope, expiry, revo
   assert.equal(await web.approval(ctx), "user-approval");
   assert.equal((await permissions.GET(req("GET"), route)).status, 503);
   unavailable = false;
-  assert.equal((await permissions.POST(req("POST"), route)).status, 200);
+  assert.equal((await permissions.POST(permissionReq("POST"), route)).status, 200);
   assert.equal(await web.approval(ctx), "not-applicable");
   const otherSession = context();
   otherSession.session = { ...otherSession.session, id: "session-b" };
@@ -259,13 +276,13 @@ test("permission route and actual Eve gate enforce identity, scope, expiry, revo
     /not configured/,
   );
   assert.equal(fetches, 1);
-  assert.equal((await permissions.POST(req("POST"), route)).status, 503);
+  assert.equal((await permissions.POST(permissionReq("POST"), route)).status, 503);
   process.env.TFLASH_PERMISSIONS_SERVICE_ROLE_KEY = "test-only";
 });
 test("persisted user criterion requires actual file evidence and cancellation or replacement defeats stale verification", async () => {
   tables.clear();
   assert.equal(
-    (await tasks.PUT(req("PUT", "supabase:alice", definition), route)).status,
+    (await tasks.PUT(req("PUT", "supabase:alice", { task: definition, expectedRevision: (await task())?.revision ?? null }), route)).status,
     200,
   );
   const ctx = context();
@@ -279,6 +296,9 @@ test("persisted user criterion requires actual file evidence and cancellation or
   });
   assert.equal((await verify.execute({}, ctx)).status, "criterion_matched");
   assert.equal((await task()).state, "criterion_matched");
+  ctx.getSandbox = async () => ({ readFile: async () => stream("changed") });
+  assert.equal((await verify.execute({}, ctx)).status, "awaiting_evidence");
+  assert.equal((await task()).state, "awaiting_evidence");
   assert.equal(await task("vercel:alice"), null);
   assert.equal(
     (await tasks.GET(req("GET", "supabase:bob"), route)).status,
@@ -287,7 +307,7 @@ test("persisted user criterion requires actual file evidence and cancellation or
   assert.equal(
     (
       await tasks.PUT(
-        req("PUT", "supabase:alice", { ...definition, path: "foo/.." }),
+        req("PUT", "supabase:alice", { task: { ...definition, path: "foo/.." }, expectedRevision: (await task()).revision }),
         route,
       )
     ).status,
@@ -295,7 +315,7 @@ test("persisted user criterion requires actual file evidence and cancellation or
   );
   for (const mode of ["cancel", "replace"]) {
     assert.equal(
-      (await tasks.PUT(req("PUT", "supabase:alice", definition), route)).status,
+      (await tasks.PUT(req("PUT", "supabase:alice", { task: definition, expectedRevision: (await task())?.revision ?? null }), route)).status,
       200,
     );
     let release, started;
@@ -314,14 +334,14 @@ test("persisted user criterion requires actual file evidence and cancellation or
     const pending = verify.execute({}, ctx);
     await ready;
     if (mode === "cancel")
-      assert.equal((await tasks.DELETE(req("DELETE"), route)).status, 200);
+      assert.equal((await tasks.DELETE(req("DELETE", "supabase:alice", { expectedRevision: (await task()).revision }), route)).status, 200);
     else
       assert.equal(
         (
           await tasks.PUT(
             req("PUT", "supabase:alice", {
-              ...definition,
-              objective: "New objective",
+              task: { ...definition, objective: "New objective" },
+              expectedRevision: (await task()).revision,
             }),
             route,
           )
@@ -335,4 +355,56 @@ test("persisted user criterion requires actual file evidence and cancellation or
       mode === "cancel" ? "cancelled" : "awaiting_evidence",
     );
   }
+});
+
+
+test("stale task edits and cancels cannot replace or cancel a newer task", async () => {
+  tables.clear();
+  assert.equal((await tasks.PUT(req("PUT", "supabase:alice", {task: definition, expectedRevision: null}), route)).status, 200);
+  const old = (await task()).revision;
+  assert.equal((await tasks.PUT(req("PUT", "supabase:alice", {task: {...definition, objective: "newer"}, expectedRevision: old}), route)).status, 200);
+  assert.equal((await tasks.PUT(req("PUT", "supabase:alice", {task: definition, expectedRevision: old}), route)).status, 409);
+  assert.equal((await tasks.PUT(req("PUT", "supabase:alice", {task: definition, expectedRevision: null}), route)).status, 409);
+  assert.equal((await tasks.DELETE(req("DELETE", "supabase:alice", {expectedRevision: old}), route)).status, 409);
+  assert.equal((await task()).objective, "newer");
+  assert.equal((await task()).state, "awaiting_evidence");
+});
+
+test("overlapping verification cannot overwrite newer evidence", async () => {
+  tables.clear();
+  await tasks.PUT(req("PUT", "supabase:alice", {task: definition, expectedRevision: null}), route);
+  let release, started; const ready = new Promise(r => { started = r; });
+  const slow = context(); slow.getSandbox = async () => ({ readFile: async () => { started(); await new Promise(r => { release = r; }); return stream("correct file"); } });
+  const pending = verify.execute({}, slow); await ready;
+  const fast = context(); fast.getSandbox = async () => ({ readFile: async () => stream("changed") });
+  assert.equal((await verify.execute({}, fast)).status, "awaiting_evidence");
+  release(); assert.equal((await pending).status, "changed");
+  assert.equal((await task()).state, "awaiting_evidence");
+});
+
+
+test("aborted verification does not record a match", async () => {
+  tables.clear();
+  await tasks.PUT(req("PUT", "supabase:alice", {task: definition, expectedRevision: null}), route);
+  const before = await task(); const controller = new AbortController();
+  const ctx = context(); ctx.abortSignal = controller.signal;
+  ctx.getSandbox = async () => ({ readFile: async () => { controller.abort(); return stream("correct file"); } });
+  await assert.rejects(verify.execute({}, ctx));
+  assert.deepEqual(await task(), before);
+});
+
+
+test("stale grants and revokes cannot undo a newer permission decision", async () => {
+  tables.clear(); const ctx = context();
+  const initialGrant = permissionReq("POST");
+  assert.equal((await permissions.POST(initialGrant, route)).status, 200);
+  const staleGrant = permissionReq("POST"), staleRevoke = permissionReq("DELETE");
+  assert.equal((await permissions.DELETE(permissionReq("DELETE"), route)).status, 200);
+  assert.equal(await web.approval(ctx), "user-approval");
+  assert.equal((await permissions.POST(staleGrant, route)).status, 409);
+  assert.equal(await web.approval(ctx), "user-approval");
+  assert.equal((await permissions.POST(permissionReq("POST"), route)).status, 200);
+  assert.equal((await permissions.DELETE(staleRevoke, route)).status, 409);
+  assert.equal(await web.approval(ctx), "not-applicable");
+  assert.equal((await permissions.POST(req("POST", "supabase:alice", {origin: "https://example.com", expectedRevision: null}), route)).status, 409);
 });

@@ -1,6 +1,7 @@
 "use client";
 
 import type { UserContent } from "ai";
+import { Client } from "eve/client";
 import { useEveAgent } from "eve/react";
 import { AlertCircleIcon, CheckIcon, CopyIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -233,8 +234,8 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
     hasOpenInput ? "waiting" : isBusy ? "working" : turnOutcome === "cancelled" ? "cancelled" : "idle";
 
   useEffect(() => {
-    if (!isBusy) { cancellationPending.current = false; setCancelling(false); }
-  }, [isBusy]);
+    if (!isBusy && !disconnected) { cancellationPending.current = false; setCancelling(false); }
+  }, [isBusy, disconnected]);
   const hasConversationContent = sessionless || !isEmpty || errorMessage !== undefined;
   const showConversationLayout = isResuming || hasConversationContent;
   const activeSessionId = sessionId ?? agent.session?.sessionId;
@@ -338,6 +339,32 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
     });
   };
 
+  const cancelDisconnectedTurn = () => {
+    if (!sessionId || !recoveryTurn || cancellationPending.current) return;
+    cancellationPending.current = true;
+    cancellationEpoch.current++;
+    setCancelling(true);
+    setCancellationError(undefined);
+    // The hook has no active local stream after a disconnect. Use Eve's
+    // documented fixed-session cancellation with the observed turn ID, so a
+    // delayed request cannot cancel a subsequent turn. An accepted response
+    // is only a queued request; reattach to observe the actual boundary.
+    const client = new Client({
+      host: WEB_CHAT_AGENT ? `/eve/${WEB_CHAT_AGENT}` : "",
+      headers: () => ({ ...eveHeaders(), [HEADER_MAX_STEPS]: String(workspace.snapshot().maxSteps), ...(ownerProof ? { [OWNER_PROOF_HEADER]: ownerProof } : {}) }),
+      redirect: "error",
+    });
+    void client.sessions.attach(sessionId).cancel({ turnId: recoveryTurn }).then(() => {
+      cancellationPending.current = false;
+      setCancelling(false);
+      reconnect(false);
+    }).catch((error: unknown) => {
+      cancellationPending.current = false;
+      setCancelling(false);
+      setCancellationError(toErrorMessage(error));
+    });
+  };
+
   const handleSubmit = async (message: PromptInputMessage) => {
     const text = message.text.trim();
     if (text.length === 0 && message.files.length === 0) return;
@@ -425,7 +452,8 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
           <span className="min-w-0 flex-1">{t("reconnectHint")}</span>
           {retryDelay !== undefined || reconnecting ? <span>{t("reconnectAutomatic")}</span> :
             reconnectAttempts >= MAX_STREAM_RECONNECTS ? <span>{t("reconnectExhausted")}</span> : null}
-          <Button type="button" size="sm" variant="outline" disabled={reconnecting} onClick={() => reconnect(false)}>{t("reconnect")}</Button>
+          <Button type="button" size="sm" variant="outline" disabled={reconnecting || cancelling} onClick={() => reconnect(false)}>{t("reconnect")}</Button>
+          {recoveryTurn ? <Button type="button" size="sm" variant="outline" disabled={cancelling} onClick={cancelDisconnectedTurn}>{t(cancelling ? "cancelling" : "stopDisconnectedTurn")}</Button> : null}
         </div> : null}
         {runState === "cancelled" ? <p role="status" className="mx-auto w-full max-w-2xl px-4 py-2 text-xs text-muted-foreground sm:px-6">{t("turnStoppedHint")}</p> : null}
         {currentPlan ? <div className="shrink-0 px-4 py-2 sm:px-6"><AgentPlanCard compact plan={currentPlan} runState={runState} onContinue={() => handleSubmit({ text: t("continueTaskPrompt"), files: [] })} /></div> : null}

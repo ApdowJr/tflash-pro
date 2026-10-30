@@ -46,27 +46,26 @@ export async function getTask(
     reason: data.reason,
   } as TrackedTask;
 }
-export async function setTask(owner: PermissionOwner, input: TaskDefinition) {
+/** Replace only the version the user actually reviewed. */
+export async function setTask(owner: PermissionOwner, input: TaskDefinition, expectedRevision: string | null): Promise<boolean> {
   const p = taskDefinitionSchema.parse(input);
-  const { error } = await permissionDatabase()
-    .from("tflash_tracked_tasks")
-    .upsert(
-      {
-        owner_kind: owner.kind,
-        owner_id: owner.id,
-        session_id: owner.sessionId,
-        revision: randomUUID(),
-        objective: p.objective,
-        path: p.path,
-        sha256: p.sha256,
-        continuation_budget: p.continuationBudget,
-        state: "awaiting_evidence",
-        verified_at: null,
-        reason: null,
-      },
-      { onConflict: "owner_kind,owner_id,session_id" },
-    );
+  const values = {
+    revision: randomUUID(), objective: p.objective, path: p.path, sha256: p.sha256,
+    continuation_budget: p.continuationBudget, state: "awaiting_evidence",
+    verified_at: null, reason: null,
+  };
+  const table = permissionDatabase().from("tflash_tracked_tasks");
+  if (expectedRevision === null) {
+    const { error } = await table.insert({ owner_kind: owner.kind, owner_id: owner.id, session_id: owner.sessionId, ...values });
+    if (error?.code === "23505") return false;
+    if (error) throw new Error("Task storage unavailable.");
+    return true;
+  }
+  const { data, error } = await table.update(values)
+    .eq("owner_kind", owner.kind).eq("owner_id", owner.id).eq("session_id", owner.sessionId)
+    .eq("revision", expectedRevision).select("revision").maybeSingle();
   if (error) throw new Error("Task storage unavailable.");
+  return !!data;
 }
 /** Revision and state CAS protects against cancellation or replacement during verification. */
 export async function settleTask(
@@ -78,6 +77,7 @@ export async function settleTask(
   const { data, error } = await permissionDatabase()
     .from("tflash_tracked_tasks")
     .update({
+      revision: randomUUID(),
       state,
       reason,
       verified_at:
@@ -87,7 +87,7 @@ export async function settleTask(
     .eq("owner_id", owner.id)
     .eq("session_id", owner.sessionId)
     .eq("revision", revision)
-    .eq("state", "awaiting_evidence")
+    .in("state", ["awaiting_evidence", "criterion_matched"])
     .select("revision")
     .maybeSingle();
   if (error) throw new Error("Task storage unavailable.");

@@ -1,7 +1,7 @@
 "use client";
 
 import { DocumentExportButtons } from "./documents";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { CheckIcon, CircleIcon, DownloadIcon, FileTextIcon, Loader2Icon, TriangleAlertIcon } from "lucide-react";
 import { artifactMediaType, type AgentArtifact, type AgentPlan } from "@/lib/agent-workspace";
 import { useAppSettings } from "@/components/settings/app-settings";
@@ -19,6 +19,7 @@ export function AgentPlanCard({ plan, compact = false, runState, onContinue }: {
 }) {
   const { t } = useAppSettings();
   const [continuing, setContinuing] = useState(false);
+  const continuePending = useRef(false);
   const [continueFailed, setContinueFailed] = useState(false);
   const completed = plan.steps.filter((step) => step.status === "completed").length;
   const body = (
@@ -41,10 +42,12 @@ export function AgentPlanCard({ plan, compact = false, runState, onContinue }: {
       {onContinue && (runState === "idle" || runState === "failed" || runState === "cancelled") ? (
         <div className="space-y-2">
           <Button disabled={continuing} onClick={async () => {
+            if (continuePending.current) return;
+            continuePending.current = true;
             setContinuing(true);
             setContinueFailed(false);
             try { await onContinue(); } catch { setContinueFailed(true); }
-            finally { setContinuing(false); }
+            finally { continuePending.current = false; setContinuing(false); }
           }} size="sm" type="button" variant="outline">{t(continuing ? "agentWorking" : completed === plan.steps.length ? "verifyOrContinue" : "continueTask")}</Button>
           {continueFailed ? <p className="text-xs text-destructive" role="alert">{t("continueTaskFailed")}</p> : null}
         </div>

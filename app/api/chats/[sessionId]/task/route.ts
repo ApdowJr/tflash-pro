@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { ownedChat } from "@/lib/security/owned-chat";
 import { taskDefinitionSchema } from "@/lib/tracked-task";
 import { getTask, setTask, settleTask } from "@/lib/tracked-task-store";
@@ -47,10 +48,10 @@ export async function PUT(req: Request, ctx: Context) {
   } catch {
     return reply({ error: "Invalid JSON." }, 400);
   }
-  const p = taskDefinitionSchema.safeParse(data);
+  const p = z.object({ task: taskDefinitionSchema, expectedRevision: z.uuid().nullable() }).strict().safeParse(data);
   if (!p.success) return reply({ error: "Invalid task." }, 400);
   try {
-    await setTask(o, p.data);
+    if (!await setTask(o, p.data.task, p.data.expectedRevision)) return reply({ error: "Task changed elsewhere; refresh before replacing it." }, 409);
     return reply({ task: await getTask(o) });
   } catch {
     return reply({ error: "Task storage unavailable." }, 503);
@@ -61,12 +62,17 @@ export async function DELETE(req: Request, ctx: Context) {
     return reply({ error: "Same-origin request required." }, 403);
   const o = await ownerFor(req, ctx);
   if (!o) return reply({ error: "Conversation not available." }, 404);
+  let input: unknown;
   try {
-    const t = await getTask(o);
-    if (!t || t.state !== "awaiting_evidence")
-      return reply({ error: "No active tracked task." }, 409);
+    const raw = await req.text();
+    if (new TextEncoder().encode(raw).length > 4096) return reply({ error: "Request too large." }, 413);
+    input = JSON.parse(raw);
+  } catch { return reply({ error: "Invalid request." }, 400); }
+  const parsed = z.object({ expectedRevision: z.uuid() }).strict().safeParse(input);
+  if (!parsed.success) return reply({ error: "Invalid task revision." }, 400);
+  try {
     if (
-      !(await settleTask(o, t.revision, "cancelled", "Cancelled by the user."))
+      !(await settleTask(o, parsed.data.expectedRevision, "cancelled", "Cancelled by the user."))
     )
       return reply({ error: "Task changed; refresh." }, 409);
     return reply({ task: await getTask(o) });
