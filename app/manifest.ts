@@ -10,7 +10,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "Tflash",
     short_name: "Tflash",
-    description: "A focused AI workspace for chat and your connected tools.",
+    description: "A bilingual AI workspace for chat, research and finished work.",
     start_url: "/",
     scope: "/",
     display: "standalone",

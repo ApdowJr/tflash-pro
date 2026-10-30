@@ -38,6 +38,14 @@ corepack pnpm build:eve   # Eve agent build
 
 CI runs these checks using dummy values. Passing them does not establish live Supabase, model-provider, OAuth, or sandbox connectivity. `/api/health` reports configuration without values; its `ready` flag checks required signing/encryption keys, not live services.
 
+## Public landing page
+
+`/` is public. Visitors who are not signed in see a bilingual landing page with
+the product loop, providers, approval rules and FAQ; signed-in accounts still go
+straight to a new chat. `/login?mode=signup` opens the create-account tab.
+`robots.txt` allows only `/` and `/login`, and `sitemap.xml` is emitted only when
+`APP_URL` is set. The landing page is light in both themes, like `/login`.
+
 ## Accounts and history
 
 - **Supabase email/password:** new accounts are confirmed through an emailed link. Opening that link in the same browser completes confirmation and signs the user in; password recovery also uses a link. The `tflash_chats` index uses RLS and server-signed account/session ownership proofs. Titles sync with the account; Eve stores the actual transcripts separately.
@@ -120,6 +128,8 @@ Persist Eve's workflow storage (or configure a suitable workflow world) and rout
 ## Key files
 
 - `components/app/auth-screen.tsx`, `components/brand/` — sign-in and identity.
+- `components/marketing/landing-page.tsx`, `app/page.tsx` — public front door and
+  the session split between landing and chat.
 - `lib/supabase/*`, `lib/auth*.ts`, `app/auth/*` — both account systems and callbacks.
 - `app/api/chats/*`, `lib/security/*`, `agent/channels/eve.ts` — ownership and protected Eve routes.
 - `lib/providers/*`, `app/api/providers/*`, `agent/agent.ts` — providers and dynamic model routing.
@@ -148,8 +158,8 @@ no feature or API contract was removed. See
   preview iframe, and a correct CSP needs per-request nonces. Both are tracked
   follow-ups.
 - A web manifest makes the app installable without a service worker, so no
-  conversation data is cached on a shared device. `robots.txt` disallows chat,
-  API, auth and `/eve/` paths.
+  conversation data is cached on a shared device. `robots.txt` allows the public
+  landing page and `/login`, and disallows chat, API, auth and `/eve/` paths.
 
 ## Release security note
 

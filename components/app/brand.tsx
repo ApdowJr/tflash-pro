@@ -7,7 +7,7 @@ export function BrandMark({ className }: { readonly className?: string; readonly
 
 export function Brand({ className, inverted = false }: { readonly className?: string; readonly inverted?: boolean }) {
   return (
-    <span className={cn("inline-flex items-center gap-2.5", className)}>
+    <span className={cn("inline-flex items-center gap-2.5", inverted && "tflash-brand-inverted", className)}>
       <BrandMark className="size-9" inverted={inverted} />
       <span className="text-lg font-semibold tracking-tight">Tflash</span>
     </span>
