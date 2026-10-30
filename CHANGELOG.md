@@ -27,6 +27,31 @@ verification.
   `metadataBase` from `APP_URL`.
 - The manifest description matches the bilingual product copy.
 
+## 2026-10-30 — database security advisor follow-up
+
+Repository-only hardening for the three Supabase advisors. No production
+migration, auth setting, deploy or push was performed. See
+[docs/database-advisors-2026-10-30.md](docs/database-advisors-2026-10-30.md).
+
+### Changed
+
+- Added `supabase/migrations/20261030120000_harden_owner_proof_rpc.sql`, which
+  revokes client execution of the out-of-band, `SECURITY DEFINER`
+  `tflash_verify_owner_proof` RPC. The app's signed HMAC owner check is
+  unchanged, and the RPC remains available to the database owner.
+- Added migration/security tests covering the revoke, the fresh-project no-op,
+  and the absence of runtime RPC call sites.
+
+### Documented
+
+- Leaked password protection is available on Pro and above; the exact Dashboard
+  and Management API steps are documented. It was not enabled here.
+- All three unused indexes are intentionally retained pending workload
+  evidence; no index is dropped.
+- Documented wider production schema drift, including the absent
+  `tflash_messages` migration, trigger helpers, index mismatch, and excess
+  `authenticated` table grants, with a safe reconciliation plan.
+
 ## 2026-10-29 — platform hardening
 
 No user-facing feature or API contract was removed. See
