@@ -11,7 +11,7 @@ const { readSourceReceipt } = await import("../lib/research-evidence.ts");
 const { sealJson } = await import("../lib/secrets.ts");
 const realFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = realFetch; });
-const ctx = { session: { id: "research-chat", auth: { current: { principalId: "research-user", principalType: "user" } } } };
+const ctx = { approval: { responder: { principalId: "research-user" } }, session: { id: "research-chat", auth: { current: { principalId: "research-user", principalType: "user" } } } };
 const sourceUrl = "https://example.com/research";
 const page = "Measured sample size: 42. <script>window.pwned=true</script>";
 function mockPage(body = page, status = 200, contentType = "text/plain") {

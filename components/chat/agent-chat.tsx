@@ -31,6 +31,8 @@ import { AgentMessage } from "./agent-message";
 import { VoiceOutputButton } from "./voice-output";
 import { AgentPlanCard, type AgentRunState } from "./agent-workspace";
 import { ActivityPanel } from "./activity-panel";
+import { PermissionsPanel } from "./permissions-panel";
+import { TrackedTaskPanel } from "./tracked-task-panel";
 import { ProjectPicker } from "@/components/settings/workspace-panel";
 import { useWorkspace } from "@/components/settings/workspace-store";
 import { workspaceContext } from "@/lib/workspace";
@@ -417,6 +419,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
           <summary className="w-fit cursor-pointer font-medium hover:text-foreground">{t("approvalModeStatus")}</summary>
           <p className="mt-2 max-w-2xl leading-relaxed">{t("approvalModeDetails")}</p>
         </details>
+        {sessionId ? <div className="shrink-0 space-y-1 px-4 py-1 sm:px-6"><PermissionsPanel sessionId={sessionId} ownerProof={ownerProof} /><TrackedTaskPanel sessionId={sessionId} ownerProof={ownerProof} /></div> : null}
         {!isEmpty ? <div className="shrink-0 px-4 py-2 sm:px-6"><ActivityPanel messages={agent.data.messages} events={agent.events} /></div> : null}
         {disconnected ? <div className="mx-auto flex w-full max-w-2xl flex-wrap items-center gap-2 px-4 py-2 text-xs text-muted-foreground" role="status">
           <span className="min-w-0 flex-1">{t("reconnectHint")}</span>

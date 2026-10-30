@@ -5,20 +5,9 @@ local tests use mocks and do not establish live provider or sandbox behavior.
 
 ## Confirmed causes and boundaries
 
-- `bash`, `web_fetch`, and every catalog MCP connection use `always()` at the
-  execution policy. This intentionally asks for each call. Eve's `once()` is
-  tool-wide and durable, and does not provide the immediate revocation and
-  risk classification required for a user-controlled full-permissions mode.
-  File tools and authored artifact/plan tools follow their existing policies.
-- Supabase chat ownership is RLS-backed, but Vercel-account chat ownership is
-  proof-based with a browser-local index. Neither is a shared, revocable,
-  server-side permission store for both identities. Browser state and model
-  context must not be used to authorize tools. Full permissions and reusable
-  grants are **not implemented**; no UI claims they are active. Building them
-  requires an authenticated shared store, server-side grant checks at each
-  execution, a reviewed fail-closed policy for dynamic MCP tools and shell
-  commands, and concurrent revocation tests. Project instructions are not an
-  authorization boundary.
+- Shell and catalog MCP tools retain per-call approval. An owner can grant repeated reads of one exact HTTPS homepage for one hour. The server checks the grant at the Eve gate and before the request. Redirects, paths and queries are excluded; public DNS answers are pinned to the TLS socket. Already-started requests cannot be recalled. This is not Full Permissions.
+- The service-only Supabase tables namespace grants and tasks by identity type, owner and session. Both authentication modes use this store. Missing configuration fails closed. Setup requires the included migration and server-only `TFLASH_PERMISSIONS_SERVICE_ROLE_KEY` and `TFLASH_PERMISSIONS_SUPABASE_URL` on Next and Eve; no migration or configuration is applied here.
+- One user-defined objective and file SHA-256 criterion may be persisted. Verification reads sandbox bytes and records a point-in-time result using revision/state compare-and-set. A digest match does not verify the overall task; automatic cross-turn scheduling remains disabled.
 - Eve normally advances from a settled tool result to another model step within
   the same turn, and checkpoints completed workflow steps. A tool receipt from
   a task is not its settlement. Existing explicit approval or input waits hold
@@ -59,8 +48,7 @@ remain retryable. Shell results with a nonzero exit are shown as failed; a
 background process is shown as having an unknown outcome, not as successful.
 Provisional artifact outputs do not produce download cards. These changes do not independently
 verify final deliverables, establish exact task state, implement bounded
-cross-turn continuation, or add durable permission management.
+cross-turn continuation, or provide general-purpose durable permission management.
 
 Production requires separately verified workflow storage, routes, sandbox and
-provider connectivity as documented in the README. No migration or production
-configuration change is included.
+provider connectivity as documented in the README. A migration file is included, but no production migration or configuration change was applied.

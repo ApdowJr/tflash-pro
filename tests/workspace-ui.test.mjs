@@ -685,7 +685,7 @@ test("research messages show inert bilingual sources and download the actual exe
   const { AgentMessage } = await import("../components/chat/agent-message.tsx");
   const fetchTool = (await import("../agent/tools/web_fetch.ts")).default;
   const reportTool = (await import("../agent/tools/create_research_report.ts")).default;
-  const context = { session: { id: "ui-research", auth: { current: { principalId: userId, principalType: "user" } } } };
+  const context = { approval: { responder: { principalId: userId } }, session: { id: "ui-research", auth: { current: { principalId: userId, principalType: "user" } } } };
   globalThis.fetch = async () => new Response('<script>window.researchInjected=true</script> Sample size: 42.', { headers: { "content-type": "text/plain" } });
   const fetched = await fetchTool.execute({ url: "https://example.com/study" }, context);
   const result = await reportTool.execute({ filename: "study.md", language: "en", title: "Study", summary: "Small sample", receipts: [fetched.receipt], findings: [{ claim: "Sample size: 42", sources: [1] }], limitations: ["Single source, not independently verified"] }, context);
@@ -1284,4 +1284,14 @@ test("provisional tool output cannot produce a completed artifact card", async (
   const props = { canRespond: () => false, isStreaming: true, onInputResponses() {}, questionsFor: () => [], message: { id: "assistant-partial", role: "assistant", parts: [part] } };
   render(app(h(AgentMessage, props)));
   assert.equal(screen.queryByRole("button", { name: "Download: draft.txt" }), null);
+});
+
+test("permissions panel loads, creates and revokes the limited grant", async () => {
+  const { PermissionsPanel } = await import("../components/chat/permissions-panel.tsx"); seed(); let grants=[];
+  const calls=fakeFetch((path,options)=>{if(!path.endsWith("/permissions"))return;if(options.method==="POST")grants=[{origin:JSON.parse(options.body).origin,expiresAt:"2030-01-01T00:00:00Z"}];if(options.method==="DELETE")grants=[];return Response.json({grants});});
+  render(app(h(PermissionsPanel,{sessionId:"chat-a",ownerProof:"proof"})));const user=userEvent.setup();await user.click(screen.getByText("Permissions for this conversation"));await screen.findByText("No active reusable permissions.");await user.type(screen.getByLabelText("HTTPS homepage"),"https://example.com");await user.click(screen.getByRole("button",{name:"Allow homepage for one hour"}));await screen.findByText(/https:\/\/example.com/);assert.ok(calls.some(c=>c.options.method==="POST"&&c.options.headers["x-tflash-owner-proof"]==="proof"));await user.click(screen.getByRole("button",{name:"Revoke"}));await screen.findByText("No active reusable permissions.");
+});
+
+test("tracked task panel distinguishes missing evidence from cancellation", async () => {
+  const {TrackedTaskPanel}=await import("../components/chat/tracked-task-panel.tsx");seed();let task={objective:"My objective",path:"out.txt",sha256:"a".repeat(64),revision:"revision",continuationBudget:0,state:"awaiting_evidence",verifiedAt:null,reason:null};fakeFetch((path,options)=>{if(!path.endsWith("/task"))return;if(options.method==="DELETE")task={...task,state:"cancelled"};return Response.json({task});});render(app(h(TrackedTaskPanel,{sessionId:"chat-a"})));const user=userEvent.setup();await user.click(screen.getByText("Track a file criterion"));await screen.findByText("Awaiting file evidence.");await user.click(screen.getByRole("button",{name:"Cancel tracking"}));await screen.findByText("Tracking cancelled.");assert.equal(screen.queryByText(/File criterion matched/),null);
 });

@@ -1,20 +1,24 @@
 import { defineTool } from "eve/tools";
-import { always } from "eve/tools/approval";
+import { webApproval, permissionOwner } from "@/agent/lib/web-approval";
+import { hasWebGrant } from "@/lib/permission-store";
+import { fetchGrantedHomepage } from "@/lib/permission-web-fetch";
 import { webFetch, type WebFetchToolOutput } from "eve/tools/web_fetch";
 import { researchFetchInputSchema, researchFetchOutputSchema } from "@/lib/research";
 import { researchOwner, sealSourceReceipt } from "@/lib/research-evidence";
 
 export default defineTool({
-  description: "Read a public HTTPS webpage for research. Returns bounded untrusted content, a retrieved-source card, and an opaque receipt for create_research_report. Ask permission before fetching; never put credentials/private data in a URL. A receipt proves retrieval by this app, not the truth of the page or a claim. Reuses Eve's DNS/IP and redirect safety checks. Text/HTML/JSON/XML only; not a PDF or browser tool.",
+  description: "Read a public HTTPS webpage for research. Returns bounded untrusted content, a retrieved-source card, and an opaque receipt for create_research_report. Ask permission before fetching; never put credentials/private data in a URL. A receipt proves retrieval by this app, not the truth of the page or a claim. Individually approved fetches use Eve DNS/IP and redirect checks; reusable homepage grants use a pinned public-IP request without redirects. Text/HTML/JSON/XML only; not a PDF or browser tool.",
   inputSchema: researchFetchInputSchema,
   outputSchema: researchFetchOutputSchema,
-  approval: always(),
+  approval: webApproval,
   availableInSubagents: false,
   label: { start: ({ url }) => `Read ${new URL(url).hostname}` },
   async execute(input, ctx) {
     const { url } = researchFetchInputSchema.parse(input);
     researchOwner(ctx); // Fail before network access if the session is unauthenticated.
-    const execution = await webFetch.execute({ url, format: "markdown", timeout: 20 }, ctx);
+    const owner = ctx.approval ? undefined : permissionOwner(ctx.session);
+    if (!ctx.approval && (!owner || !await hasWebGrant(owner, url))) throw new Error("The reusable permission is no longer active; request approval again.");
+    const execution = ctx.approval ? await webFetch.execute({ url, format: "markdown", timeout: 20 }, ctx) : await fetchGrantedHomepage(url, ctx.abortSignal, async () => !!owner && await hasWebGrant(owner, url));
     let result: WebFetchToolOutput | undefined;
     if (Symbol.asyncIterator in execution) {
       for await (const snapshot of execution) result = snapshot;

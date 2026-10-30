@@ -38,6 +38,7 @@ test("Supabase migrations apply in order with explicit grants, CAS-compatible RL
     await db.exec(`
       create role anon nologin;
       create role authenticated nologin;
+      create role service_role nologin bypassrls;
       create schema auth;
       create table auth.users (id uuid primary key);
       create function auth.uid() returns uuid
@@ -51,6 +52,11 @@ test("Supabase migrations apply in order with explicit grants, CAS-compatible RL
     for (const name of migrationNames) {
       await db.exec(await readFile(new URL(name, migrationDirectory), "utf8"));
     }
+
+    const internal = await db.query(`select has_table_privilege('anon','public.tflash_permission_grants','select') as anon_grants, has_table_privilege('authenticated','public.tflash_permission_grants','select') as auth_grants, has_table_privilege('authenticated','public.tflash_tracked_tasks','select') as auth_tasks, has_table_privilege('service_role','public.tflash_permission_grants','select') as service_grants, has_table_privilege('service_role','public.tflash_tracked_tasks','update') as service_tasks`);
+    assert.deepEqual(internal.rows[0], {anon_grants:false,auth_grants:false,auth_tasks:false,service_grants:true,service_tasks:true});
+    const protectedTables = await db.query(`select relname,relrowsecurity from pg_class where relname in ('tflash_permission_grants','tflash_tracked_tasks') order by relname`);
+    assert.deepEqual(protectedTables.rows,[{relname:'tflash_permission_grants',relrowsecurity:true},{relname:'tflash_tracked_tasks',relrowsecurity:true}]);
 
     const columns = await db.query(`
       select column_name, data_type, is_nullable
@@ -239,6 +245,7 @@ test("the chat migration enforces owner-only reads, writes and deletes with real
     await db.exec(`
       create role anon nologin;
       create role authenticated nologin;
+      create role service_role nologin bypassrls;
       create schema auth;
       create table auth.users (id uuid primary key);
       create function auth.uid() returns uuid language sql stable

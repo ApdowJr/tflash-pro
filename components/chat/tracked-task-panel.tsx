@@ -1,0 +1,167 @@
+"use client";
+import { useCallback, useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { useAppSettings } from "@/components/settings/app-settings";
+import { OWNER_PROOF_HEADER } from "@/lib/security/chat-ownership-wire";
+import type { TrackedTask } from "@/lib/tracked-task";
+export function TrackedTaskPanel({
+  sessionId,
+  ownerProof,
+}: {
+  sessionId: string;
+  ownerProof?: string;
+}) {
+  const { t } = useAppSettings();
+  const [open, setOpen] = useState(false),
+    [task, setTask] = useState<TrackedTask | null>(),
+    [objective, setObjective] = useState(""),
+    [path, setPath] = useState(""),
+    [sha256, setSha256] = useState(""),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState(false);
+  const url = `/api/chats/${encodeURIComponent(sessionId)}/task`;
+  const request = useCallback(
+    async (method: "GET" | "PUT" | "DELETE", body?: object) => {
+      setBusy(true);
+      setError(false);
+      try {
+        const r = await fetch(url, {
+          method,
+          cache: "no-store",
+          headers: {
+            ...(ownerProof ? { [OWNER_PROOF_HEADER]: ownerProof } : {}),
+            ...(method === "PUT" ? { "content-type": "application/json" } : {}),
+          },
+          ...(body ? { body: JSON.stringify(body) } : {}),
+        });
+        const result = (await r.json()) as { task?: TrackedTask | null };
+        if (!r.ok || result.task === undefined) throw new Error();
+        setTask(result.task);
+      } catch {
+        setTask(undefined);
+        setError(true);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [url, ownerProof],
+  );
+  useEffect(() => {
+    if (open) void request("GET");
+  }, [open, request]);
+  return (
+    <details
+      className="mx-auto w-full max-w-2xl rounded-lg border bg-card text-xs"
+      onToggle={(e) => setOpen(e.currentTarget.open)}
+    >
+      <summary className="min-h-11 cursor-pointer px-3 py-3">
+        {t("trackedTaskTitle")}
+      </summary>
+      {open ? (
+        <div className="space-y-3 p-3 pt-0">
+          <p>{t("trackedTaskDescription")}</p>
+          <p className="text-muted-foreground">{t("trackedTaskLimit")}</p>
+          {error ? (
+            <p role="alert" className="text-destructive">
+              {t("trackedTaskUnavailable")}
+            </p>
+          ) : null}
+          {task ? (
+            <div className="space-y-1 break-words" role="status">
+              <p>
+                <strong>{task.objective}</strong>
+              </p>
+              <p>
+                {task.path} · SHA-256:{" "}
+                <span className="break-all">{task.sha256}</span>
+              </p>
+              <p>
+                {t(
+                  task.state === "criterion_matched"
+                    ? "trackedTaskMatched"
+                    : task.state === "cancelled"
+                      ? "trackedTaskCancelled"
+                      : "trackedTaskAwaiting",
+                )}
+              </p>
+              {task.reason ? <p>{task.reason}</p> : null}
+              {task.verifiedAt ? (
+                <p>
+                  {t("trackedTaskVerifiedAt")}{" "}
+                  {new Date(task.verifiedAt).toLocaleString()}
+                </p>
+              ) : null}
+              {task.state === "awaiting_evidence" ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void request("DELETE")}
+                >
+                  {t("trackedTaskCancel")}
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+          <form
+            className="space-y-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void request("PUT", {
+                objective,
+                path,
+                sha256,
+                continuationBudget: 0,
+              });
+            }}
+          >
+            <label className="flex flex-col gap-1">
+              {t("trackedTaskObjective")}
+              <input
+                className="min-h-11 rounded-md border bg-background px-2"
+                required
+                maxLength={500}
+                value={objective}
+                onChange={(e) => setObjective(e.target.value)}
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              {t("trackedTaskPath")}
+              <input
+                className="min-h-11 rounded-md border bg-background px-2"
+                required
+                maxLength={200}
+                placeholder="output.txt"
+                value={path}
+                onChange={(e) => setPath(e.target.value)}
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              {t("trackedTaskHash")}
+              <input
+                className="min-h-11 rounded-md border bg-background px-2"
+                required
+                pattern="[0-9a-fA-F]{64}"
+                value={sha256}
+                onChange={(e) => setSha256(e.target.value)}
+              />
+            </label>
+            <Button type="submit" size="sm" disabled={busy}>
+              {t("trackedTaskSave")}
+            </Button>
+          </form>
+          <Button
+            size="sm"
+            type="button"
+            variant="outline"
+            disabled={busy}
+            onClick={() => void request("GET")}
+          >
+            {t("permissionsRefresh")}
+          </Button>
+        </div>
+      ) : null}
+    </details>
+  );
+}
