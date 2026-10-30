@@ -674,3 +674,27 @@ test("an active turn can still be explicitly steered without erasing its dispatc
   await React.act(async () => original.resolve());
   await waitFor(() => assert.equal(window.sessionStorage.getItem("tflash:dispatch-review:v1:supabase:prepare-user:owned-chat"),null));
 });
+
+test("tracked manual continuation reserves and begins before the real chat send path", async () => {
+  const sends=seed(); let attempt=null; const steps=[];
+  const task={objective:'My objective',path:'out.txt',sha256:'a'.repeat(64),revision:'de208dd0-70ac-4a46-a010-7da9e62ae126',continuationBudget:1,state:'awaiting_evidence',verifiedAt:null,reason:null};
+  fakeFetch((path,options)=>{
+    if(path.endsWith('/task')) return Response.json({task});
+    if(!path.endsWith('/task/continuations')) return;
+    if(options.method==='GET') return Response.json({attempt,history:[]});
+    const input=JSON.parse(options.body); steps.push(input.action);
+    if(input.action==='reserve') attempt={attemptId:input.attemptId,state:'reserved',createdAt:new Date().toISOString()};
+    if(input.action==='begin') attempt={...attempt,state:'dispatching'};
+    return Response.json({ok:true});
+  });
+  globalThis.__prepareAgent.send=async(message,options)=>{steps.push('send');sends.push({message,options});};
+  render(app({sessionId:'owned-chat'})); const user=userEvent.setup();
+  await user.click(await screen.findByText('Track a file criterion'));
+  await user.click(await screen.findByRole('checkbox',{name:/explicitly authorize one new turn/}));
+  await user.click(screen.getByRole('button',{name:'Start one budgeted turn'}));
+  await waitFor(()=>assert.equal(sends.length,1));
+  assert.deepEqual(steps,['reserve','begin','send']);
+  assert.match(sends[0].message,new RegExp(`Tracked continuation attempt: ${attempt.attemptId}`));
+  assert.match(sends[0].message,/not proof of execution or an idempotency key/);
+  await screen.findByText(/An attempt requires review/);
+});

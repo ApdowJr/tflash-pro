@@ -56,7 +56,7 @@ provider connectivity as documented in the README. Migration files are included,
 ## Remaining security and recovery caveats
 
 - Grant and revoke mutations now use per-origin revision checks; revoked/expired rows remain as tombstones so stale tabs cannot recreate a permission. Refresh after a conflict. This relies on the follow-up revision migration being applied to the same service store. A revoke cannot recall an already-started request, and individually approved fetches use their original policy. Permission snapshots fail if a conversation has over 1,000 distinct stored origins or the backend truncates results, but the independent revoke-all endpoint can still revoke existing homepage grants. Its session epoch is advanced under a database row lock shared with grant changes, so older pending mutations fail. Do not delete tombstones or epochs while stale clients or requests can still exist. The Next API and service store must both be reachable for revocation; if the request fails or its response is lost, revocation is unconfirmed and a grant may remain valid until its one-hour expiry. Already-started fetches cannot be recalled. All Next and Eve instances must be upgraded before relying on the epoch protocol; old application versions can bypass it.
-- An explicit continuation is a new model turn, not a durable execution ledger; the user must inspect ambiguous effects. Eve workflow steps can retry, and external systems may not expose idempotency keys or status. Eve 0.83.2's MCP provided-argument callback can receive a replay-stable callId for the same tool call, but that is not a cross-turn operation ID or evidence that a remote MCP server honors a key. The current generic connection wrapper injects no idempotency key and exposes no integration-specific reconciliation contract. Support for particular remote operations is unverified. Without integration-specific reconciliation and a durable attempt ledger, safely automating cross-turn continuation is not established; no uncertain action is automatically resubmitted by this application. Manual continuation requires a review acknowledgement, not a claim that side effects have been reconciled.
+- The older plan-card continuation is a new model turn outside the tracked-task attempt ledger; the user must inspect ambiguous effects. Eve workflow steps can retry, and external systems may not expose idempotency keys or status. Eve 0.83.2's MCP provided-argument callback can receive a replay-stable callId for the same tool call, but that is not a cross-turn operation ID or evidence that a remote MCP server honors a key. The current generic connection wrapper injects no idempotency key and exposes no integration-specific reconciliation contract. Support for particular remote operations is unverified. The manual attempt ledger does not provide integration-specific reconciliation, remote turn identity, or global execution fencing; safely automating cross-turn continuation is not established; no uncertain action is automatically resubmitted by this application. Manual continuation requires a review acknowledgement, not a claim that side effects have been reconciled.
 - The optional service store uses a broad service-role key. Restrict distribution, rotate it through the deployment secret manager, and validate project identity and permissions before release. Hosted Supabase, the Eve workflow world, sandbox and actual providers have not been exercised by the isolated SQL/mocked tests.
 - Changing the internal task and permissions mutation payloads is incompatible with a pre-update open tab. Reload tabs on release. A conflict preserves the form draft and requires refresh. Tracking cancellation and stopping an Eve turn are separate operations.
 
@@ -82,7 +82,7 @@ isolated Next/Eve test environment with its own workflow storage and sandbox is
 also required; otherwise the project tests database behavior only.
 
 After separate approval for the hosted migration application, reconcile the
-migration history and apply the four permission/task migrations to that project
+migration history and apply the five permission/task migrations to that project
 only. Validate real PostgREST RPC privileges and error shapes, session ownership,
 concurrent transactions and grant/revoke/epoch races, expiry, missing service
 credentials, and coherent Next/Eve rollout. Exercise actual Eve fetch execution,
@@ -162,3 +162,32 @@ a practical recovery aid only: sessionStorage can be unavailable or cleared,
 is tab-local, and is neither a remote idempotency key nor a cross-tab lock.
 Unlocking does not prove reconciliation. The UI never automatically resends
 an uncertain turn.
+
+
+## Manual budgeted continuation (local implementation)
+
+The tracked-task panel accepts 0–3 manually initiated turns. A service-only
+SQL reservation atomically decrements the task's budget, changes its revision,
+and stores an immutable attempt identity. A second transition checks the
+current task revision and state and can be used only once. Cancellation or
+replacement before that transition blocks dispatch. After the transition,
+cancellation cannot recall an already-issued or about-to-be-issued browser
+request. A response lost at either transition is never retried automatically.
+The pending record survives tab reloads and task replacement and prevents a
+second **budgeted** start until the owner supplies a review note. Reservation
+advances the permission epoch under the web-decision lock, invalidating prior
+calls and requiring individual homepage approval while the attempt is pending;
+an already-consumed request cannot be recalled. The record does not
+block normal chat, prove a turn ended or reconcile external effects. Notes are
+service-only and owner-scoped; avoid secrets. The last 20 are shown. A 2,000
+record cap fails closed rather than deleting old replay tombstones. The
+transcript label is not a provider idempotency key. No automatic scheduling,
+background operation or spend cap is implied.
+
+The next migration is ordered after `20261030150000`. Both Next and Eve use
+the same server-only service-role store, but the new manual dispatch route is
+in Next and its parent turn is executed by Eve. Missing schema or credentials
+make the new path unavailable, not automatically approved. Deploy mixed
+versions only with explicit operational precautions: older tabs and instances
+can still use ordinary chat, so the ledger is not a global execution fence.
+No hosted migrations, credentials or production services were changed.

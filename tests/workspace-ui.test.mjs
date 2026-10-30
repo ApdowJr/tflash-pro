@@ -1439,3 +1439,80 @@ test("emergency revocation interrupts a stuck list request and ignores its late 
   await React.act(async () => { release(Response.json({epoch:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",grants:[{origin:"https://old.example",expiresAt:"2030-01-01T00:00:00Z",revision:"11111111-1111-4111-8111-111111111111"}]})); });
   assert.equal(screen.queryByText(/https:\/\/old.example/),null);
 });
+
+test("budgeted continuation reserves and begins once, then requires a recorded human review", async () => {
+  const { TaskContinuation } = await import("../components/chat/task-continuation.tsx"); seed();
+  const calls=[]; let attempt=null, history=[], sends=0;
+  fakeFetch((path, options) => {
+    if (!path.endsWith('/task/continuations')) return;
+    if (options.method==='GET') return Response.json({attempt,history});
+    const input=JSON.parse(options.body); calls.push(input.action);
+    if(input.action==='reserve') attempt={attemptId:input.attemptId,state:'reserved',createdAt:new Date().toISOString()};
+    if(input.action==='begin') attempt={...attempt,state:'dispatching'};
+    if(input.action==='review') {history=[{attemptId:attempt.attemptId,reviewedAt:new Date().toISOString(),note:input.note}]; attempt=null;}
+    return Response.json({ok:true});
+  });
+  const task={objective:'Task',path:'out.txt',sha256:'a'.repeat(64),revision:'r1',continuationBudget:2,state:'awaiting_evidence',verifiedAt:null,reason:null};
+  render(app(h(TaskContinuation,{sessionId:'chat-a',task,disabled:false,onContinue:async()=>{calls.push('send');sends++;},onRefreshTask:()=>{}})));
+  const user=userEvent.setup();
+  const authorize=await screen.findByRole('checkbox',{name:/explicitly authorize one new turn/});
+  assert.equal(screen.getByRole('button',{name:'Start one budgeted turn'}).disabled,true);
+  await user.click(authorize); await user.click(screen.getByRole('button',{name:'Start one budgeted turn'}));
+  await screen.findByText(/An attempt requires review/);
+  assert.deepEqual(calls,['reserve','begin','send']); assert.equal(sends,1);
+  assert.equal(screen.queryByRole('button',{name:'Start one budgeted turn'}),null);
+  await user.click(screen.getByRole('checkbox',{name:/I inspected the conversation/}));
+  assert.equal(screen.getByRole('button',{name:'Record my review'}).disabled,true);
+  await user.type(screen.getByLabelText(/What did you check/),'Checked service; result remains unknown.');
+  await user.click(screen.getByRole('button',{name:'Record my review'}));
+  await screen.findByText('Checked service; result remains unknown.');
+  assert.deepEqual(calls,['reserve','begin','send','review']); assert.equal(sends,1);
+});
+
+test("an uncertain begin is never sent or retried automatically and survives a component reload", async () => {
+  const { TaskContinuation } = await import("../components/chat/task-continuation.tsx"); seed();
+  let attempt=null, sends=0, begins=0;
+  fakeFetch((path, options) => {
+    if (!path.endsWith('/task/continuations')) return;
+    if(options.method==='GET') return Response.json({attempt,history:[]});
+    const input=JSON.parse(options.body);
+    if(input.action==='reserve') { attempt={attemptId:input.attemptId,state:'reserved',createdAt:new Date().toISOString()}; return Response.json({ok:true}); }
+    if(input.action==='begin') { begins++; attempt={...attempt,state:'dispatching'}; return Response.json({error:'response lost'},{status:503}); }
+    throw new Error('unexpected mutation');
+  });
+  const task={objective:'Task',path:'out.txt',sha256:'a'.repeat(64),revision:'r1',continuationBudget:1,state:'awaiting_evidence',verifiedAt:null,reason:null};
+  const props={sessionId:'chat-a',task,disabled:false,onContinue:async()=>{sends++;},onRefreshTask:()=>{}};
+  const rendered=render(app(h(TaskContinuation,props))); const user=userEvent.setup();
+  await user.click(await screen.findByRole('checkbox',{name:/explicitly authorize/}));
+  await user.click(screen.getByRole('button',{name:'Start one budgeted turn'}));
+  await screen.findByText(/An attempt requires review/); assert.equal(sends,0); assert.equal(begins,1);
+  rendered.unmount(); render(app(h(TaskContinuation,props)));
+  await screen.findByText(/An attempt requires review/); assert.equal(sends,0); assert.equal(begins,1);
+  assert.equal(screen.queryByRole('button',{name:'Start one budgeted turn'}),null);
+});
+
+test("continuation does not send after cancellation or unmount while begin response is delayed", async () => {
+  const { TaskContinuation } = await import("../components/chat/task-continuation.tsx"); seed();
+  let attempt=null, release, begins=0, sends=0;
+  const delayed=new Promise(resolve=>{release=resolve;});
+  fakeFetch((path, options) => {
+    if(!path.endsWith('/task/continuations')) return;
+    if(options.method==='GET') return Response.json({attempt,history:[]});
+    const input=JSON.parse(options.body);
+    if(input.action==='reserve') {attempt={attemptId:input.attemptId,state:'reserved',createdAt:new Date().toISOString()};return Response.json({ok:true});}
+    if(input.action==='begin') {begins++;attempt={...attempt,state:'dispatching'};return delayed;}
+  });
+  const task={objective:'Task',path:'out.txt',sha256:'a'.repeat(64),revision:'r1',continuationBudget:1,state:'awaiting_evidence',verifiedAt:null,reason:null};
+  const props={sessionId:'chat-a',task,disabled:false,onContinue:async()=>{sends++;},onRefreshTask:()=>{}};
+  const view=render(app(h(TaskContinuation,props))); const user=userEvent.setup();
+  await user.click(await screen.findByRole('checkbox',{name:/explicitly authorize/}));
+  await user.click(screen.getByRole('button',{name:'Start one budgeted turn'}));
+  await waitFor(()=>assert.equal(begins,1));
+  // Another part of the UI observes an active/stopped turn before the reply.
+  view.rerender(app(h(TaskContinuation,{...props,disabled:true})));
+  await React.act(async()=>release(Response.json({ok:true})));
+  await screen.findByText(/An attempt requires review/); assert.equal(sends,0);
+  assert.equal(screen.getByRole('button',{name:'Record my review'}).disabled,true);
+  view.unmount();
+  assert.equal(sends,0); assert.equal(begins,1);
+});

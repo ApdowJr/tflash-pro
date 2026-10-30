@@ -3,13 +3,18 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useAppSettings } from "@/components/settings/app-settings";
 import { OWNER_PROOF_HEADER } from "@/lib/security/chat-ownership-wire";
+import { TaskContinuation } from "./task-continuation";
 import type { TrackedTask } from "@/lib/tracked-task";
 export function TrackedTaskPanel({
   sessionId,
   ownerProof,
+  continuationDisabled,
+  onContinue,
 }: {
   sessionId: string;
   ownerProof?: string;
+  continuationDisabled: boolean;
+  onContinue: (attemptId: string) => Promise<void>;
 }) {
   const { t } = useAppSettings();
   const [open, setOpen] = useState(false),
@@ -17,12 +22,13 @@ export function TrackedTaskPanel({
     [objective, setObjective] = useState(""),
     [path, setPath] = useState(""),
     [sha256, setSha256] = useState(""),
+    [budget, setBudget] = useState(0),
     [busy, setBusy] = useState(false),
     [error, setError] = useState<"unavailable" | "conflict">();
   const url = `/api/chats/${encodeURIComponent(sessionId)}/task`;
   const pending = useRef<AbortController | undefined>(undefined);
   useEffect(() => {
-    setTask(undefined); setError(undefined); setBusy(false); setObjective(""); setPath(""); setSha256("");
+    setTask(undefined); setError(undefined); setBusy(false); setObjective(""); setPath(""); setSha256(""); setBudget(0);
     return () => { const active = pending.current; pending.current = undefined; active?.abort(); };
   }, [url, ownerProof]);
   const request = useCallback(
@@ -116,13 +122,14 @@ export function TrackedTaskPanel({
               ) : null}
             </div>
           ) : null}
+          {task ? <TaskContinuation sessionId={sessionId} ownerProof={ownerProof} task={task} disabled={continuationDisabled} onContinue={onContinue} onRefreshTask={() => void request("GET")} /> : null}
           <form
             className="space-y-2"
             onSubmit={(e) => {
               e.preventDefault();
               if (task === undefined) return;
               void request("PUT", {
-                task: { objective, path, sha256, continuationBudget: 0 },
+                task: { objective, path, sha256, continuationBudget: budget },
                 expectedRevision: task?.revision ?? null,
               });
             }}
@@ -157,6 +164,11 @@ export function TrackedTaskPanel({
                 value={sha256}
                 onChange={(e) => setSha256(e.target.value)}
               />
+            </label>
+            <label className="flex flex-col gap-1">{t("boundedContinuationBudget")}
+              <select className="min-h-11 rounded-md border bg-background px-2" value={budget} onChange={(e) => setBudget(Number(e.target.value))}>
+                {[0, 1, 2, 3].map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
             </label>
             <Button type="submit" size="sm" disabled={busy || task === undefined}>
               {t("trackedTaskSave")}

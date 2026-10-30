@@ -1,10 +1,27 @@
-# Bounded, reconciled task continuation — design only
+# Bounded continuation: implemented manual path and remaining design
 
-No automatic multi-turn scheduler, operation ledger, or provider adapter in this
-document exists yet. The existing `continuationBudget` column is not enforced
-for turns, and the UI currently sets it to zero. A file digest checks bytes at
-one moment; a completed turn or model-authored plan does not verify an objective.
-Do not enable unattended continuation by changing the budget field alone.
+The tracked-task panel can explicitly authorize 0–3 **manual** starts. Each
+attempt atomically spends one budget and records a unique reserved identity;
+a second serialized transition marks dispatching before the browser sends one
+new turn. Cancellation, replacement or a changed criterion revision before
+that transition fences it. A pending attempt blocks another budgeted start
+across tabs, including after a lost response. Reservation advances the permission epoch, invalidating previous automatic web
+call decisions, and homepage fetches require individual approval while the
+attempt is pending. The owner must confirm the turn has stopped, inspect
+external services and save a review note; this is not proof of a remote effect. Never
+resend an uncertain attempt automatically. The last 20 human review notes are
+visible in the panel; up to 2,000 attempt tombstones are retained per chat.
+
+This does not implement an automatic multi-turn scheduler, cross-tab lock on
+ordinary chat, a provider adapter, a hard spend cap or remote turn identity.
+The browser includes the attempt UUID as a transcript label, not an Eve
+idempotency key or authoritative correlation. A stop after the dispatching
+transition cannot recall an already-started request. A file digest checks bytes
+at one moment; a completed turn or model-authored plan does not verify an
+objective. Do not enable unattended continuation by changing the budget alone.
+
+The rest of this document describes requirements for future **automatic**
+continuation, not guarantees of the manual path.
 
 ## Required safety properties
 

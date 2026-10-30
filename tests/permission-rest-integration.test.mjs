@@ -31,7 +31,7 @@ test("real client HTTP to isolated SQL enforces emergency revoke despite listing
   const oldUrl = process.env.TFLASH_PERMISSIONS_SUPABASE_URL, oldKey = process.env.TFLASH_PERMISSIONS_SERVICE_ROLE_KEY;
   try {
     await db.exec("create role anon; create role authenticated; create role service_role bypassrls;");
-    for (const name of ["20261030120000_create_tflash_permission_grants.sql", "20261030130000_permission_grant_revisions.sql", "20261030140000_permission_emergency_revocation.sql", "20261030150000_permission_call_decisions.sql"]) {
+    for (const name of ["20261030120000_create_tflash_permission_grants.sql", "20261030130000_permission_grant_revisions.sql", "20261030140000_permission_emergency_revocation.sql", "20261030150000_permission_call_decisions.sql", "20261030160000_task_continuation_attempts.sql"]) {
       await db.exec(await readFile(new URL(`../supabase/migrations/${name}`, import.meta.url), "utf8"));
     }
     const calls = {
@@ -121,6 +121,27 @@ test("real client HTTP to isolated SQL enforces emergency revoke despite listing
     assert.equal(await web.approval(fresh),"not-applicable");
     assert.equal((await web.execute({url:"https://example.com/"},fresh)).content,"fixture page");
     assert.equal(sockets,2);
+
+    // A continuation reservation invalidates an already approved web call
+    // while DNS is paused and forces individual approval until review.
+    const held = ctx("before-continuation");
+    assert.equal(await web.approval(held),"not-applicable");
+    blockDns = true;
+    const heldStarted = new Promise(resolve => { dnsStarted = resolve; });
+    const heldFetch = web.execute({url:"https://example.com/"},held);
+    await heldStarted;
+    const { randomUUID } = await import("node:crypto");
+    const taskRevision = randomUUID(), attemptId = randomUUID();
+    await db.query(`insert into public.tflash_tracked_tasks values ('supabase','alice','session-a',$1,'test','out.txt',$2,1,'awaiting_evidence',null,null)`,[taskRevision,'a'.repeat(64)]);
+    assert.equal((await db.query(`select public.tflash_reserve_continuation('supabase','alice','session-a',$1,$2) as value`,[taskRevision,attemptId])).rows[0].value,true);
+    resumeDns();
+    await assert.rejects(heldFetch,/no longer active/);
+    assert.equal(sockets,2);
+    assert.equal(await web.approval(ctx("while-pending")),"user-approval");
+    assert.equal((await db.query(`select public.tflash_review_continuation('supabase','alice','session-a',$1,'Checked external effects carefully.') as value`,[attemptId])).rows[0].value,true);
+    assert.equal(await web.approval(held),"user-approval", "review cannot revive a pre-reservation decision");
+    blockDns = false;
+    assert.equal(await web.approval(ctx("after-review")),"not-applicable");
     failList = true;
     assert.equal((await permissions.GET(req("GET"),route)).status,503);
     assert.equal(await hasWebGrant(owner,"https://example.com/"), true);
