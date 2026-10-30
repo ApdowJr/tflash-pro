@@ -6,7 +6,8 @@ const tables = new Map();
 let unavailable = false,
   listUnavailable = false,
   fetches = 0,
-  pendingGrant;
+  pendingGrant,
+  pendingTaskRead;
 globalThis.__db = () => ({
   rpc(name, p) {
     const result = (async () => {
@@ -93,6 +94,7 @@ globalThis.__db = () => ({
         return this;
       },
       async maybeSingle() {
+        if (name === "tflash_tracked_tasks" && pendingTaskRead) await pendingTaskRead;
         const r = await this;
         return { ...r, data: r.data?.[0] ?? null };
       },
@@ -485,4 +487,106 @@ test("an interrupted reusable-grant check cannot approve or start a fetch after 
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(fetches, previousFetches);
   } finally { pendingGrant = undefined; }
+});
+
+test("cancellation while sandbox initialization hangs never reads or settles the task", async () => {
+  tables.clear();
+  await tasks.PUT(req("PUT", "supabase:alice", { task: definition, expectedRevision: null }), route);
+  const before = await task();
+  const controller = new AbortController(), ctx = { ...context(), abortSignal: controller.signal };
+  let started, release, reads = 0;
+  const ready = new Promise((resolve) => { started = resolve; });
+  ctx.getSandbox = () => { started(); return new Promise((resolve) => { release = resolve; }); };
+  const pending = verify.execute({}, ctx);
+  await ready;
+  controller.abort(new DOMException("Cancelled", "AbortError"));
+  await assert.rejects(pending, { name: "AbortError" });
+  release({ readFile: async () => { reads++; return stream("correct file"); } });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(reads, 0);
+  assert.deepEqual(await task(), before);
+});
+
+test("a late sandbox stream is cancelled and cannot settle verification after stop", async () => {
+  tables.clear();
+  await tasks.PUT(req("PUT", "supabase:alice", { task: definition, expectedRevision: null }), route);
+  const before = await task();
+  const controller = new AbortController(), ctx = { ...context(), abortSignal: controller.signal };
+  let started, release, cancelled = 0;
+  const ready = new Promise((resolve) => { started = resolve; });
+  ctx.getSandbox = async () => ({ readFile: () => { started(); return new Promise((resolve) => { release = resolve; }); } });
+  const pending = verify.execute({}, ctx);
+  await ready;
+  controller.abort(new DOMException("Cancelled", "AbortError"));
+  await assert.rejects(pending, { name: "AbortError" });
+  release(new ReadableStream({ cancel() { cancelled++; } }));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(cancelled, 1);
+  assert.deepEqual(await task(), before);
+});
+
+test("a stuck file read and stuck stream cancellation do not delay stop or change task evidence", async () => {
+  tables.clear();
+  await tasks.PUT(req("PUT", "supabase:alice", { task: definition, expectedRevision: null }), route);
+  const before = await task();
+  const controller = new AbortController(), ctx = { ...context(), abortSignal: controller.signal };
+  let started, cancelled = 0;
+  const ready = new Promise((resolve) => { started = resolve; });
+  const uncooperative = new ReadableStream({
+    pull() { return new Promise(() => {}); },
+    cancel() { cancelled++; return new Promise(() => {}); },
+  });
+  const originalGetReader = uncooperative.getReader.bind(uncooperative);
+  uncooperative.getReader = () => {
+    const reader = originalGetReader(), originalRead = reader.read.bind(reader);
+    reader.read = () => { started(); return originalRead(); };
+    return reader;
+  };
+  ctx.getSandbox = async () => ({ readFile: async () => uncooperative });
+  const pending = verify.execute({}, ctx);
+  await ready;
+  controller.abort(new DOMException("Cancelled", "AbortError"));
+  await assert.rejects(pending, { name: "AbortError" });
+  assert.equal(cancelled, 1);
+  assert.deepEqual(await task(), before);
+});
+
+test("verification deadline fails without recording incomplete evidence", async () => {
+  tables.clear();
+  await tasks.PUT(req("PUT", "supabase:alice", { task: definition, expectedRevision: null }), route);
+  const before = await task(), ctx = context();
+  ctx.getSandbox = () => new Promise(() => {});
+  const realTimeout = AbortSignal.timeout;
+  try {
+    // Accelerate the real 20-second deadline without starting any remote service.
+    AbortSignal.timeout = () => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(new DOMException("Timed out", "TimeoutError")), 10);
+      return controller.signal;
+    };
+    await assert.rejects(verify.execute({}, ctx), { name: "TimeoutError" });
+  } finally { AbortSignal.timeout = realTimeout; }
+  assert.deepEqual(await task(), before);
+});
+
+
+test("cancellation during task lookup cannot start a sandbox or settle a late result", async () => {
+  tables.clear();
+  await tasks.PUT(req("PUT", "supabase:alice", { task: definition, expectedRevision: null }), route);
+  const before = await task();
+  const controller = new AbortController(), ctx = { ...context(), abortSignal: controller.signal };
+  let release, sandboxOpens = 0;
+  pendingTaskRead = new Promise((resolve) => { release = resolve; });
+  ctx.getSandbox = async () => { sandboxOpens++; return { readFile: async () => stream("correct file") }; };
+  try {
+    const pending = verify.execute({}, ctx);
+    controller.abort(new DOMException("Cancelled", "AbortError"));
+    await assert.rejects(pending, { name: "AbortError" });
+    release();
+    await pendingTaskRead;
+    pendingTaskRead = undefined;
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(sandboxOpens, 0);
+    assert.deepEqual(await task(), before);
+  } finally { pendingTaskRead = undefined; }
 });

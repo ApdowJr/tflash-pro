@@ -3,6 +3,7 @@ import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { permissionOwner } from "@/agent/lib/web-approval";
 import { getTask, settleTask } from "@/lib/tracked-task-store";
+import { waitWithAbort } from "@/lib/abortable";
 export default defineTool({
   description:
     "Verify the user-defined tracked task's exact file SHA-256 criterion in the current sandbox. Only the user defines criteria in the task panel. This checks one file at one moment, not the broader objective.",
@@ -11,7 +12,9 @@ export default defineTool({
   async execute(_input, ctx) {
     const owner = permissionOwner(ctx.session);
     if (!owner) throw new Error("An authenticated task owner is required.");
-    const task = await getTask(owner);
+    const signal = AbortSignal.any([ctx.abortSignal, AbortSignal.timeout(20_000)]);
+    signal.throwIfAborted();
+    const task = await waitWithAbort(getTask(owner), signal);
     if (!task || task.state === "cancelled")
       return {
         status: "unavailable",
@@ -20,18 +23,32 @@ export default defineTool({
     let reason = "The expected file was not found.",
       matched = false;
     try {
-      const sandbox = await ctx.getSandbox();
-      const stream = await sandbox.readFile({
+      signal.throwIfAborted();
+      const sandbox = await waitWithAbort(ctx.getSandbox(), signal);
+      signal.throwIfAborted();
+      const read = sandbox.readFile({
         path: `/workspace/${task.path}`,
-        abortSignal: ctx.abortSignal,
+        abortSignal: signal,
       });
+      let stream;
+      try {
+        stream = await waitWithAbort(read, signal);
+        signal.throwIfAborted();
+      } catch (error) {
+        // A provider can ignore its signal and resolve after the caller has
+        // stopped waiting. Release that stream without treating it as proof.
+        void read.then((late) => {
+          if (late) void late.cancel().catch(() => {});
+        }, () => {});
+        throw error;
+      }
       if (stream) {
         const reader = stream.getReader(),
           hash = createHash("sha256");
         let size = 0;
         try {
           while (true) {
-            const { done, value } = await reader.read();
+            const { done, value } = await waitWithAbort(reader.read(), signal);
             if (done) break;
             size += value.byteLength;
             if (size > 5 * 1024 * 1024)
@@ -45,12 +62,14 @@ export default defineTool({
             ? "The exact file digest matched at verification time."
             : "The file digest did not match.";
         } finally {
-          await reader.cancel().catch(() => {});
+          // Cancellation must not wait forever for an uncooperative stream.
+          // It is best-effort; never claim that the provider actually stopped.
+          void reader.cancel().catch(() => {});
           reader.releaseLock();
         }
       }
     } catch (error) {
-      if (ctx.abortSignal.aborted) throw error;
+      if (signal.aborted) throw signal.reason;
       reason =
         error instanceof Error &&
         error.message ===
@@ -58,7 +77,7 @@ export default defineTool({
           ? error.message
           : "The file could not be read.";
     }
-    ctx.abortSignal.throwIfAborted();
+    signal.throwIfAborted();
     if (
       !(await settleTask(
         owner,

@@ -182,7 +182,10 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
       if (hasSubmittedMessage.current && session) replaceSessionRoute(session.sessionId);
     },
   });
-  const currentPlan = latestAgentPlan(agent.data.messages);
+  // Eve replaces the messages/events arrays when their contents change.
+  // Reuse projections across unrelated UI updates without retaining a stale
+  // review when a new transcript or turn event arrives.
+  const currentPlan = useMemo(() => latestAgentPlan(agent.data.messages), [agent.data.messages]);
   const isBusy = agent.status === "submitted" || agent.status === "streaming";
   const isResuming = agent.status === "resuming";
   const isEmpty = agent.data.messages.length === 0;
@@ -193,7 +196,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   const showPendingThinking =
     isBusy &&
     (agent.status === "submitted" || lastMessage?.role !== "assistant" || isPendingAssistantShell);
-  const latest = latestTurn(agent.events);
+  const latest = useMemo(() => latestTurn(agent.events), [agent.events]);
   const turnFailure = isBusy || isResuming || latest?.outcome !== "failed" ? undefined : getLatestTurnFailure(agent.events, latest.turnId);
   const errorMessage = cancellationError ?? agent.error?.message ?? turnFailure;
   const turnOutcome = latest?.outcome;

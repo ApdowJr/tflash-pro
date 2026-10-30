@@ -567,3 +567,41 @@ test("a stop response arriving after the terminal turn releases the composer", a
   await waitFor(() => assert.equal(screen.getByRole("button", { name: "Send" }).disabled, false));
   assert.equal(sends.length, 0);
 });
+
+test("unrelated renders preserve reviewed continuation but a changed transcript requires review again", async () => {
+  seed();
+  const plan = { title: "Build feature", steps: [{ id: "one", title: "Implement", status: "pending" }] };
+  const part = { type: "dynamic-tool", toolName: "update_plan", toolCallId: "p", state: "output-available", output: { kind: "tflash-plan", version: 1, plan } };
+  globalThis.__prepareAgent.data.messages = [{ id: "m", role: "assistant", parts: [part] }];
+  fakeFetch(() => undefined);
+  const rendered = render(app({ sessionId: "owned-chat" }));
+  const user = userEvent.setup();
+  await user.click((await screen.findAllByLabelText("Task plan")).find((element) => element.tagName === "SUMMARY"));
+  await user.click(screen.getByRole("button", { name: "Continue task" }));
+  const checkbox = screen.getByRole("checkbox", { name: /I reviewed the recent activity/ });
+  await user.click(checkbox);
+  rendered.rerender(app({ sessionId: "owned-chat" }));
+  assert.equal(screen.getByRole("checkbox", { name: /I reviewed the recent activity/ }).checked, true);
+  globalThis.__prepareAgent.data.messages = [{ id: "m", role: "assistant", parts: [{ ...part, output: { ...part.output, plan: { ...plan, title: "Revised feature" } } }] }];
+  rendered.rerender(app({ sessionId: "owned-chat" }));
+  await waitFor(() => assert.equal(screen.queryByRole("checkbox", { name: /I reviewed the recent activity/ }), null));
+  assert.ok(screen.getByRole("button", { name: "Continue task" }));
+});
+
+test("turn projection is not rescanned on unrelated renders and updates on new events", async () => {
+  seed(); let scans = 0;
+  const initial = [{ type: "turn.started", data: { turnId: "turn-a", sequence: 1 } }];
+  globalThis.__prepareAgent.events = new Proxy(initial, { get(target, prop, receiver) {
+    if (prop === "forEach") return (...args) => { scans++; return target.forEach(...args); };
+    return Reflect.get(target, prop, receiver);
+  } });
+  fakeFetch(() => undefined);
+  const rendered = render(app({ sessionId: "owned-chat" }));
+  await waitFor(() => assert.ok(scans > 0));
+  const before = scans;
+  rendered.rerender(app({ sessionId: "owned-chat" }));
+  assert.equal(scans, before);
+  globalThis.__prepareAgent.events = [...initial, { type: "turn.cancelled", data: { turnId: "turn-a", sequence: 1 } }];
+  rendered.rerender(app({ sessionId: "owned-chat" }));
+  await waitFor(() => assert.ok(screen.getByText(/The turn stopped before finishing/)));
+});

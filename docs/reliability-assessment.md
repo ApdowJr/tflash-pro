@@ -122,3 +122,16 @@ plus the approval and pre-socket paths; they do not prove hosted latency or
 cancellation behavior. Already-started network requests cannot be recalled.
 See [the separate hosted validation cost plan](hosted-validation-plan.md) for the
 proposed $0 configuration and required prior approvals.
+
+Local follow-up bounds sandbox evidence verification to 20 seconds and observes
+cancellation while waiting on task lookup, sandbox initialization and stream
+reads. Late streams are cancelled best-effort; a timeout or cancellation before
+settlement does not become a mismatch or match. A settlement already dispatched
+to the database can still have an uncertain result and cannot be rolled back by
+this change. Stream reconnect now recognizes case-insensitive and `Headers`
+Retry-After values and rejects noncanonical/malformed dates instead of retrying
+early. Turn and plan projections are memoized across unchanged Eve snapshots;
+new transcript/turn snapshots invalidate them. See the separate
+[bounded-continuation design](bounded-continuation-design.md) and
+[preview-control investigation](preview-control-investigation.md). These are
+not a scheduler, hosted proof or authorization to push/deploy.

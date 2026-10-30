@@ -102,3 +102,25 @@ Sources: [pricing](https://supabase.com/pricing),
 5. Review usage and clean local secrets. Deletion is irreversible and requires
    separate explicit approval; it stops new project usage but cannot erase prior
    billed usage. Never delete or pause production or unrelated projects.
+
+## How to inspect `lp` without changing anything
+
+1. Sign in to the Supabase dashboard and select the **lp** organization from
+   the organization selector. Check the organization name and ID carefully.
+2. Open the organization's **Billing** page and look at **Subscription Plan**.
+   Read the currently displayed plan; do **not** click Change subscription plan
+   or confirm an upgrade. [Supabase billing instructions](https://supabase.com/docs/guides/platform/manage-your-subscription)
+   locate this section on the organization billing page.
+3. On the organization's **Usage** page, inspect the current usage and quotas.
+   Usage quotas are not themselves a reliable count of remaining project slots.
+4. In the dashboard's organization/project list, inspect each organization where
+   you are an **Owner or Administrator**, its current plan, and its active Free
+   projects. Supabase documents a limit of two active Free projects across those
+   organizations; paused projects do not count. Do not pause, delete or modify
+   any project. If the dashboard does not show a definitive remaining-slot
+   counter, use the documented rule to count only when all organizations, plans
+   and roles are visible; otherwise ask Supabase support. The connector cannot
+   confirm these facts. [Supabase billing documentation](https://supabase.com/docs/guides/platform/billing-on-supabase).
+5. Share only the plan name and whether a Free slot is available, or say the
+   count is uncertain. Never share service keys, database passwords, or billing
+   payment details. This inspection does not authorize project creation.
