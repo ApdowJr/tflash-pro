@@ -1,11 +1,38 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { registerHooks } from "node:module";
 const tables = new Map();
 let unavailable = false,
+  listUnavailable = false,
   fetches = 0;
 globalThis.__db = () => ({
+  async rpc(name, p) {
+    if (unavailable) return { data: null, error: new Error("unavailable") };
+    const table = (name) => { if (!tables.has(name)) tables.set(name, new Map()); return tables.get(name); };
+    const key = [p.p_kind,p.p_owner,p.p_session].join("|");
+    const epochs = table("tflash_permission_epochs"), grants = table("tflash_permission_grants");
+    if (name === "tflash_ensure_permission_epoch") {
+      if (!epochs.has(key)) epochs.set(key, {revision: randomUUID()});
+      return { data: epochs.get(key).revision, error: null };
+    }
+    if (name === "tflash_has_web_grant") {
+      const row = grants.get(`${key}|${p.p_origin}`);
+      return { data: !!(epochs.has(key) && row && Date.parse(row.expires_at) > Date.now()), error: null };
+    }
+    if (name === "tflash_revoke_web_grants") {
+      epochs.set(key, {revision: randomUUID()});
+      for (const [k, row] of grants) if (k.startsWith(`${key}|`)) { row.expires_at = "1970-01-01T00:00:00.000Z"; row.revision = randomUUID(); }
+      return { data: true, error: null };
+    }
+    if (name === "tflash_change_web_grant") {
+      const grantKey = `${key}|${p.p_origin}`, row = grants.get(grantKey);
+      if (epochs.get(key)?.revision !== p.p_epoch || (p.p_revision === null ? !!row : !row || row.revision !== p.p_revision)) return {data: false, error: null};
+      grants.set(grantKey, {owner_kind:p.p_kind,owner_id:p.p_owner,session_id:p.p_session,origin:p.p_origin, revision:randomUUID(), expires_at: p.p_revoke ? "1970-01-01T00:00:00.000Z" : new Date(Date.now()+3600000).toISOString()});
+      return {data:true,error:null};
+    }
+    throw new Error(`Unexpected RPC ${name}`);
+  },
   from(name) {
     let filters = [],
       action = "select",
@@ -67,7 +94,7 @@ globalThis.__db = () => ({
       then(resolve, reject) {
         return Promise.resolve()
           .then(() => {
-            if (unavailable)
+            if (unavailable || (listUnavailable && name === "tflash_permission_grants" && action === "select"))
               return { data: null, error: new Error("unavailable") };
             if (action === "insert" && rows().has(key(value))) return { data: null, error: { code: "23505" } };
             if (action === "upsert" || action === "insert") rows().set(key(value), { ...value });
@@ -136,6 +163,7 @@ registerHooks({
 });
 process.env.TFLASH_PERMISSIONS_SERVICE_ROLE_KEY = "test-only";
 process.env.TFLASH_PERMISSIONS_SUPABASE_URL = "https://database.example.test";
+const revokeAll = await import("../app/api/chats/[sessionId]/permissions/revoke-all/route.ts");
 const permissions = await import(
     "../app/api/chats/[sessionId]/permissions/route.ts"
   ),
@@ -164,8 +192,12 @@ function req(
 function permissionReq(method = "GET", user = "supabase:alice", body = { origin: "https://example.com" }, origin = "https://app.test") {
   const [kind, id] = user.split(":");
   let normalized; try { normalized = new URL(body.origin).origin; } catch { normalized = body.origin; }
-  const row = tables.get("tflash_permission_grants")?.get([kind, id, "session-a", normalized].join("|"));
-  return req(method, user, { ...body, expectedRevision: row?.revision ?? null }, origin);
+  const key = [kind, id, "session-a"].join("|");
+  if (!tables.has("tflash_permission_epochs")) tables.set("tflash_permission_epochs", new Map());
+  const epochs = tables.get("tflash_permission_epochs");
+  if (!epochs.has(key)) epochs.set(key, { revision: randomUUID() });
+  const row = tables.get("tflash_permission_grants")?.get(`${key}|${normalized}`);
+  return req(method, user, { ...body, expectedRevision: row?.revision ?? null, expectedEpoch: epochs.get(key).revision }, origin);
 }
 function context(
   kind = "supabase",
@@ -406,5 +438,27 @@ test("stale grants and revokes cannot undo a newer permission decision", async (
   assert.equal((await permissions.POST(permissionReq("POST"), route)).status, 200);
   assert.equal((await permissions.DELETE(staleRevoke, route)).status, 409);
   assert.equal(await web.approval(ctx), "not-applicable");
-  assert.equal((await permissions.POST(req("POST", "supabase:alice", {origin: "https://example.com", expectedRevision: null}), route)).status, 409);
+  assert.equal((await permissions.POST(req("POST", "supabase:alice", {origin: "https://example.com", expectedRevision: null, expectedEpoch: tables.get("tflash_permission_epochs").get("supabase|alice|session-a").revision}), route)).status, 409);
+});
+
+
+test("emergency revoke works without listing and blocks delayed grants, then permits explicit new grants", async () => {
+  tables.clear(); const ctx = context();
+  const staleNew = permissionReq("POST", "supabase:alice", {origin:"https://other.example"});
+  assert.equal((await permissions.POST(permissionReq("POST"), route)).status, 200);
+  assert.equal(await web.approval(ctx), "not-applicable");
+  listUnavailable = true;
+  assert.equal((await permissions.GET(req("GET"), route)).status, 503);
+  assert.equal(await web.approval(ctx), "not-applicable"); // A panel failure is not revocation.
+  assert.equal((await revokeAll.POST(req("POST"), route)).status, 200);
+  listUnavailable = false;
+  assert.equal(await web.approval(ctx), "user-approval");
+  assert.equal((await permissions.POST(staleNew, route)).status, 409);
+  assert.equal((await permissions.POST(permissionReq("POST"), route)).status, 200);
+  assert.equal(await web.approval(ctx), "not-applicable");
+  assert.equal((await revokeAll.POST(req("POST", "supabase:alice", {}, "https://evil.test"), route)).status, 403);
+  assert.equal((await revokeAll.POST(req("POST", "supabase:bob"), route)).status, 404);
+  unavailable = true;
+  assert.equal((await revokeAll.POST(req("POST"), route)).status, 503);
+  unavailable = false;
 });

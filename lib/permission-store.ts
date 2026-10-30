@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { homepageOrigin } from "@/lib/permission-scope";
 export type PermissionOwner = {
@@ -19,13 +18,18 @@ export function permissionDatabase() {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }
-function query(owner: PermissionOwner) {
-  return permissionDatabase()
-    .from("tflash_permission_grants")
-    .select("origin,expires_at,revision")
-    .eq("owner_kind", owner.kind)
-    .eq("owner_id", owner.id)
-    .eq("session_id", owner.sessionId);
+function ownerArgs(owner: PermissionOwner) {
+  return { p_kind: owner.kind, p_owner: owner.id, p_session: owner.sessionId };
+}
+/** Create/read a session generation before presenting a permission snapshot. */
+export async function permissionEpoch(owner: PermissionOwner): Promise<string> {
+  const { data, error } = await permissionDatabase().rpc("tflash_ensure_permission_epoch", ownerArgs(owner));
+  if (error || typeof data !== "string") throw new Error("Permission storage unavailable.");
+  return data;
+}
+export async function revokeAllWeb(owner: PermissionOwner): Promise<void> {
+  const { data, error } = await permissionDatabase().rpc("tflash_revoke_web_grants", ownerArgs(owner));
+  if (error || data !== true) throw new Error("Permission storage unavailable.");
 }
 /** Includes expired/revoked tombstones so a stale tab cannot recreate a grant. */
 export async function listWebGrants(owner: PermissionOwner): Promise<WebGrant[]> {
@@ -37,32 +41,19 @@ export async function listWebGrants(owner: PermissionOwner): Promise<WebGrant[]>
   if (error || count == null || count > 1000 || (data?.length ?? 0) !== count) throw new Error("Permission storage unavailable or grant limit exceeded.");
   return (data ?? []).map((r) => ({ origin: r.origin as string, expiresAt: r.expires_at as string, revision: r.revision as string }));
 }
-export async function hasWebGrant(
-  owner: PermissionOwner,
-  url: unknown,
-): Promise<boolean> {
+export async function hasWebGrant(owner: PermissionOwner, url: unknown): Promise<boolean> {
   const origin = homepageOrigin(url);
   if (!origin) return false;
-  const { data, error } = await query(owner)
-    .eq("origin", origin)
-    .gt("expires_at", new Date().toISOString())
-    .maybeSingle();
-  if (error) throw new Error("Permission storage unavailable.");
-  return !!data;
+  const { data, error } = await permissionDatabase().rpc("tflash_has_web_grant", { ...ownerArgs(owner), p_origin: origin });
+  if (error || typeof data !== "boolean") throw new Error("Permission storage unavailable.");
+  return data;
 }
-/** All changes are conditional on the version shown to the user. */
-export async function changeWebGrant(owner: PermissionOwner, origin: string, revision: string | null, revoke: boolean): Promise<boolean> {
+/** Atomically compare the observed session and per-origin revisions. */
+export async function changeWebGrant(owner: PermissionOwner, origin: string, revision: string | null, epoch: string, revoke: boolean): Promise<boolean> {
   if (homepageOrigin(origin) !== origin || (revoke && !revision)) throw new Error("Invalid scope.");
-  const values = { revision: randomUUID(), expires_at: revoke ? "1970-01-01T00:00:00.000Z" : new Date(Date.now() + 3600_000).toISOString() };
-  const table = permissionDatabase().from("tflash_permission_grants");
-  if (revision === null) {
-    const { error } = await table.insert({ owner_kind: owner.kind, owner_id: owner.id, session_id: owner.sessionId, origin, ...values });
-    if (error?.code === "23505") return false;
-    if (error) throw new Error("Permission storage unavailable.");
-    return true;
-  }
-  const { data, error } = await table.update(values).eq("owner_kind", owner.kind).eq("owner_id", owner.id)
-    .eq("session_id", owner.sessionId).eq("origin", origin).eq("revision", revision).select("revision").maybeSingle();
-  if (error) throw new Error("Permission storage unavailable.");
-  return !!data;
+  const { data, error } = await permissionDatabase().rpc("tflash_change_web_grant", {
+    ...ownerArgs(owner), p_origin: origin, p_revision: revision, p_epoch: epoch, p_revoke: revoke,
+  });
+  if (error || typeof data !== "boolean") throw new Error("Permission storage unavailable.");
+  return data;
 }

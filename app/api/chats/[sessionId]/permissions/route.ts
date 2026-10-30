@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { ownedChat } from "@/lib/security/owned-chat";
 import { homepageOrigin } from "@/lib/permission-scope";
-import { changeWebGrant, listWebGrants } from "@/lib/permission-store";
+import { changeWebGrant, listWebGrants, permissionEpoch } from "@/lib/permission-store";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const headers = { "cache-control": "no-store" };
@@ -17,10 +17,11 @@ export async function GET(req: Request, ctx: Context) {
   const o = await ownerFor(req, ctx);
   if (!o) return reply({ error: "Conversation not available." }, 404);
   try {
-    return reply({ grants: await listWebGrants(o) });
+    const epoch = await permissionEpoch(o);
+    return reply({ epoch, grants: await listWebGrants(o) });
   } catch {
     return reply(
-      { error: "Permission storage unavailable; approvals remain required." },
+      { error: "Cannot confirm permissions. Existing grants may still apply." },
       503,
     );
   }
@@ -51,7 +52,7 @@ async function change(req: Request, ctx: Context, revoke: boolean) {
   } catch {
     return reply({ error: "Invalid JSON." }, 400);
   }
-  const parsed = z.object({ origin: z.string(), expectedRevision: z.uuid().nullable() }).strict().safeParse(input);
+  const parsed = z.object({ origin: z.string(), expectedRevision: z.uuid().nullable(), expectedEpoch: z.uuid() }).strict().safeParse(input);
   if (!parsed.success || (revoke && parsed.data.expectedRevision === null)) return reply({ error: "Invalid scope or revision." }, 400);
   const origin = homepageOrigin(parsed.data.origin);
   if (!origin)
@@ -60,11 +61,11 @@ async function change(req: Request, ctx: Context, revoke: boolean) {
       400,
     );
   try {
-    if (!await changeWebGrant(o, origin, parsed.data.expectedRevision, revoke)) return reply({ error: "Permissions changed; refresh before trying again." }, 409);
-    return reply({ grants: await listWebGrants(o) });
+    if (!await changeWebGrant(o, origin, parsed.data.expectedRevision, parsed.data.expectedEpoch, revoke)) return reply({ error: "Permissions changed; refresh before trying again." }, 409);
+    return reply({ epoch: await permissionEpoch(o), grants: await listWebGrants(o) });
   } catch {
     return reply(
-      { error: "Permission storage unavailable; approvals remain required." },
+      { error: "Cannot confirm permissions. Existing grants may still apply." },
       503,
     );
   }

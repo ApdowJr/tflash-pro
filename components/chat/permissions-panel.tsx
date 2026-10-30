@@ -15,47 +15,60 @@ export function PermissionsPanel({
   const [open, setOpen] = useState(false),
     [grants, setGrants] = useState<Grant[]>(),
     [origin, setOrigin] = useState(""),
+    [epoch, setEpoch] = useState<string>(),
+    [allRevoked, setAllRevoked] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState<"unavailable" | "conflict">(),
     [checked, setChecked] = useState<number>(),
     [now, setNow] = useState(() => Date.now());
   const url = `/api/chats/${encodeURIComponent(sessionId)}/permissions`;
   const pending = useRef<AbortController | undefined>(undefined);
+  const allRequest = useRef<AbortController | undefined>(undefined);
+  const epochRef = useRef<string | undefined>(undefined);
+  epochRef.current = epoch;
   useEffect(() => {
-    setGrants(undefined); setChecked(undefined); setError(undefined); setBusy(false); setOrigin("");
+    setGrants(undefined); setEpoch(undefined); setAllRevoked(false); setChecked(undefined); setError(undefined); setBusy(false); setOrigin("");
     return () => { const active = pending.current; pending.current = undefined; active?.abort(); };
   }, [url, ownerProof]);
   const request = useCallback(
-    async (method: "GET" | "POST" | "DELETE", value?: string, revision?: string | null) => {
-      if (pending.current) return;
+    async (method: "GET" | "POST" | "DELETE" | "ALL", value?: string, revision?: string | null) => {
+      if (pending.current && (method !== "ALL" || pending.current === allRequest.current)) return;
+      if (method === "ALL") { pending.current?.abort(); pending.current = undefined; }
+      if ((method === "POST" || method === "DELETE") && !epochRef.current) return;
       const controller = new AbortController();
       pending.current = controller;
+      if (method === "ALL") allRequest.current = controller;
       setBusy(true);
       setError(undefined);
+      setAllRevoked(false);
       try {
-        const r = await fetch(url, {
-          method,
+        const r = await fetch(method === "ALL" ? `${url}/revoke-all` : url, {
+          method: method === "ALL" ? "POST" : method,
           cache: "no-store",
           signal: controller.signal,
           headers: {
             ...(ownerProof ? { [OWNER_PROOF_HEADER]: ownerProof } : {}),
-            ...(method === "GET" ? {} : { "content-type": "application/json" }),
+            ...(method === "GET" || method === "ALL" ? {} : { "content-type": "application/json" }),
           },
-          ...(method === "GET"
+          ...(method === "GET" || method === "ALL"
             ? {}
-            : { body: JSON.stringify({ origin: value, expectedRevision: revision }) }),
+            : { body: JSON.stringify({ origin: value, expectedRevision: revision, expectedEpoch: epochRef.current }) }),
         });
-        const body = (await r.json()) as { grants?: Grant[] };
-        if (!r.ok || !Array.isArray(body.grants)) throw new Error(r.status === 409 ? "conflict" : "unavailable");
+        const body = (await r.json()) as { grants?: Grant[]; epoch?: string; revoked?: boolean };
+        if (!r.ok || (method === "ALL" ? body.revoked !== true : !Array.isArray(body.grants) || typeof body.epoch !== "string")) throw new Error(r.status === 409 ? "conflict" : "unavailable");
         if (pending.current !== controller) return;
-        setGrants(body.grants);
+        if (method === "ALL") {
+          setGrants(undefined); setEpoch(undefined); setAllRevoked(true); setChecked(undefined);
+          return;
+        }
+        setGrants(body.grants); setEpoch(body.epoch);
         setChecked(Date.now());
         setNow(Date.now());
         if (method === "POST") setOrigin("");
       } catch (reason) {
-        if (pending.current === controller) { setGrants(undefined); setError(reason instanceof Error && reason.message === "conflict" ? "conflict" : "unavailable"); }
+        if (pending.current === controller) { setGrants(undefined); setEpoch(undefined); setError(reason instanceof Error && reason.message === "conflict" ? "conflict" : "unavailable"); }
       } finally {
-        if (pending.current === controller) { pending.current = undefined; setBusy(false); }
+        if (pending.current === controller) { pending.current = undefined; if (allRequest.current === controller) allRequest.current = undefined; setBusy(false); }
       }
     },
     [url, ownerProof],
@@ -94,6 +107,7 @@ export function PermissionsPanel({
               {t(error === "conflict" ? "permissionsConflict" : "permissionsUnavailable")}
             </p>
           ) : null}
+          {allRevoked ? <p role="status">{t("permissionsAllRevoked")}</p> : null}
           {checked && active ? (
             <p>
               {t("permissionsChecked")} {new Date(checked).toLocaleString()}
@@ -151,6 +165,10 @@ export function PermissionsPanel({
               {t("permissionsGrant")}
             </Button>
           </form>
+          <p className="text-muted-foreground">{t("permissionsRevokeAllHint")}</p>
+          <Button size="sm" variant="outline" disabled={busy && pending.current === allRequest.current} onClick={() => void request("ALL")}>
+            {t("permissionsRevokeAll")}
+          </Button>
           <Button
             size="sm"
             variant="outline"

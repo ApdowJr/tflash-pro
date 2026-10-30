@@ -656,12 +656,19 @@ test("unfinished stopped plans can be continued explicitly, but completed or act
   const rendered = render(app(h(AgentPlanCard, { plan, runState: "idle", onContinue })));
   const user = userEvent.setup();
   const continueButton = await screen.findByRole("button", { name: "Continue task" });
-  fireEvent.click(continueButton); fireEvent.click(continueButton);
+  fireEvent.click(continueButton);
+  assert.equal(attempts, 0);
+  assert.equal(screen.getByRole("button", { name: "Start new turn" }).disabled, true);
+  await user.click(screen.getByRole("checkbox", { name: /I reviewed the recent activity/ }));
+  const confirm = screen.getByRole("button", { name: "Start new turn" });
+  fireEvent.click(confirm); fireEvent.click(confirm);
   assert.equal(attempts, 1);
   assert.equal(screen.getByRole("button", { name: "Working" }).disabled, true);
   await React.act(async () => { rejectAttempt(new Error("offline")); try { await pending; } catch {} });
   assert.ok(screen.getByRole("alert"));
-  assert.equal(screen.getByRole("button", { name: "Continue task" }).disabled, false);
+  assert.equal(screen.getByRole("button", { name: "Start new turn" }).disabled, true);
+  await user.click(screen.getByRole("checkbox", { name: /I reviewed the recent activity/ }));
+  assert.equal(screen.getByRole("button", { name: "Start new turn" }).disabled, false);
   rendered.rerender(app(h(AgentPlanCard, { plan, runState: "working", onContinue })));
   assert.equal(screen.queryByRole("button", { name: "Continue task" }), null);
   rendered.rerender(app(h(AgentPlanCard, { plan: { ...plan, steps: [{ ...plan.steps[0], status: "completed" }] }, runState: "idle", onContinue })));
@@ -1290,7 +1297,7 @@ test("provisional tool output cannot produce a completed artifact card", async (
 
 test("permissions panel loads, creates and revokes the limited grant", async () => {
   const { PermissionsPanel } = await import("../components/chat/permissions-panel.tsx"); seed(); let grants=[];
-  const calls=fakeFetch((path,options)=>{if(!path.endsWith("/permissions"))return;if(options.method==="POST")grants=[{origin:JSON.parse(options.body).origin,expiresAt:"2030-01-01T00:00:00Z",revision:"11111111-1111-4111-8111-111111111111"}];if(options.method==="DELETE")grants=[];return Response.json({grants});});
+  const calls=fakeFetch((path,options)=>{if(!path.endsWith("/permissions"))return;if(options.method==="POST")grants=[{origin:JSON.parse(options.body).origin,expiresAt:"2030-01-01T00:00:00Z",revision:"11111111-1111-4111-8111-111111111111"}];if(options.method==="DELETE")grants=[];return Response.json({grants, epoch:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"});});
   render(app(h(PermissionsPanel,{sessionId:"chat-a",ownerProof:"proof"})));const user=userEvent.setup();await user.click(screen.getByText("Permissions for this conversation"));await screen.findByText("No active reusable permissions.");await user.type(screen.getByLabelText("HTTPS homepage"),"https://example.com");await user.click(screen.getByRole("button",{name:"Allow homepage for one hour"}));await screen.findByText(/https:\/\/example.com/);assert.ok(calls.some(c=>c.options.method==="POST"&&c.options.headers["x-tflash-owner-proof"]==="proof"));await user.click(screen.getByRole("button",{name:"Revoke"}));await screen.findByText("No active reusable permissions.");
 });
 
@@ -1321,7 +1328,7 @@ test("permission submissions are single-flight and aborted on unmount", async ()
   seed(); let release; let posts = 0; let signal;
   fakeFetch((path, options) => {
     if (!path.endsWith("/permissions")) return;
-    if (options.method === "GET") return Response.json({ grants: [] });
+    if (options.method === "GET") return Response.json({ grants: [], epoch: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" });
     posts++; signal = options.signal;
     return new Promise((resolve) => { release = resolve; });
   });
@@ -1334,7 +1341,7 @@ test("permission submissions are single-flight and aborted on unmount", async ()
   fireEvent.submit(form); fireEvent.submit(form);
   await waitFor(() => assert.equal(posts, 1));
   rendered.unmount(); assert.equal(signal.aborted, true);
-  release(Response.json({ grants: [] }));
+  release(Response.json({ grants: [], epoch: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }));
 });
 
 test("a task revision conflict keeps the draft and requires refresh before replacement", async () => {
@@ -1366,7 +1373,7 @@ test("permission conflicts preserve the address and require refresh", async () =
   fakeFetch((path, options) => {
     if (!path.endsWith("/permissions")) return;
     if (options.method === "POST") { attempts++; return Response.json({ error: "conflict" }, { status: 409 }); }
-    return Response.json({ grants: [] });
+    return Response.json({ grants: [], epoch: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" });
   });
   render(app(h(PermissionsPanel, { sessionId: "chat-a" })));
   const user = userEvent.setup();
@@ -1388,7 +1395,7 @@ test("switching sessions aborts old panel loads and ignores late results", async
   fakeFetch((path, options) => {
     if (!path.endsWith("/permissions")) return;
     if (path.includes("chat-a")) { oldSignal = options.signal; return new Promise(resolve => { release = resolve; }); }
-    return Response.json({ grants: [{ origin: "https://new.example", expiresAt: "2030-01-01T00:00:00Z", revision: "11111111-1111-4111-8111-111111111111" }] });
+    return Response.json({ epoch: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", grants: [{ origin: "https://new.example", expiresAt: "2030-01-01T00:00:00Z", revision: "11111111-1111-4111-8111-111111111111" }] });
   });
   const rendered = render(app(h(PermissionsPanel, { sessionId: "chat-a" })));
   await userEvent.setup().click(screen.getByText("Permissions for this conversation"));
@@ -1396,7 +1403,39 @@ test("switching sessions aborts old panel loads and ignores late results", async
   rendered.rerender(app(h(PermissionsPanel, { sessionId: "chat-b" })));
   assert.equal(oldSignal.aborted, true);
   await screen.findByText(/https:\/\/new.example/);
-  await React.act(async () => { release(Response.json({ grants: [{ origin: "https://old.example", expiresAt: "2030-01-01T00:00:00Z", revision: "22222222-2222-4222-8222-222222222222" }] })); });
+  await React.act(async () => { release(Response.json({ epoch: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", grants: [{ origin: "https://old.example", expiresAt: "2030-01-01T00:00:00Z", revision: "22222222-2222-4222-8222-222222222222" }] })); });
   assert.equal(screen.queryByText(/https:\/\/old.example/), null);
   assert.ok(screen.getByText(/https:\/\/new.example/));
+});
+
+
+test("revoke all remains available when the permission list fails", async () => {
+  const { PermissionsPanel } = await import("../components/chat/permissions-panel.tsx"); seed(); let revocations = 0;
+  fakeFetch((path) => {
+    if (path.endsWith("/permissions/revoke-all")) { revocations++; return Response.json({revoked:true}); }
+    if (path.endsWith("/permissions")) return Response.json({error:"offline"}, {status:503});
+  });
+  render(app(h(PermissionsPanel, {sessionId:"chat-a", ownerProof:"proof"})));
+  const user = userEvent.setup(); await user.click(screen.getByText("Permissions for this conversation"));
+  await screen.findByRole("alert");
+  await user.click(screen.getByRole("button", {name:"Revoke all reusable permissions"}));
+  await screen.findByText(/Reusable permissions revoked/); assert.equal(revocations, 1);
+  assert.equal(screen.getByRole("button", {name:"Allow homepage for one hour"}).disabled, true);
+});
+
+test("emergency revocation interrupts a stuck list request and ignores its late response", async () => {
+  const { PermissionsPanel } = await import("../components/chat/permissions-panel.tsx");
+  seed(); let release, signal, allCalls = 0;
+  fakeFetch((path, options) => {
+    if (path.endsWith("/permissions/revoke-all")) { allCalls++; return Response.json({revoked:true}); }
+    if (path.endsWith("/permissions")) { signal = options.signal; return new Promise(resolve => {release = resolve;}); }
+  });
+  render(app(h(PermissionsPanel, {sessionId:"chat-a"})));
+  const user = userEvent.setup(); await user.click(screen.getByText("Permissions for this conversation"));
+  await waitFor(() => assert.ok(signal));
+  await user.click(screen.getByRole("button", {name:"Revoke all reusable permissions"}));
+  assert.equal(signal.aborted,true); assert.equal(allCalls,1);
+  await screen.findByText(/Reusable permissions revoked/);
+  await React.act(async () => { release(Response.json({epoch:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",grants:[{origin:"https://old.example",expiresAt:"2030-01-01T00:00:00Z",revision:"11111111-1111-4111-8111-111111111111"}]})); });
+  assert.equal(screen.queryByText(/https:\/\/old.example/),null);
 });

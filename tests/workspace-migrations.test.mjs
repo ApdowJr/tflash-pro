@@ -64,6 +64,21 @@ test("Supabase migrations apply in order with explicit grants, CAS-compatible RL
     const protectedTables = await db.query(`select relname,relrowsecurity from pg_class where relname in ('tflash_permission_grants','tflash_tracked_tasks') order by relname`);
     assert.deepEqual(protectedTables.rows,[{relname:'tflash_permission_grants',relrowsecurity:true},{relname:'tflash_tracked_tasks',relrowsecurity:true}]);
 
+    const privileges2 = await db.query(`select has_table_privilege('authenticated','public.tflash_permission_epochs','select') as auth_select, has_function_privilege('authenticated','public.tflash_revoke_web_grants(text,text,text)','execute') as auth_revoke, has_function_privilege('service_role','public.tflash_revoke_web_grants(text,text,text)','execute') as service_revoke`);
+    assert.deepEqual(privileges2.rows[0], {auth_select:false,auth_revoke:false,service_revoke:true});
+    await db.exec("set role service_role");
+    const epoch = (await db.query(`select public.tflash_ensure_permission_epoch('supabase','race','session') as value`)).rows[0].value;
+    const args = ['supabase','race','session','https://one.example',null,epoch,false];
+    assert.equal((await db.query(`select public.tflash_change_web_grant($1,$2,$3,$4,$5,$6,$7) as value`, args)).rows[0].value, true);
+    assert.equal((await db.query(`select public.tflash_has_web_grant('supabase','race','session','https://one.example') as value`)).rows[0].value, true);
+    assert.equal((await db.query(`select public.tflash_revoke_web_grants('supabase','race','session') as value`)).rows[0].value, true);
+    assert.equal((await db.query(`select public.tflash_has_web_grant('supabase','race','session','https://one.example') as value`)).rows[0].value, false);
+    assert.equal((await db.query(`select public.tflash_change_web_grant($1,$2,$3,$4,$5,$6,$7) as value`, [...args.slice(0,3),'https://two.example',null,epoch,false])).rows[0].value, false);
+    const nextEpoch = (await db.query(`select public.tflash_ensure_permission_epoch('supabase','race','session') as value`)).rows[0].value;
+    assert.notEqual(nextEpoch, epoch);
+    assert.equal((await db.query(`select public.tflash_change_web_grant($1,$2,$3,$4,$5,$6,$7) as value`, [...args.slice(0,3),'https://two.example',null,nextEpoch,false])).rows[0].value, true);
+    await db.exec("reset role");
+
     const grant = await db.query(`insert into public.tflash_permission_grants (owner_kind,owner_id,session_id,origin,expires_at) values ('supabase','owner','session','https://example.com',now() + interval '1 hour') returning revision`);
     const grantRevision = grant.rows[0].revision;
     const revokedRevision = "44444444-4444-4444-8444-444444444444";
