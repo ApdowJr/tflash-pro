@@ -139,3 +139,35 @@ test("server concurrency is bounded and cancelled requests free their slots", as
     assert.deepEqual(await (await POST(req("chat-a", "needle", { [OWNER_PROOF_HEADER]: proof }), ctx("chat-a"))).json(), { status: "no-match" });
   } finally { globalThis.fetch = original; }
 });
+
+test("search request body abort is bounded even if its stream reader never cooperates", async () => {
+  principal={id:'vercel:alice',kind:'vercel'};
+  const proof=signChatOwnership(principal.id,'chat-a');
+  const abort=new AbortController(); let cancelled=0;
+  const request={url:'https://app.test/api/chats/chat-a/search',signal:abort.signal,
+    headers:new Headers({'content-type':'application/json',[OWNER_PROOF_HEADER]:proof}),
+    body:{getReader(){return {read(){return new Promise(()=>{});},cancel(){cancelled++;return new Promise(()=>{});},releaseLock(){throw new Error('still locked');}};}}};
+  const pending=POST(request,ctx('chat-a'));
+  abort.abort();
+  assert.equal((await pending).status,400);
+  assert.ok(cancelled>=1);
+});
+
+test("an aborted upstream fetch that ignores its signal cannot block a search slot", async () => {
+  principal={id:'vercel:alice',kind:'vercel'};
+  const proof=signChatOwnership(principal.id,'chat-a');
+  const original=globalThis.fetch; const abort=new AbortController();
+  let resolveFetch, signalStarted; let cancelled=false;
+  const started=new Promise(resolve=>{signalStarted=resolve;});
+  globalThis.fetch=()=>{signalStarted();return new Promise(resolve=>{resolveFetch=resolve;});};
+  try {
+    const pending=POST(req('chat-a','needle',{[OWNER_PROOF_HEADER]:proof},abort.signal),ctx('chat-a'));
+    await started; abort.abort();
+    assert.deepEqual(await (await pending).json(),{status:'unavailable'});
+    resolveFetch(new Response(new ReadableStream({cancel(){cancelled=true;}}),{headers:{'x-eve-stream-version':'26','x-eve-stream-tail-index':'0'}}));
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(cancelled,true);
+    globalThis.fetch=async()=>eveResponse([]);
+    assert.deepEqual(await (await POST(req('chat-a','needle',{[OWNER_PROOF_HEADER]:proof}),ctx('chat-a'))).json(),{status:'no-match'});
+  } finally {globalThis.fetch=original;}
+});

@@ -16,21 +16,25 @@ export async function GET(request: Request): Promise<Response> {
   if (!principal) return Response.json({ error: "Sign in to continue." }, { status: 401 });
   const params = new URL(request.url).searchParams;
   const state = await openOAuthState(params.get("state"));
-  if (!state || state.ownerId !== principal.id || !constantTimeEqual(readCookie(request, flowCookieName(state.flowId)), state.nonce)) {
+  if (!state || state.ownerId !== principal.id || (state.ownerKind !== undefined && state.ownerKind !== principal.kind) || !constantTimeEqual(readCookie(request, flowCookieName(state.flowId)), state.nonce)) {
     return backToApp(request, { oauth: "state" });
   }
   const finish = (response: Response) => {
     response.headers.append("set-cookie", flowCookie(request, state.flowId, "", 0));
     return response;
   };
+  let exchangeAttempted = false;
   try {
     const integration = getIntegration(state.integrationId);
     if (!integration) return finish(backToApp(request, { oauth: "unknown" }, state.returnTo));
     if (params.get("error")) return finish(backToApp(request, { integration: integration.id, oauth: "denied" }, state.returnTo));
     const code = params.get("code");
     if (!code) return finish(backToApp(request, { integration: integration.id, oauth: "missing_code" }, state.returnTo));
-    const { tokens } = await exchangeCode({ integrationId: integration.id, code, redirectUri: callbackUrl(request), ...(state.client ? { client: state.client } : {}), ...(state.verifier ? { verifier: state.verifier } : {}) });
-    if (!tokens) return finish(backToApp(request, { integration: integration.id, oauth: "exchange" }, state.returnTo));
+    if (code.length > 4096 || /[\x00-\x1f\x7f]/.test(code)) return finish(backToApp(request, { integration: integration.id, oauth: "state" }, state.returnTo));
+    const redirectUri = callbackUrl(request);
+    exchangeAttempted = true;
+    const { tokens, dispatched } = await exchangeCode({ integrationId: integration.id, code, redirectUri, ...(state.client ? { client: state.client } : {}), ...(state.verifier ? { verifier: state.verifier } : {}) });
+    if (!tokens) return finish(backToApp(request, { integration: integration.id, oauth: dispatched ? "exchange_uncertain" : "misconfigured" }, state.returnTo));
 
     const sealed = await sealIntegrationToken({
       integrationId: integration.id, ownerId: principal.id, token: tokens.accessToken,
@@ -41,7 +45,7 @@ export async function GET(request: Request): Promise<Response> {
       ttlMs: tokens.refreshToken ? REFRESHABLE_TTL_MS : STATIC_TTL_MS,
     });
     const handoff = await sealJson({
-      integrationId: integration.id, ownerId: principal.id, token: sealed.token, grantExpiresAt: sealed.expiresAt,
+      integrationId: integration.id, ownerId: principal.id, ownerKind: principal.kind, token: sealed.token, grantExpiresAt: sealed.expiresAt,
       ...(tokens.tokenExpiresAt ? { tokenExpiresAt: tokens.tokenExpiresAt } : {}),
       refreshable: Boolean(tokens.refreshToken), label: "Authorized",
     }, OAUTH_HANDOFF_TTL_MS);
@@ -50,6 +54,6 @@ export async function GET(request: Request): Promise<Response> {
     response.headers.append("set-cookie", `${OAUTH_HANDOFF_COOKIE}=${handoff.token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(OAUTH_HANDOFF_TTL_MS / 1000)}${secure}`);
     return finish(response);
   } catch {
-    return finish(backToApp(request, { integration: state.integrationId, oauth: "misconfigured" }, state.returnTo));
+    return finish(backToApp(request, { integration: state.integrationId, oauth: exchangeAttempted ? "exchange_uncertain" : "misconfigured" }, state.returnTo));
   }
 }

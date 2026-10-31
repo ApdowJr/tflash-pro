@@ -1,9 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { defaultMessageReducer } from "eve/client";
-import {
-  MAX_SEARCH_EVENTS, MAX_SEARCH_LINE_CHARS, MAX_SEARCH_STREAM_BYTES, searchEveStream,
-} from "../lib/chat-search-stream.ts";
+import { registerHooks } from "node:module";
+registerHooks({ resolve(specifier, context, next) {
+  if (specifier.startsWith("@/")) return next(new URL(`../${specifier.slice(2)}.ts`, import.meta.url).href, context);
+  return next(specifier, context);
+} });
+const { MAX_SEARCH_EVENTS, MAX_SEARCH_LINE_CHARS, MAX_SEARCH_STREAM_BYTES, searchEveStream } = await import("../lib/chat-search-stream.ts");
 
 const encode = (value) => new TextEncoder().encode(value);
 const event = (type, data = {}) => ({ type, data });
@@ -109,4 +112,16 @@ test("text projection agrees with Eve's actual default message reducer for reset
     const result = await search(stream(stamped));
     assert.equal(result.status, visible.toLowerCase().includes("needle") ? "matched" : "no-match");
   }
+});
+
+test("aborted search stops waiting even when a stream reader ignores cancellation", async () => {
+  let cancelled=0, released=0;
+  const signal=new AbortController();
+  const response={ok:true,headers:new Headers(headers(0)),body:{getReader(){return {
+    read(){return new Promise(()=>{});}, cancel(){cancelled++;return new Promise(()=>{});}, releaseLock(){released++;throw new Error('still locked');},
+  };}}};
+  const pending=searchEveStream(response,'needle',signal.signal);
+  signal.abort();
+  assert.deepEqual(await pending,{status:'unavailable'});
+  assert.ok(cancelled>=1); assert.equal(released,1);
 });

@@ -1,3 +1,4 @@
+import { expectedPrincipalMatches } from "@/lib/security/expected-principal";
 import { currentPrincipal } from "@/lib/identity";
 import { getProvider } from "@/lib/providers/catalog";
 import { testConnection } from "@/lib/providers/live-models";
@@ -20,6 +21,7 @@ export type TestConnectionResponse = {
 async function handlePost(request: Request): Promise<Response> {
   const principal = await currentPrincipal();
   if (!principal) return Response.json({ ok: false, error: "Sign in to continue." }, { status: 401 });
+  if (!expectedPrincipalMatches(request, principal)) return Response.json({ ok: false, error: "Account changed. Reload to continue." }, { status: 409, headers: { "cache-control": "no-store" } });
   const limited = guardRateLimit("providerTest", request, principal.id);
   if (limited) return limited;
   if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) return Response.json({ ok: false, error: "Expected JSON." }, { status: 415 });
@@ -37,15 +39,16 @@ async function handlePost(request: Request): Promise<Response> {
   try {
     const credential = await credentialFromInput(provider, payload, { ownerId: principal.id });
     const result = await testConnection(provider, credential);
+    const live = result.source === "live";
     const body: TestConnectionResponse = {
       ok: result.ok,
       providerId: provider.id,
-      modelCount: result.models.length,
+      modelCount: live ? result.models.length : 0,
       latencyMs: result.latencyMs ?? Date.now() - started,
-      sample: result.models.slice(0, 6).map((model) => model.name ?? model.id),
-      message: result.ok
-        ? `Connected to ${provider.name} · ${result.models.length} models available`
-        : (result.error ?? "Connection failed."),
+      sample: live ? result.models.slice(0, 6).map((model) => model.name ?? model.id) : [],
+      message: !result.ok ? (result.error ?? "Connection failed.") : live
+        ? `${provider.name} model endpoint responded · ${result.models.length} models found.`
+        : (result.error ?? `${provider.name}: built-in suggestions only; the provider connection was not verified.`),
     };
     return Response.json(body, {
       status: result.ok ? 200 : 400,

@@ -111,6 +111,8 @@ export function ModelBrowser({
         </Button>
       </div>
 
+      {!state.loading && state.source === "static" ? <p className="text-xs text-muted-foreground">{t("modelStaticUnverified")}</p> : null}
+
       {needsKey ? (
         <button
           className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-brand/35 bg-brand/8 px-3 py-2 text-left text-[12px] text-foreground/90 transition-colors hover:bg-brand/14"
@@ -124,7 +126,7 @@ export function ModelBrowser({
       ) : null}
 
       {state.error ? (
-        <p className="rounded-md bg-muted px-2.5 py-1.5 text-muted-foreground text-xs">
+        <p className="rounded-md bg-muted px-2.5 py-1.5 text-muted-foreground text-xs" role="status">
           {state.error}
         </p>
       ) : null}

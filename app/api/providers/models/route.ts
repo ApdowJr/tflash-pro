@@ -1,3 +1,4 @@
+import { expectedPrincipalMatches } from "@/lib/security/expected-principal";
 import { currentPrincipal } from "@/lib/identity";
 import { getProvider, type ModelInfo } from "@/lib/providers/catalog";
 import { fetchLiveModels } from "@/lib/providers/live-models";
@@ -20,6 +21,7 @@ export type ModelsResponse = {
 export async function GET(request: Request): Promise<Response> {
   const principal = await currentPrincipal();
   if (!principal) return Response.json({ ok: false, error: "Sign in to continue." }, { status: 401 });
+  if (!expectedPrincipalMatches(request, principal)) return Response.json({ ok: false, error: "Account changed. Reload to continue." }, { status: 409, headers: { "cache-control": "no-store" } });
   const limited = guardRateLimit("providerModels", request, principal.id);
   if (limited) return limited;
   const providerId = new URL(request.url).searchParams.get("provider") ?? "";
@@ -49,7 +51,7 @@ export async function GET(request: Request): Promise<Response> {
       providerId: provider.id,
       models: [...provider.models],
       source: "static",
-      error: error instanceof Error ? error.message : "Could not load models.",
+      error: error instanceof ProviderInputError ? error.message : "Could not load models. Built-in suggestions are not verified.",
     };
     return Response.json(body, { headers: { "cache-control": "no-store" } });
   }

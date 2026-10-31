@@ -1,3 +1,4 @@
+import { expectedPrincipalMatches } from "@/lib/security/expected-principal";
 import { currentPrincipal } from "@/lib/identity";
 import {
   boundedBody,
@@ -14,6 +15,8 @@ async function handlePost(request: Request): Promise<Response> {
   const principal = await currentPrincipal();
   if (!principal)
     return Response.json({ error: "Sign in to continue." }, { status: 401 });
+  if (!expectedPrincipalMatches(request, principal))
+    return Response.json({ error: "Account changed. Reload to continue." }, { status: 409, headers: { "cache-control": "no-store" } });
   const limited = guardRateLimit("documents", request, principal.id);
   if (limited) return limited;
   if (

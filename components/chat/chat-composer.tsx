@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { DocumentImportButton } from "./documents";
 import { VoiceInputButton } from "./voice-input";
 import { FileIcon, PaperclipIcon, SquareIcon, XIcon } from "lucide-react";
@@ -39,6 +40,7 @@ export function ChatComposer({
   readonly onModeChange?: (mode: AgentMode) => void;
 }) {
   const { t, settings } = useAppSettings();
+  const [documentPending, setDocumentPending] = useState(false);
   const controller = usePromptInputController();
 
   return (
@@ -67,11 +69,13 @@ export function ChatComposer({
       ))}
       <AgentModePicker mode={mode} onChange={onModeChange} language={settings.language} disabled={isBusy || isResuming} />
       <PromptInput
-        className="tflash-composer overflow-visible rounded-[1.35rem] border-border bg-card dark:bg-card focus-within:border-foreground/25! focus-within:ring-1 focus-within:ring-foreground/10"
+        className="tflash-composer overflow-visible rounded-[1.35rem] border-border/80 bg-card dark:bg-card focus-within:border-foreground/25! focus-within:ring-1 focus-within:ring-foreground/10"
         onSubmit={onSubmit}
+        onSubmitCapture={(event) => { if (documentPending) { event.preventDefault(); event.stopPropagation(); } }}
       >
         <ComposerAttachments />
         <PromptInputTextarea
+          aria-label={t("messageInput")}
           className="min-h-[3.75rem] px-4 pt-3.5 pb-0 text-[15px] leading-relaxed placeholder:text-muted-foreground/70 md:text-[15px]"
           // Drafts remain editable while a session prepares or after an error;
           // Send stays disabled until it is safe to submit.
@@ -80,7 +84,7 @@ export function ChatComposer({
         <PromptInputFooter className={`flex-wrap border-t-0 px-2.5 pt-1.5 pb-2.5 ${isBusy && (controller.textInput.value.trim() || controller.attachments.files.length) ? "pr-24" : "pr-14"}`}>
           <PromptInputTools className="gap-1">
             <ComposerAttachButton />
-            <DocumentImportButton disabled={isResuming} />
+            <DocumentImportButton disabled={isResuming} onPendingChange={setDocumentPending} />
             <VoiceInputButton disabled={isResuming} />
           </PromptInputTools>
           <span className="hidden pr-1 text-[11px] text-muted-foreground/60 md:inline">
@@ -90,7 +94,7 @@ export function ChatComposer({
         <ComposerAction
           hasInputText={controller.textInput.value.trim().length > 0}
           isBusy={isBusy}
-          isResuming={isResuming}
+          isResuming={isResuming || documentPending}
           cancelling={cancelling}
           onCancel={onCancel}
         />

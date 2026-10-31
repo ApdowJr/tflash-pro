@@ -323,6 +323,22 @@ body {
   padding-right: max(0px, env(safe-area-inset-right));
 }
 
+/* Preserve breathing room while respecting phone cutouts in landscape. */
+.tf-topbar.tf-safe-x, .tf-chat-dock {
+  padding-left: max(0.75rem, env(safe-area-inset-left));
+  padding-right: max(0.75rem, env(safe-area-inset-right));
+}
+@media (min-width: 40rem) {
+  .tf-topbar.tf-safe-x {
+    padding-left: max(1rem, env(safe-area-inset-left));
+    padding-right: max(1rem, env(safe-area-inset-right));
+  }
+  .tf-chat-dock {
+    padding-left: max(1.5rem, env(safe-area-inset-left));
+    padding-right: max(1.5rem, env(safe-area-inset-right));
+  }
+}
+
 /* Account sign-in */
 .auth-shell { min-height: 100dvh; display: grid; grid-template-columns: minmax(0, 1.03fr) minmax(480px, .97fr); background: #fdfcfb; color: #272321; }
 .auth-story { position: relative; min-height: 100dvh; display: flex; flex-direction: column; overflow: hidden; padding: 42px 8.2% 29px; background: #201e1b; color: #f3f6ec; }

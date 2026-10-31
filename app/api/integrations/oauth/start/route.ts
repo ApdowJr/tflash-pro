@@ -19,24 +19,27 @@ export async function GET(request: Request): Promise<Response> {
   if (!integration) return backToApp(request, { oauth: "unknown" });
   if (!oauthConfigured(integration.id)) return backToApp(request, { integration: integration.id, oauth: "unconfigured" }, returnTo);
 
+  let registrationAttempted = false;
   try {
     const redirectUri = callbackUrl(request); // Validate the origin before registration.
-    const client = oauthProviderFor(integration.id)?.registrationUrl
-      ? await registerOAuthClient(integration.id, redirectUri) : undefined;
+    const needsRegistration = Boolean(oauthProviderFor(integration.id)?.registrationUrl);
+    registrationAttempted = needsRegistration;
+    const client = needsRegistration ? await registerOAuthClient(integration.id, redirectUri) : undefined;
     const flowId = randomUUID();
     const nonce = randomBytes(32).toString("hex");
     const verifier = newCodeVerifier(integration.id);
-    const state = await sealOAuthState({ integrationId: integration.id, ownerId: principal.id, flowId, nonce, returnTo, ...(client ? { client } : {}), ...(verifier ? { verifier } : {}) });
+    const state = await sealOAuthState({ integrationId: integration.id, ownerId: principal.id, ownerKind: principal.kind, flowId, nonce, returnTo, ...(client ? { client } : {}), ...(verifier ? { verifier } : {}) });
     const authorizeUrl = await buildAuthorizeUrl({ integrationId: integration.id, redirectUri, state, ...(client ? { client } : {}), ...(verifier ? { verifier } : {}) });
     return new Response(null, {
       status: 302,
       headers: {
         location: authorizeUrl,
         "cache-control": "no-store",
+        "referrer-policy": "no-referrer",
         "set-cookie": flowCookie(request, flowId, nonce, Math.floor(OAUTH_STATE_TTL_MS / 1000)),
       },
     });
   } catch {
-    return backToApp(request, { integration: integration.id, oauth: "misconfigured" }, returnTo);
+    return backToApp(request, { integration: integration.id, oauth: registrationAttempted ? "registration_uncertain" : "misconfigured" }, returnTo);
   }
 }

@@ -20,7 +20,8 @@ import {
   SparklesIcon,
   Trash2Icon,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { fetchCatalogResponse, readCatalogJson } from "@/lib/catalog-fetch";
 import { PROVIDERS, type ProviderInfo } from "@/lib/providers/catalog";
 import { providerConnectionExpired } from "@/lib/providers/connection-state";
 import { Button } from "@/components/ui/button";
@@ -62,7 +63,7 @@ export function SettingsDialog({
   readonly initialProvider?: string;
   readonly conversationControls?: ReactNode;
 }) {
-  const { settings, t, connect, disconnect, isConnected, envConfigured, refreshStatus, loadModels, update, clearConnections } =
+  const { settings, t, accountId, accountKind, connect, disconnect, isConnected, envConfigured, refreshStatus, loadModels, update, clearConnections } =
     useAppSettings();
   const [tab, setTab] = useState<Tab>(initialTab);
   const [expanded, setExpanded] = useState<string | null>(initialProvider ?? null);
@@ -72,6 +73,38 @@ export function SettingsDialog({
   const [baseURL, setBaseURL] = useState("");
   const [showKey, setShowKey] = useState(false);
   const [statuses, setStatuses] = useState<Record<string, ProviderStatus>>({});
+
+  const identity = `${accountKind}:${accountId}`;
+  const currentIdentity = useRef(identity);
+  currentIdentity.current = identity;
+  const requests = useRef(new Map<string, AbortController>());
+  useEffect(() => {
+    setStatuses({});
+    setApiKey("");
+    setBaseURL("");
+    setShowKey(false);
+    return () => { for (const controller of requests.current.values()) controller.abort(); requests.current.clear(); };
+  }, [identity]);
+
+  function beginProviderRequest(providerId: string) {
+    requests.current.get(providerId)?.abort();
+    const controller = new AbortController();
+    requests.current.set(providerId, controller);
+    return { controller, current: () => !controller.signal.aborted && currentIdentity.current === identity && requests.current.get(providerId) === controller };
+  }
+  async function providerRequest(path: string, payload: object, controller: AbortController) {
+    const { response, signal } = await fetchCatalogResponse(path, { method: "POST", signal: controller.signal,
+      headers: { "content-type": "application/json", "x-tflash-expected-user-id": accountId, "x-tflash-expected-account-kind": accountKind },
+      body: JSON.stringify(payload) }, 12_000);
+    const data = await readCatalogJson(response, signal, 64 * 1024);
+    if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Invalid provider response.");
+    const fields = data as Record<string, unknown>;
+    if ((fields.message !== undefined && (typeof fields.message !== "string" || fields.message.length > 500)) ||
+        (fields.error !== undefined && (typeof fields.error !== "string" || fields.error.length > 500)) ||
+        (fields.ok !== undefined && typeof fields.ok !== "boolean") ||
+        (fields.providerId !== undefined && typeof fields.providerId !== "string")) throw new Error("Invalid provider response.");
+    return { response, data: data as { ok?: boolean; providerId?: string; message?: string; error?: string; token?: string; expiresAt?: number; modelCount?: number } };
+  }
 
   const setStatus = (id: string, status: ProviderStatus) =>
     setStatuses((current) => ({ ...current, [id]: status }));
@@ -93,78 +126,51 @@ export function SettingsDialog({
 
   async function testProvider(provider: ProviderInfo) {
     setStatus(provider.id, { kind: "pending", message: t("testing") });
+    const { controller, current } = beginProviderRequest(provider.id);
     try {
-      const response = await fetch("/api/providers/test", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          providerId: provider.id,
-          apiKey,
-          baseURL: provider.customBaseURL ? baseURL : undefined,
-          token: apiKey.trim() || baseURL.trim() ? undefined : settings.connections[provider.id]?.token,
-        }),
-      });
-      const payload = (await response.json()) as { message?: string; error?: string };
-      setStatus(provider.id, {
-        kind: response.ok ? "ok" : "error",
-        message: payload.message ?? payload.error ?? (response.ok ? "OK" : "Failed"),
-      });
-    } catch (error) {
-      setStatus(provider.id, {
-        kind: "error",
-        message: error instanceof Error ? error.message : t("connectionFailed"),
-      });
+      const { response, data } = await providerRequest("/api/providers/test", {
+        providerId: provider.id, apiKey, baseURL: provider.customBaseURL ? baseURL : undefined,
+        token: apiKey.trim() || baseURL.trim() ? undefined : settings.connections[provider.id]?.token,
+      }, controller);
+      if (!current()) return;
+      setStatus(provider.id, { kind: response.ok && data.ok !== false ? "ok" : "error",
+        message: data.message ?? data.error ?? (response.ok ? "OK" : "Failed") });
+    } catch {
+      if (current())
+        setStatus(provider.id, { kind: "error", message: t("connectionFailed") });
     }
   }
 
   async function connectProvider(provider: ProviderInfo, force = false) {
     setStatus(provider.id, { kind: "pending", message: t("connecting") });
+    const { controller, current } = beginProviderRequest(provider.id);
     try {
-      const response = await fetch("/api/providers/connect", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          providerId: provider.id,
-          apiKey,
-          baseURL: provider.customBaseURL ? baseURL : undefined,
-          force,
-        }),
-      });
-      const payload = (await response.json()) as {
-        message?: string;
-        error?: string;
-        token?: string;
-        expiresAt?: number;
-        modelCount?: number;
-      };
-      if (!response.ok) {
-        setStatus(provider.id, {
-          kind: "error",
-          message: payload.message ?? payload.error ?? t("connectionFailed"),
-          canForce: !force,
-        });
+      const { response, data } = await providerRequest("/api/providers/connect", {
+        providerId: provider.id, apiKey, baseURL: provider.customBaseURL ? baseURL : undefined, force,
+      }, controller);
+      if (!current()) return;
+      if (!response.ok || data.ok === false) {
+        setStatus(provider.id, { kind: "error", message: data.message ?? data.error ?? t("connectionFailed"), canForce: !force && response.status === 400 });
         return;
       }
+      if ((data.providerId !== undefined && data.providerId !== provider.id) || (data.token !== undefined && (typeof data.token !== "string" || !data.token.startsWith("v1."))) ||
+          (data.expiresAt !== undefined && (typeof data.expiresAt !== "number" || !Number.isFinite(data.expiresAt))) ||
+          (data.modelCount !== undefined && (!Number.isInteger(data.modelCount) || data.modelCount < 0 || data.modelCount > 400))) throw new Error("Invalid provider response.");
       connect(provider.id, {
-        ...(payload.token ? { token: payload.token } : {}),
-        label: payload.message ?? t("connected"),
-        connectedAt: Date.now(),
-        ...(payload.expiresAt ? { expiresAt: payload.expiresAt } : {}),
+        ...(data.token ? { token: data.token } : {}), label: data.message ?? t("connected"), connectedAt: Date.now(),
+        ...(data.expiresAt ? { expiresAt: data.expiresAt } : {}),
         ...(provider.customBaseURL && baseURL ? { baseURL } : {}),
-        ...(payload.modelCount !== undefined ? { modelCount: payload.modelCount } : {}),
-        source: payload.token ? "browser" : envConfigured[provider.id] ? "server" : "keyless",
+        ...(data.modelCount !== undefined ? { modelCount: data.modelCount } : {}),
+        source: data.token ? "browser" : envConfigured[provider.id] ? "server" : "keyless",
       });
-      setStatus(provider.id, { kind: "ok", message: payload.message ?? t("connected") });
-      // Do not erase a different provider's newer input if this request was slow.
-      setApiKey((current) => current === apiKey ? "" : current);
-      setBaseURL((current) => current === baseURL ? "" : current);
+      setStatus(provider.id, { kind: "ok", message: data.message ?? t("connected") });
+      setApiKey((value) => value === apiKey ? "" : value);
+      setBaseURL((value) => value === baseURL ? "" : value);
       void refreshStatus();
       void loadModels(provider.id, true);
-    } catch (error) {
-      setStatus(provider.id, {
-        kind: "error",
-        message: error instanceof Error ? error.message : t("connectionFailed"),
-      });
+    } catch {
+      if (current())
+        setStatus(provider.id, { kind: "error", message: t("connectionFailed") });
     }
   }
 

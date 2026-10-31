@@ -23,6 +23,8 @@ export type ToolPart = ToolUIPart | DynamicToolUIPart;
 export type ToolHeaderProps = {
   title?: string;
   className?: string;
+  statusLabel?: string;
+  statusError?: boolean;
 } & (
   | { type: ToolUIPart["type"]; state: ToolUIPart["state"]; toolName?: never }
   | {
@@ -55,6 +57,8 @@ export const ToolHeader = ({
   type,
   state,
   toolName,
+  statusLabel,
+  statusError,
   ...props
 }: ToolHeaderProps) => {
   const derivedName = type === "dynamic-tool" ? toolName : type.split("-").slice(1).join("-");
@@ -74,7 +78,9 @@ export const ToolHeader = ({
         <WrenchIcon className="size-4 shrink-0" />
       )}
       <span className="text-sm">{displayName}</span>
-      {getStatusIndicator(state)}
+      {" "}{statusLabel !== undefined
+        ? <span className={cn("text-sm", statusError && "text-destructive")}>{statusLabel}</span>
+        : getStatusIndicator(state)}
       <ChevronRightIcon className="size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
     </CollapsibleTrigger>
   );

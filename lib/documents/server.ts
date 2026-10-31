@@ -2,6 +2,7 @@ import { Worker } from "node:worker_threads";
 import path from "node:path";
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
+import { waitWithAbort } from "../abortable";
 import { PDFDocument, rgb } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
 import { Document, Packer, Paragraph, TextRun } from "docx";
@@ -20,25 +21,32 @@ export async function boundedBody(
   request: Request,
   max: number,
 ): Promise<Uint8Array> {
-  if (Number(request.headers.get("content-length")) > max)
+  if (Number(request.headers.get("content-length")) > max) {
+    if (request.body) void request.body.cancel().catch(() => {});
     throw new Error("Document too large.");
+  }
   if (!request.body) throw new Error("Empty body.");
   const reader = request.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
+  let chunksRead = 0;
+  let complete = false;
+  const signal = AbortSignal.any([request.signal, AbortSignal.timeout(8_000)]);
   try {
     while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+      signal.throwIfAborted();
+      const { done, value } = await waitWithAbort(reader.read(), signal);
+      if (done) { complete = true; break; }
+      if (++chunksRead > 65_536) throw new Error("Too many document chunks.");
       size += value.byteLength;
       if (size > max) {
-        await reader.cancel();
         throw new Error("Document too large.");
       }
       chunks.push(value);
     }
   } finally {
-    reader.releaseLock();
+    if (!complete) void reader.cancel().catch(() => {});
+    try { reader.releaseLock(); } catch { /* A pending read can outlive cancellation. */ }
   }
   const all = new Uint8Array(size);
   let offset = 0;

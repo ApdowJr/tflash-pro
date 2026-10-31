@@ -31,6 +31,7 @@ export type OAuthEnvelope = {
   readonly expiresAt: number;
   readonly integrationId: string;
   readonly ownerId: string;
+  readonly ownerKind?: "supabase" | "vercel";
   readonly flowId: string;
   readonly nonce: string;
   readonly verifier?: string;

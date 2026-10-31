@@ -84,7 +84,8 @@ function fakeFetch(handler = () => undefined) {
     }
     if (path.startsWith("/api/chats/") && path.endsWith("/search")) return Response.json({ status: "no-match" });
     if (path.startsWith("/api/chats/")) return Response.json({ ok: true });
-    if (path === "/api/chats") return Response.json({ chats: [], storage: "account" });
+    if (path === "/api/chats") return Response.json({ chats: [], storage: "browser" });
+    if (path === "/api/workspace") return Response.json({ storage: "browser", workspace: null, updatedAt: null });
     throw new Error(`Unexpected request in UI test: ${path}`);
   };
   return calls;
@@ -95,7 +96,7 @@ test("history actions rename, confirm removal, report failure, and persist befor
   let deleteFails = true;
   const calls = fakeFetch((path, options) => {
     if (path === "/api/chats/chat-a" && options.method === "DELETE" && deleteFails) {
-      return Response.json({ error: "offline" }, { status: 503 });
+      return Response.json({ error: "invalid" }, { status: 400 });
     }
   });
   let navigated = false;
@@ -449,6 +450,7 @@ test("Connections offers direct consent links without asking users for tokens", 
 });
 
 test("OAuth return marks only the approved connection as connected and supports disconnect", async () => {
+  Object.defineProperty(navigator, "locks", { configurable: true, value: { request: async (_name, _options, fn) => fn({}) } });
   seed({ language: "so" });
   window.history.replaceState({}, "", "/s/current-chat?integration=linear&connected=1");
   fakeFetch((path) => path === "/api/integrations/oauth/result" ? Response.json({
@@ -468,17 +470,20 @@ test("OAuth return marks only the approved connection as connected and supports 
   assert.equal(record.token, "v1.sealed-grant");
   await userEvent.setup().click(within(linearRow).getByRole("button", { name: "Ka saar" }));
   assert.ok(await screen.findByRole("link", { name: "Ku xir Linear" }));
+  delete navigator.locks;
 });
 
 test("a forged or lost OAuth handoff does not show a connection success", async () => {
+  Object.defineProperty(navigator, "locks", { configurable: true, value: { request: async (_name, _options, fn) => fn({}) } });
   seed();
   window.history.replaceState({}, "", "/?integration=linear&connected=1");
   fakeFetch((path) => path === "/api/integrations/oauth/result" ? Response.json({ connected: false }) : undefined);
   render(app(h(ConnectionsPanel)));
-  assert.match((await screen.findByRole("alert")).textContent, /Authorization did not finish/);
-  assert.equal(screen.queryByRole("status"), null);
-  assert.ok(await screen.findByRole("link", { name: "Connect Linear" }));
+  assert.ok(await screen.findByText(/provider may have created an OAuth client or granted access/i));
+  assert.equal(screen.queryByText("Connected with one-tap authorization."), null);
+  assert.equal(screen.queryByRole("link", { name: "Connect Linear" }), null);
   assert.equal(JSON.parse(window.localStorage.getItem(storageKey)).integrationTokens.linear, undefined);
+  delete navigator.locks;
 });
 
 test("a denied OAuth flow keeps the service disconnected", async () => {
@@ -494,18 +499,21 @@ test("a denied OAuth flow keeps the service disconnected", async () => {
 test("an in-flight renewal cannot reconnect a grant after the user disconnects it", async () => {
   seed({ integrationTokens: { linear: { token: "v1.original", label: "Authorized", connectedAt: Date.now(),
     tokenExpiresAt: Date.now() + 60000, expiresAt: Date.now() + 86400000, refreshable: true, source: "oauth" } } });
+  Object.defineProperty(navigator, "locks", { configurable: true, value: { request: async (_name, _options, fn) => fn({}) } });
   let finish;
   const renewal = new Promise((resolve) => { finish = resolve; });
   const calls = fakeFetch((path) => path === "/api/integrations/oauth/refresh" ? renewal : undefined);
-  render(app(h(ConnectionsPanel)));
-  await waitFor(() => assert.ok(calls.some((item) => item.path === "/api/integrations/oauth/refresh")));
-  await userEvent.setup().click(screen.getByRole("button", { name: "Disconnect" }));
-  await React.act(async () => {
-    finish(Response.json({ ok: true, token: "v1.renewed", expiresAt: Date.now() + 86400000, tokenExpiresAt: Date.now() + 3600000 }));
-    await renewal;
-  });
-  assert.equal(JSON.parse(window.localStorage.getItem(storageKey)).integrationTokens.linear, undefined);
-  assert.ok(await screen.findByRole("link", { name: "Connect Linear" }));
+  try {
+    render(app(h(ConnectionsPanel)));
+    await waitFor(() => assert.ok(calls.some((item) => item.path === "/api/integrations/oauth/refresh")));
+    await userEvent.setup().click(screen.getByRole("button", { name: "Disconnect" }));
+    await React.act(async () => {
+      finish(Response.json({ ok: true, token: "v1.renewed", expiresAt: Date.now() + 86400000, tokenExpiresAt: Date.now() + 3600000 }));
+      await renewal;
+    });
+    assert.equal(JSON.parse(window.localStorage.getItem(storageKey)).integrationTokens.linear, undefined);
+    assert.ok(await screen.findByRole("link", { name: "Connect Linear" }));
+  } finally { delete navigator.locks; }
 });
 
 test("a second identical draft survives completion of an earlier send", async () => {
@@ -883,6 +891,7 @@ test("actual chat submits only selected memory/project context, enforces the wir
     await user.type(screen.getByPlaceholderText("Ask Tflash anything…"), "Read this document");
     fireEvent.change(screen.getByLabelText("Read PDF or DOCX", { selector: "input" }), { target: { files: [new File(["%PDF-fixture"], "study.pdf", { type: "application/pdf" })] } });
     await screen.findByText("study.pdf.extracted.txt");
+    await waitFor(() => assert.equal(screen.getByRole("button", { name: "Send" }).disabled, false));
     fireEvent.submit(screen.getByPlaceholderText("Ask Tflash anything…").closest("form"));
     await waitFor(() => assert.equal(sends.length, 1));
     assert.ok(sends[0].options.clientContext.includes("Use primary sources"));
@@ -1013,7 +1022,7 @@ test("workspace cross-tab updates use the latest cloud revision", async () => {
     if (options.method === "PUT") {
       const body = JSON.parse(options.body);
       writes.push({ body, expectedUserId: new Headers(options.headers).get("x-tflash-expected-user-id") });
-      if (body.expectedUpdatedAt !== revision) return Response.json({ error: "conflict" }, { status: 409 });
+      if (body.expectedUpdatedAt !== revision) return Response.json({ error: "conflict", changeNotStarted: true }, { status: 409 });
       cloudWorkspace = body.workspace;
       revision = revisions[nextRevision++];
       return Response.json({ ok: true, storage: "cloud", updatedAt: revision });
@@ -1302,7 +1311,7 @@ test("permissions panel loads, creates and revokes the limited grant", async () 
 });
 
 test("tracked task panel distinguishes missing evidence from cancellation", async () => {
-  const {TrackedTaskPanel}=await import("../components/chat/tracked-task-panel.tsx");seed();let task={objective:"My objective",path:"out.txt",sha256:"a".repeat(64),revision:"revision",continuationBudget:0,state:"awaiting_evidence",verifiedAt:null,reason:null};fakeFetch((path,options)=>{if(!path.endsWith("/task"))return;if(options.method==="DELETE")task={...task,state:"cancelled"};return Response.json({task});});render(app(h(TrackedTaskPanel,{sessionId:"chat-a"})));const user=userEvent.setup();await user.click(screen.getByText("Track a file criterion"));await screen.findByText("Awaiting file evidence.");await user.click(screen.getByRole("button",{name:"Cancel tracking"}));await screen.findByText("Tracking cancelled.");assert.equal(screen.queryByText(/File criterion matched/),null);
+  const {TrackedTaskPanel}=await import("../components/chat/tracked-task-panel.tsx");seed();let task={objective:"My objective",path:"out.txt",sha256:"a".repeat(64),revision:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",continuationBudget:0,state:"awaiting_evidence",verifiedAt:null,reason:null};fakeFetch((path,options)=>{if(!path.endsWith("/task"))return;if(options.method==="DELETE")task={...task,state:"cancelled"};return Response.json({task});});render(app(h(TrackedTaskPanel,{sessionId:"chat-a"})));const user=userEvent.setup();await user.click(screen.getByText("Track a file criterion"));await screen.findByText("Awaiting file evidence.");await user.click(screen.getByRole("button",{name:"Cancel tracking"}));await screen.findByText("Tracking cancelled.");assert.equal(screen.queryByText(/File criterion matched/),null);
 });
 
 test("collapsed activity panel does not scan streaming history until opened", async () => {
@@ -1349,7 +1358,7 @@ test("a task revision conflict keeps the draft and requires refresh before repla
   seed(); let task = null;
   fakeFetch((path, options) => {
     if (!path.endsWith("/task")) return;
-    if (options.method === "PUT") return Response.json({ error: "conflict" }, { status: 409 });
+    if (options.method === "PUT") return Response.json({ error: "conflict", changeNotStarted: true }, { status: 409 });
     return Response.json({ task });
   });
   render(app(h(TrackedTaskPanel, { sessionId: "chat-a" })));
@@ -1363,7 +1372,7 @@ test("a task revision conflict keeps the draft and requires refresh before repla
   await screen.findByText(/task changed elsewhere/i);
   assert.equal(screen.getByLabelText("Objective").value, "My draft");
   assert.equal(screen.getByRole("button", { name: "Save or replace tracked task" }).disabled, true);
-  await user.click(screen.getByRole("button", { name: "Refresh permissions" }));
+  await user.click(screen.getByRole("button", { name: "Refresh task" }));
   await waitFor(() => assert.equal(screen.getByRole("button", { name: "Save or replace tracked task" }).disabled, false));
 });
 
@@ -1372,7 +1381,7 @@ test("permission conflicts preserve the address and require refresh", async () =
   seed(); let attempts = 0;
   fakeFetch((path, options) => {
     if (!path.endsWith("/permissions")) return;
-    if (options.method === "POST") { attempts++; return Response.json({ error: "conflict" }, { status: 409 }); }
+    if (options.method === "POST") { attempts++; return Response.json({ error: "conflict", changeNotStarted: true }, { status: 409 }); }
     return Response.json({ grants: [], epoch: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" });
   });
   render(app(h(PermissionsPanel, { sessionId: "chat-a" })));
@@ -1563,7 +1572,7 @@ test("a late initial continuation read cannot overwrite a fresher manual refresh
   const task={objective:'Task',path:'out.txt',sha256:'a'.repeat(64),revision:'r1',continuationBudget:1,state:'awaiting_evidence',verifiedAt:null,reason:null};
   render(app(h(TaskContinuation,{sessionId:'chat-a',task,disabled:false,onContinue:async()=>{throw new Error('must not send');},onRefreshTask:()=>{}})));
   const user=userEvent.setup();
-  await user.click(screen.getByRole('button',{name:'Refresh permissions'}));
+  await user.click(screen.getByRole('button',{name:'Refresh continuation'}));
   await screen.findByText(/Dispatch began but the outcome is unknown/);
   await React.act(async()=>release(Response.json({attempt:null,history:[]})));
   assert.ok(screen.getByText(/Dispatch began but the outcome is unknown/));
@@ -1627,8 +1636,1452 @@ test("changing continuation sessions clears busy and ignores an old mutation res
   await waitFor(()=>assert.equal(requested,true));
   view.rerender(app(h(TaskContinuation,{...props,sessionId:'chat-b'})));
   await screen.findByRole('checkbox',{name:/explicitly authorize one new turn/});
-  assert.equal(screen.getByRole('button',{name:'Refresh permissions'}).disabled,false);
+  assert.equal(screen.getByRole('button',{name:'Refresh continuation'}).disabled,false);
   await React.act(async()=>release(Response.json({ok:true})));
   assert.equal(screen.queryByText(/Dispatch began but the outcome is unknown/),null);
-  assert.equal(screen.getByRole('button',{name:'Refresh permissions'}).disabled,false);
+  assert.equal(screen.getByRole('button',{name:'Refresh continuation'}).disabled,false);
+});
+
+test("Vercel sync imports local proofs, loads another device's history, and keeps local data on failure", async () => {
+  seed({chats:[{id:'local',title:'Local',updatedAt:1}],chatProofs:{local:'local-proof'}});
+  let fail=false;
+  const calls=fakeFetch((path,options)=>{
+    if(path==='/api/chats') return fail ? Response.json({error:'offline'},{status:503}) : Response.json({storage:'account',chats:[]});
+    if(path==='/api/chats/vercel-sync') {
+      const body=JSON.parse(options.body);
+      assert.equal(body.chats[0].proof,'local-proof');
+      return Response.json({storage:'account',chats:[{id:'local',title:'Renamed remotely',updatedAt:2,proof:'local-proof'},{id:'remote',title:'Other device',updatedAt:3,proof:'remote-proof'}]});
+    }
+  });
+  function Probe(){
+    const {settings,refreshChats,historyError}=useAppSettings();
+    return h('div',null,h('p',null,settings.chats.map(c=>c.title).join(',')),h('p',null,settings.chatProofs.remote ?? 'no remote proof'),h('p',null,historyError ?? 'no error'),h('button',{onClick:()=>void refreshChats()},'Refresh'));
+  }
+  render(app(h(Probe)));
+  await screen.findByText('Renamed remotely,Other device');
+  assert.ok(screen.getByText('remote-proof'));
+  assert.ok(calls.some(c=>c.path==='/api/chats/vercel-sync'));
+  await waitFor(()=>assert.equal(JSON.parse(window.localStorage.getItem(storageKey)).chatProofs.remote,'remote-proof'));
+  fail=true;
+  await userEvent.setup().click(screen.getByRole('button',{name:'Refresh'}));
+  await screen.findByText('historyLoadFailed');
+  assert.ok(screen.getByText('Renamed remotely,Other device'));
+  assert.equal(JSON.parse(window.localStorage.getItem(storageKey)).chats.length,2);
+});
+
+test("Vercel stale sync cannot undo a completed local rename", async () => {
+  seed({chats:[{id:'local',title:'Old',updatedAt:1}],chatProofs:{local:'proof'}});
+  let resolveImport;
+  const pending=new Promise(resolve=>{resolveImport=resolve});
+  fakeFetch((path,options)=>{
+    if(path==='/api/chats') return Response.json({storage:'account',chats:[]});
+    if(path==='/api/chats/vercel-sync') return pending;
+    if(path==='/api/chats/local' && options.method==='PATCH') return Response.json({ok:true,title:'New'});
+  });
+  function Probe(){ const {settings,renameChat}=useAppSettings(); return h('div',null,h('p',null,settings.chats[0]?.title),h('button',{onClick:()=>void renameChat('local','New')},'Rename')); }
+  render(app(h(Probe)));
+  await screen.findByText('Old');
+  await userEvent.setup().click(screen.getByRole('button',{name:'Rename'}));
+  await screen.findByText('New');
+  await React.act(async()=>{resolveImport(Response.json({storage:'account',chats:[{id:'local',title:'Old',updatedAt:1,proof:'proof'}]})); await pending;});
+  assert.ok(screen.getByText('New'));
+});
+
+test("Vercel workspace sync migrates local projects and memory and loads them on another device", async () => {
+  seed();
+  const local={...emptyWorkspace(),memoryEnabled:true,maxSteps:7,projects:[{id:'p',name:'Device A project',instructions:'Careful instructions',chatIds:['chat']}],notes:[{id:'n',text:'A private note',enabled:true,projectId:'p'}]};
+  const key=workspaceStorageKey('vercel',userId);
+  window.localStorage.setItem(key,JSON.stringify(local));
+  let remote=null, revision=null;
+  const calls=fakeFetch((path,options)=>{
+    if(path!== '/api/workspace') return;
+    assert.equal(new Headers(options.headers).get('x-tflash-expected-user-id'),userId);
+    if(options.method==='PUT') {
+      const body=JSON.parse(options.body);
+      assert.equal(body.expectedUpdatedAt,revision);
+      remote=body.workspace; revision='2026-10-31T12:00:00.001Z';
+      return Response.json({ok:true,storage:'cloud',updatedAt:revision});
+    }
+    return Response.json({storage:'cloud',workspace:remote,updatedAt:revision});
+  });
+  function Probe(){ const {workspace,syncStatus}=useWorkspace(); return h('div',null,h('p',null,workspace.projects[0]?.name ?? 'No project'),h('p',null,workspace.notes[0]?.text ?? 'No note'),h('p',{role:'status'},syncStatus)); }
+  let view=render(app(h(Probe)));
+  await waitFor(()=>assert.equal(screen.getByRole('status').textContent,'synced'));
+  assert.deepEqual(remote,local);
+  assert.equal(calls.filter(c=>c.path==='/api/workspace'&&c.options.method==='PUT').length,1);
+  view.unmount(); window.localStorage.removeItem(key);
+  view=render(app(h(Probe)));
+  await screen.findByText('Device A project');
+  assert.ok(screen.getByText('A private note'));
+  await waitFor(()=>assert.equal(screen.getByRole('status').textContent,'synced'));
+  assert.deepEqual(JSON.parse(window.localStorage.getItem(key)),local);
+  assert.equal(calls.filter(c=>c.path==='/api/workspace'&&c.options.method==='PUT').length,1);
+});
+
+test("Vercel workspace sync retains divergent local and cloud copies for an explicit choice", async () => {
+  seed();
+  const local={...emptyWorkspace(),projects:[{id:'a',name:'Local project',instructions:'',chatIds:[]}]};
+  const cloud={...emptyWorkspace(),projects:[{id:'b',name:'Cloud project',instructions:'',chatIds:[]}]};
+  const key=workspaceStorageKey('vercel',userId); window.localStorage.setItem(key,JSON.stringify(local));
+  const calls=fakeFetch((path,options)=>path==='/api/workspace' ? Response.json({storage:'cloud',workspace:cloud,updatedAt:'2026-10-31T12:00:00.000Z'}) : undefined);
+  render(app(h(WorkspacePanel)));
+  await screen.findByText('Local project');
+  await screen.findByText("This device's copy is preserved. Keeping it replaces the cloud copy; using cloud replaces this device's copy.");
+  assert.deepEqual(JSON.parse(window.localStorage.getItem(key)),local);
+  assert.equal(calls.filter(c=>c.path==='/api/workspace'&&c.options.method==='PUT').length,0);
+  await userEvent.setup().click(screen.getByRole('button',{name:'Use cloud copy (replace this device)'}));
+  await screen.findByText('Cloud project');
+  assert.deepEqual(JSON.parse(window.localStorage.getItem(key)),cloud);
+});
+
+test("Vercel edits during initial discovery do not write until remote conflict is checked", async () => {
+  seed(); let resolveRemote;
+  const remotePromise=new Promise(resolve=>{resolveRemote=resolve});
+  const cloud={...emptyWorkspace(),maxSteps:19};
+  const calls=fakeFetch((path)=>path==='/api/workspace' ? remotePromise : undefined);
+  let store;
+  function Probe(){store=useWorkspace(); return h('p',{role:'status'},store.syncStatus);}
+  render(app(h(Probe)));
+  await waitFor(()=>assert.equal(store.ready,true));
+  await React.act(async()=>{store.change(w=>({...w,memoryEnabled:true}));});
+  assert.equal(calls.filter(c=>c.path==='/api/workspace'&&c.options.method==='PUT').length,0);
+  await React.act(async()=>{resolveRemote(Response.json({storage:'cloud',workspace:cloud,updatedAt:'2026-10-31T12:00:00.000Z'})); await remotePromise;});
+  await waitFor(()=>assert.equal(store.syncStatus,'conflict'));
+  assert.equal(store.workspace.memoryEnabled,true);
+  assert.equal(calls.filter(c=>c.path==='/api/workspace'&&c.options.method==='PUT').length,0);
+});
+
+test("Vercel sync failure keeps edits locally; retry detects a divergent cloud copy", async () => {
+  seed(); let online=false;
+  const cloud={...emptyWorkspace(),maxSteps:14};
+  const calls=fakeFetch((path)=>path==='/api/workspace' ? online ? Response.json({storage:'cloud',workspace:cloud,updatedAt:'2026-10-31T12:00:00.000Z'}) : Response.json({error:'offline'},{status:503}) : undefined);
+  render(app(h(WorkspacePanel)));
+  await screen.findByRole('button',{name:'Retry workspace sync'});
+  await userEvent.setup().click(screen.getByRole('checkbox',{name:'Use saved notes in future messages'}));
+  const key=workspaceStorageKey('vercel',userId);
+  assert.equal(JSON.parse(window.localStorage.getItem(key)).memoryEnabled,true);
+  assert.equal(calls.filter(c=>c.path==='/api/workspace'&&c.options.method==='PUT').length,0);
+  online=true;
+  await userEvent.setup().click(screen.getByRole('button',{name:'Retry workspace sync'}));
+  await screen.findByText("This device's copy is preserved. Keeping it replaces the cloud copy; using cloud replaces this device's copy.");
+  assert.equal(JSON.parse(window.localStorage.getItem(key)).memoryEnabled,true);
+  assert.equal(calls.filter(c=>c.path==='/api/workspace'&&c.options.method==='PUT').length,0);
+});
+
+test("a newer local workspace edit is not replaced by a delayed cloud conflict choice", async () => {
+  seed();
+  const local={...emptyWorkspace(),maxSteps:2}; const cloud={...emptyWorkspace(),maxSteps:3};
+  window.localStorage.setItem(workspaceStorageKey('vercel',userId),JSON.stringify(local));
+  let calls=0, resolveReview;
+  const pending=new Promise(resolve=>{resolveReview=resolve});
+  fakeFetch((path)=>{ if(path==='/api/workspace') return ++calls===1 ? Response.json({storage:'cloud',workspace:cloud,updatedAt:'2026-10-31T12:00:00.000Z'}) : pending; });
+  let store;
+  function Probe(){store=useWorkspace();return h('p',{role:'status'},store.syncStatus);}
+  render(app(h(Probe)));
+  await waitFor(()=>assert.equal(store.syncStatus,'conflict'));
+  let review;
+  await React.act(async()=>{review=store.resolveConflict('cloud');});
+  await React.act(async()=>{store.change(w=>({...w,memoryEnabled:true}));});
+  await React.act(async()=>{resolveReview(Response.json({storage:'cloud',workspace:cloud,updatedAt:'2026-10-31T12:00:00.000Z'})); await review;});
+  assert.equal(store.syncStatus,'conflict');
+  assert.equal(store.workspace.memoryEnabled,true);
+  assert.equal(store.workspace.maxSteps,2);
+});
+
+test("corrupt browser workspace is not overwritten by a valid Vercel cloud snapshot", async () => {
+  seed(); const key=workspaceStorageKey('vercel',userId); window.localStorage.setItem(key,'broken-json');
+  const calls=fakeFetch(path=>path==='/api/workspace'?Response.json({storage:'cloud',workspace:emptyWorkspace(),updatedAt:'2026-10-31T12:00:00.000Z'}):undefined);
+  let store; function Probe(){store=useWorkspace(); return h('p',{role:'status'},store.syncStatus);}
+  render(app(h(Probe)));
+  await waitFor(()=>assert.equal(store.syncStatus,'error'));
+  assert.equal(store.storageError,true); assert.equal(window.localStorage.getItem(key),'broken-json');
+  assert.equal(calls.filter(c=>c.path==='/api/workspace'&&c.options.method==='PUT').length,0);
+});
+
+test("Vercel workspace response lost after a write requires review without replay", async () => {
+  seed(); let remote=null, revision=null, writes=0;
+  const calls=fakeFetch((path,options)=>{
+    if(path!=='/api/workspace') return;
+    if(options.method==='PUT') {
+      writes++; const body=JSON.parse(options.body); remote=body.workspace; revision='2026-10-31T12:00:00.001Z';
+      return Response.json({error:'lost response'},{status:503});
+    }
+    return Response.json({storage:'cloud',workspace:remote,updatedAt:revision});
+  });
+  render(app(h(WorkspacePanel)));
+  await screen.findByRole('button',{name:'Retry workspace sync'});
+  assert.equal(writes,1);
+  await userEvent.setup().click(screen.getByRole('button',{name:'Retry workspace sync'}));
+  await screen.findByText(/An earlier save may have reached the cloud/, { selector: '[role="alert"]' });
+  assert.equal(writes,1);
+  await userEvent.setup().click(screen.getByRole('button',{name:'Use cloud copy (replace this device)'}));
+  await waitFor(()=>assert.equal(screen.getByRole('status').textContent,'Workspace synced to your signed-in account. Memory remains opt-in; avoid storing secrets.'));
+  assert.equal(calls.filter(c=>c.path==='/api/workspace'&&c.options.method==='PUT').length,1);
+});
+
+test("empty malformed Vercel local workspace cannot overwrite a valid cloud copy", async () => {
+  seed(); const key=workspaceStorageKey('vercel',userId); window.localStorage.setItem(key,'');
+  const calls=fakeFetch(path=>path==='/api/workspace'?Response.json({storage:'cloud',workspace:emptyWorkspace(),updatedAt:'2026-10-31T12:00:00.000Z'}):undefined);
+  let store; function Probe(){store=useWorkspace(); return h('p',{role:'status'},store.syncStatus);}
+  render(app(h(Probe)));
+  await waitFor(()=>assert.equal(store.syncStatus,'error'));
+  assert.equal(store.storageError,true); assert.equal(window.localStorage.getItem(key),'');
+  assert.equal(calls.filter(c=>c.path==='/api/workspace'&&c.options.method==='PUT').length,0);
+  assert.throws(()=>store.change(w=>({...w,memoryEnabled:true})));
+});
+
+test("late Vercel workspace load cannot leak across an account switch", async () => {
+  seed(); let resolveAlice;
+  const aliceResponse=new Promise(resolve=>{resolveAlice=resolve});
+  const alice={...emptyWorkspace(),notes:[{id:'a',text:'Alice private note',projectId:null,enabled:true}]};
+  const bob={...emptyWorkspace(),notes:[{id:'b',text:'Bob private note',projectId:null,enabled:true}]};
+  fakeFetch((path,options)=>{
+    if(path!=='/api/workspace') return;
+    const id=new Headers(options.headers).get('x-tflash-expected-user-id');
+    return id==='alice' ? aliceResponse : Response.json({storage:'cloud',workspace:bob,updatedAt:'2026-10-31T12:00:00.000Z'});
+  });
+  function Probe(){const {workspace}=useWorkspace();return h('p',null,workspace.notes[0]?.text ?? 'Loading');}
+  const view=render(h(WorkspaceProvider,{kind:'vercel',userId:'alice'},h(Probe)));
+  await screen.findByText('Loading');
+  view.rerender(h(WorkspaceProvider,{kind:'vercel',userId:'bob'},h(Probe)));
+  await screen.findByText('Bob private note');
+  await React.act(async()=>{resolveAlice(Response.json({storage:'cloud',workspace:alice,updatedAt:'2026-10-31T12:00:00.000Z'})); await aliceResponse;});
+  assert.ok(screen.getByText('Bob private note'));
+  assert.equal(screen.queryByText('Alice private note'),null);
+  assert.equal(window.localStorage.getItem(workspaceStorageKey('vercel','alice')),null);
+});
+
+test("collapsed shell tool labels show failed, partial and unknown outcomes without opening outputs", async () => {
+  const { AgentMessage } = await import("../components/chat/agent-message.tsx");
+  seed(); fakeFetch();
+  const part=(id,output,partial=false)=>({type:'dynamic-tool',toolName:'bash',toolCallId:id,state:'output-available',input:{command:`secret-${id}`},output,partial});
+  const parts=[part('failed',{status:'completed',exitCode:2}),part('background',{status:'running',pid:123}),part('unknown',{}),part('partial',{status:'completed',exitCode:1},true),part('success',{status:'completed',exitCode:0})];
+  const message={id:'shell-test',role:'assistant',parts};
+  render(app(h(AgentMessage,{message,isStreaming:false,canRespond:()=>false,questionsFor:()=>[],onInputResponses(){}})));
+  const headers=screen.getAllByRole('button',{name:/bash/});
+  assert.equal(headers.length,5);
+  assert.match(headers[0].textContent,/Failed/);
+  assert.match(headers[1].textContent,/Started · outcome unknown/);
+  assert.match(headers[2].textContent,/Outcome unknown/);
+  assert.match(headers[3].textContent,/Running/);
+  assert.doesNotMatch(headers[4].textContent,/Failed|unknown|Running/);
+  assert.equal(screen.queryByText(/secret-failed/),null);
+  await userEvent.setup().click(headers[0]);
+  assert.ok(await screen.findByText(/Exited with code 2/));
+});
+
+test("shell status labels are translated in Somali", async () => {
+  const { AgentMessage } = await import("../components/chat/agent-message.tsx");
+  seed({language:'so'}); fakeFetch();
+  const message={id:'shell-so',role:'assistant',parts:[{type:'dynamic-tool',toolName:'bash',toolCallId:'failure',state:'output-available',input:{command:'x'},output:{status:'completed',exitCode:1}}]};
+  render(app(h(AgentMessage,{message,isStreaming:false,canRespond:()=>false,questionsFor:()=>[],onInputResponses(){}})));
+  assert.match((await screen.findByRole('button',{name:/bash/})).textContent,/Fashilantay/);
+});
+
+test("reported usage panel is lazy, localized, and updates as the event snapshot changes", async () => {
+  const { UsagePanel }=await import('../components/chat/usage-panel.tsx');
+  seed({language:'so'}); fakeFetch();
+  let scans=0;
+  const watch=items=>new Proxy(items,{get(target,key,receiver){if(key===Symbol.iterator) scans++; return Reflect.get(target,key,receiver);}});
+  const initial=watch([{type:'session.waiting',data:{usage:{inputTokens:100,outputTokens:20,costUsd:0.1}}}]);
+  const view=render(app(h(UsagePanel,{events:initial})));
+  for(let i=0;i<5;i++) view.rerender(app(h(UsagePanel,{events:initial})));
+  assert.equal(scans,0);
+  await userEvent.setup().click(await screen.findByText('Isticmaalka model-ka ee la soo sheegay'));
+  assert.ok(await screen.findByText('100'));
+  assert.ok(screen.getByText('$0.1000'));
+  assert.ok(scans>0);
+  const changed=watch([{type:'session.waiting',data:{usage:{inputTokens:110}}}]);
+  view.rerender(app(h(UsagePanel,{events:changed})));
+  assert.ok(await screen.findByText('110'));
+  assert.equal(screen.queryByText('$0.1000'),null);
+  assert.equal(screen.getAllByText('Lama soo sheegin').length,2);
+});
+
+test("clear search restores the chat list, returns focus, and discards late results", async () => {
+  seed({chats:[{id:'chat',title:'Project',updatedAt:1}],chatProofs:{chat:'proof'}});
+  let resolveSearch;
+  const pending=new Promise(resolve=>{resolveSearch=resolve});
+  const calls=fakeFetch(path=>path==='/api/chats/chat/search'?pending:undefined);
+  render(app(h(Sidebar,{open:true,onClose(){},onNewChat(){},onOpenSettings(){}})));
+  const user=userEvent.setup();
+  const input=await screen.findByRole('searchbox',{name:'Search chats…'});
+  await user.type(input,'needle');
+  await waitFor(()=>assert.ok(calls.some(call=>call.path==='/api/chats/chat/search')));
+  const request=calls.find(call=>call.path==='/api/chats/chat/search');
+  await user.click(screen.getByRole('button',{name:'Clear chat search'}));
+  assert.equal(input.value,''); assert.equal(document.activeElement,input);
+  assert.equal(request.options.signal.aborted,true);
+  assert.ok(screen.getByRole('link',{name:'Project'}));
+  await React.act(async()=>{resolveSearch(Response.json({status:'matched',snippet:{before:'',match:'needle',after:''}}));await pending;});
+  assert.equal(screen.queryByText('needle'),null);
+  assert.equal(screen.queryByRole('button',{name:'Clear chat search'}),null);
+});
+
+test("a search transport that ignores abort times out without blocking remaining chats", async () => {
+  const chats=Array.from({length:4},(_,i)=>({id:`s${i}`,title:`Project ${i}`,updatedAt:i}));
+  seed({chats,chatProofs:Object.fromEntries(chats.map(c=>[c.id,'proof']))});
+  const oldTimeout=window.setTimeout;
+  window.setTimeout=function(fn,delay,...args){return oldTimeout.call(window,fn,delay===16000?40:delay,...args);};
+  const calls=fakeFetch(path=>path.endsWith('/search') ? path.includes('/s3/') ? Response.json({status:'no-match'}) : new Promise(()=>{}) : undefined);
+  try {
+    render(app(h(Sidebar,{open:true,onClose(){},onNewChat(){},onOpenSettings(){}})));
+    await userEvent.setup().type(await screen.findByRole('searchbox',{name:'Search chats…'}),'needle');
+    await screen.findByText(/Some chats could not be searched/);
+    assert.equal(calls.filter(call=>call.path.endsWith('/search')).length,4);
+    assert.equal(screen.queryByText('No chats match your search.'),null);
+    assert.ok(screen.getByRole('button',{name:'Try again'}));
+  } finally {window.setTimeout=oldTimeout;}
+});
+
+test("Somali chat search has a translated clear control", async () => {
+  seed({language:'so',chats:[{id:'chat',title:'Project',updatedAt:1}],chatProofs:{chat:'proof'}}); fakeFetch();
+  render(app(h(Sidebar,{open:true,onClose(){},onNewChat(){},onOpenSettings(){}})));
+  const user=userEvent.setup(); const input=await screen.findByRole('searchbox',{name:'Raadi wada hadallo…'});
+  await user.type(input,'x');
+  await user.click(screen.getByRole('button',{name:'Nadiifi raadinta wada hadallada'}));
+  assert.equal(input.value,''); assert.equal(document.activeElement,input);
+});
+
+test("a search response with a stalled JSON body is marked incomplete rather than hanging", async () => {
+  seed({chats:[{id:'json',title:'Project',updatedAt:1}],chatProofs:{json:'proof'}});
+  const oldTimeout=window.setTimeout;
+  window.setTimeout=function(fn,delay,...args){return oldTimeout.call(window,fn,delay===16000?40:delay,...args);};
+  fakeFetch(path=>path==='/api/chats/json/search'?{ok:true,json:()=>new Promise(()=>{})}:undefined);
+  try {
+    render(app(h(Sidebar,{open:true,onClose(){},onNewChat(){},onOpenSettings(){}})));
+    await userEvent.setup().type(await screen.findByRole('searchbox',{name:'Search chats…'}),'needle');
+    assert.ok(await screen.findByText(/Some chats could not be searched/));
+    assert.equal(screen.queryByText('No chats match your search.'),null);
+  } finally {window.setTimeout=oldTimeout;}
+});
+
+test("workspace timed-out write holds queued edits until an explicit cloud review", async () => {
+  seed(); const originalTimeout=AbortSignal.timeout; const deadlines=[];
+  AbortSignal.timeout=()=>{const controller=new AbortController();deadlines.push(controller);return controller.signal;};
+  let releaseFirst, firstSignal, writes=0, remote=null, revision=null;
+  const pending=new Promise(resolve=>{releaseFirst=resolve;});
+  const calls=fakeFetch((path,options)=>{
+    if(path!=='/api/workspace')return;
+    if(options.method==='PUT') {
+      writes++;
+      if(writes===1){firstSignal=options.signal;return pending;}
+      const body=JSON.parse(options.body); assert.equal(body.expectedUpdatedAt,revision);
+      remote=body.workspace;revision='2026-10-31T13:00:00.001Z';
+      return Response.json({ok:true,storage:'cloud',updatedAt:revision});
+    }
+    return Response.json({storage:'cloud',workspace:remote,updatedAt:revision});
+  });
+  let store;
+  function Probe(){store=useWorkspace();return h('div',null,h('p',{role:'status'},store.syncStatus),h('button',{onClick:store.retrySync},'Retry'),h('button',{onClick:()=>void store.resolveConflict('browser')},'Keep local'));}
+  try {
+    render(app(h(Probe)));
+    await waitFor(()=>assert.equal(writes,1));
+    await React.act(async()=>{store.change(w=>({...w,memoryEnabled:true}));store.change(w=>({...w,maxSteps:5}));});
+    const deadline=deadlines.find(c=>c.signal===firstSignal);assert.ok(deadline);
+    await React.act(async()=>{deadline.abort();});
+    await waitFor(()=>assert.equal(store.syncStatus,'error'));
+    assert.equal(writes,1);assert.equal(store.workspace.maxSteps,5);
+    assert.equal(JSON.parse(window.localStorage.getItem(workspaceStorageKey('vercel',userId))).memoryEnabled,true);
+    await React.act(async()=>{releaseFirst(Response.json({ok:true,storage:'cloud',updatedAt:'2026-10-31T13:00:00.000Z'}));await pending;});
+    await userEvent.setup().click(screen.getByRole('button',{name:'Retry'}));
+    await waitFor(()=>assert.equal(store.syncStatus,'uncertain'));
+    assert.equal(writes,1,'review read must not automatically replay the write');
+    await userEvent.setup().click(screen.getByRole('button',{name:'Keep local'}));
+    await waitFor(()=>assert.equal(store.syncStatus,'synced'));
+    assert.equal(writes,2); assert.equal(remote.maxSteps,5); assert.equal(remote.memoryEnabled,true);
+    assert.equal(calls.filter(c=>c.path==='/api/workspace'&&c.options.method==='PUT').length,2);
+  } finally {AbortSignal.timeout=originalTimeout;}
+});
+
+test("workspace load timeout leaves local data untouched and offers manual retry", async () => {
+  seed(); const originalTimeout=AbortSignal.timeout; const deadlines=[];
+  AbortSignal.timeout=()=>{const controller=new AbortController();deadlines.push(controller);return controller.signal;};
+  const local={...emptyWorkspace(),maxSteps:9};const key=workspaceStorageKey('vercel',userId);
+  window.localStorage.setItem(key,JSON.stringify(local));
+  let requestSignal; const calls=fakeFetch((path,options)=>{if(path==='/api/workspace'){requestSignal=options.signal;return new Promise(()=>{});}});
+  let store;function Probe(){store=useWorkspace();return h('p',{role:'status'},store.syncStatus);}
+  try {
+    render(app(h(Probe)));
+    await waitFor(()=>assert.ok(requestSignal));
+    await React.act(async()=>{deadlines.find(c=>c.signal===requestSignal).abort();});
+    await waitFor(()=>assert.equal(store.syncStatus,'error'));
+    assert.deepEqual(JSON.parse(window.localStorage.getItem(key)),local);
+    assert.equal(calls.filter(c=>c.path==='/api/workspace'&&c.options.method==='PUT').length,0);
+  } finally {AbortSignal.timeout=originalTimeout;}
+});
+
+test("uncertain Vercel history import is not retried on focus; explicit refresh can retry", async () => {
+  seed({chats:[{id:'local',title:'Local',updatedAt:1}],chatProofs:{local:'proof'}});
+  const originalTimeout=AbortSignal.timeout; const deadlines=[];
+  AbortSignal.timeout=()=>{const controller=new AbortController();deadlines.push(controller);return controller.signal;};
+  let importSignal,posts=0;
+  const calls=fakeFetch((path,options)=>{
+    if(path==='/api/chats') {
+      const h=new Headers(options.headers);assert.equal(h.get('x-tflash-expected-user-id'),userId);assert.equal(h.get('x-tflash-expected-account-kind'),'vercel');
+      return Response.json({storage:'account',chats:[]});
+    }
+    if(path==='/api/chats/vercel-sync') {
+      posts++;const h=new Headers(options.headers);assert.equal(h.get('x-tflash-expected-user-id'),userId);
+      if(posts===1){importSignal=options.signal;return new Promise(()=>{});}
+      return Response.json({storage:'account',chats:[{id:'local',title:'Local',updatedAt:1,proof:'proof'}]});
+    }
+  });
+  function Probe(){const {settings,historyError,refreshChats}=useAppSettings();return h('div',null,h('p',null,historyError??'no error'),h('p',null,settings.chats[0]?.title??'none'),h('button',{onClick:()=>void refreshChats()},'Refresh'));}
+  try {
+    render(app(h(Probe)));
+    await waitFor(()=>assert.ok(importSignal));
+    await React.act(async()=>window.dispatchEvent(new Event('focus')));
+    assert.equal(posts,1,'focus cannot start a second concurrent import');
+    await React.act(async()=>{deadlines.find(c=>c.signal===importSignal).abort();});
+    await screen.findByText('historyImportUncertain');
+    const getCount=calls.filter(c=>c.path==='/api/chats').length;
+    await React.act(async()=>window.dispatchEvent(new Event('focus')));
+    assert.equal(posts,1);assert.equal(calls.filter(c=>c.path==='/api/chats').length,getCount);
+    assert.ok(screen.getByText('Local'));
+    await userEvent.setup().click(screen.getByRole('button',{name:'Refresh'}));
+    await waitFor(()=>assert.equal(posts,2));
+    await screen.findByText('no error');
+    assert.ok(screen.getByText('Local'));
+  } finally {AbortSignal.timeout=originalTimeout;}
+});
+
+test("workspace write with stalled response JSON is treated as uncertain", async () => {
+  seed();const originalTimeout=AbortSignal.timeout;const deadlines=[];
+  AbortSignal.timeout=()=>{const c=new AbortController();deadlines.push(c);return c.signal;};
+  let signal,writes=0;
+  fakeFetch((path,options)=>{
+    if(path!=='/api/workspace')return;
+    if(options.method!=='PUT')return Response.json({storage:'cloud',workspace:null,updatedAt:null});
+    writes++;signal=options.signal;
+    const response=Response.json({ok:true});response.json=()=>new Promise(()=>{});return response;
+  });
+  let store;function Probe(){store=useWorkspace();return h('button',{onClick:store.retrySync},'Retry');}
+  try {
+    render(app(h(Probe)));
+    await waitFor(()=>assert.ok(signal));
+    await React.act(async()=>deadlines.find(c=>c.signal===signal).abort());
+    await waitFor(()=>assert.equal(store.syncStatus,'error'));
+    await userEvent.setup().click(screen.getByRole('button',{name:'Retry'}));
+    await waitFor(()=>assert.equal(store.syncStatus,'uncertain'));
+    assert.equal(writes,1);
+  } finally {AbortSignal.timeout=originalTimeout;}
+});
+
+test("stalled history read preserves local chats and can retry on focus", async () => {
+  seed({chats:[{id:'local',title:'Local',updatedAt:1}],chatProofs:{local:'proof'}});
+  const originalTimeout=AbortSignal.timeout;const deadlines=[];
+  AbortSignal.timeout=()=>{const c=new AbortController();deadlines.push(c);return c.signal;};
+  let signal,reads=0;
+  fakeFetch((path,options)=>{
+    if(path==='/api/chats'){
+      reads++;if(reads===1){signal=options.signal;return new Promise(()=>{});}
+      return Response.json({storage:'account',chats:[{id:'local',title:'Local',updatedAt:1,proof:'proof'}]});
+    }
+    if(path==='/api/chats/vercel-sync')return Response.json({storage:'account',chats:[{id:'local',title:'Local',updatedAt:1,proof:'proof'}]});
+  });
+  function Probe(){const {settings,historyError}=useAppSettings();return h('div',null,h('span',null,settings.chats[0]?.title??'none'),h('span',null,historyError??'ok'));}
+  try {
+    render(app(h(Probe)));await waitFor(()=>assert.ok(signal));
+    await React.act(async()=>deadlines.find(c=>c.signal===signal).abort());
+    await screen.findByText('historyLoadFailed');assert.ok(screen.getByText('Local'));
+    await React.act(async()=>window.dispatchEvent(new Event('focus')));
+    await waitFor(()=>assert.equal(reads,2));await screen.findByText('ok');assert.ok(screen.getByText('Local'));
+  } finally {AbortSignal.timeout=originalTimeout;}
+});
+
+test("uncertain workspace marker survives remount and requires an explicit choice", async () => {
+  seed(); const originalTimeout=AbortSignal.timeout, deadlines=[];
+  AbortSignal.timeout=()=>{const c=new AbortController();deadlines.push(c);return c.signal;};
+  let writes=0,signal;
+  fakeFetch((path,options)=>{if(path!=='/api/workspace')return;if(options.method==='PUT'){writes++;signal=options.signal;return new Promise(()=>{});}return Response.json({storage:'cloud',workspace:null,updatedAt:null});});
+  let store; function Probe(){store=useWorkspace();return h('button',{onClick:()=>void store.resolveConflict('cloud')},'Use cloud');}
+  const element=()=>app(h(Probe));
+  try {
+    const mounted=render(element());await waitFor(()=>assert.ok(signal));
+    await React.act(async()=>deadlines.find(c=>c.signal===signal).abort());
+    await waitFor(()=>assert.equal(store.syncStatus,'error'));
+    assert.ok(Object.keys(window.localStorage).some(k=>k.startsWith('tflash:sync-uncertain:workspace:')));
+    mounted.unmount();render(element());await waitFor(()=>assert.equal(store.syncStatus,'uncertain'));
+    assert.equal(writes,1);await userEvent.setup().click(screen.getByRole('button',{name:'Use cloud'}));
+    await waitFor(()=>assert.equal(store.syncStatus,'synced'));
+    assert.equal(Object.keys(window.localStorage).filter(k=>k.startsWith('tflash:sync-uncertain:workspace:')).length,0);
+    assert.equal(writes,1);
+  } finally {AbortSignal.timeout=originalTimeout;}
+});
+
+test("uncertain history import survives remount and never imports automatically", async () => {
+  seed({chats:[{id:'local',title:'Local',updatedAt:1}],chatProofs:{local:'proof'}});
+  const originalTimeout=AbortSignal.timeout,deadlines=[];
+  AbortSignal.timeout=()=>{const c=new AbortController();deadlines.push(c);return c.signal;};
+  let signal,posts=0,reads=0;
+  fakeFetch((path,options)=>{
+    if(path==='/api/chats'){reads++;return Response.json({storage:'account',chats:[]});}
+    if(path==='/api/chats/vercel-sync'){posts++;if(posts===1){signal=options.signal;return new Promise(()=>{});}return Response.json({storage:'account',chats:[{id:'local',title:'Local',updatedAt:1,proof:'proof'}]});}
+  });
+  function Probe(){const {historyError,refreshChats}=useAppSettings();return h('div',null,h('p',null,historyError??'ok'),h('button',{onClick:()=>void refreshChats()},'Refresh'));}
+  try {
+    const mounted=render(app(h(Probe)));await waitFor(()=>assert.ok(signal));
+    await React.act(async()=>deadlines.find(c=>c.signal===signal).abort());
+    await screen.findByText('historyImportUncertain');const previousReads=reads;
+    mounted.unmount();render(app(h(Probe)));await screen.findByText('historyImportUncertain');
+    assert.equal(posts,1);assert.equal(reads,previousReads);
+    await userEvent.setup().click(screen.getByRole('button',{name:'Refresh'}));
+    await waitFor(()=>assert.equal(posts,2));await screen.findByText('ok');
+    assert.equal(Object.keys(window.localStorage).filter(k=>k.startsWith('tflash:sync-uncertain:history:')).length,0);
+  } finally {AbortSignal.timeout=originalTimeout;}
+});
+
+test("cloud mutations fail closed if durable uncertainty markers cannot be written", async () => {
+  seed({chats:[{id:'local',title:'Local',updatedAt:1}],chatProofs:{local:'proof'}});
+  const proto=Object.getPrototypeOf(window.localStorage),original=proto.setItem;
+  proto.setItem=function(key,value){if(key.startsWith('tflash:sync-uncertain:'))throw new Error('storage denied');return original.call(this,key,value);};
+  let workspacePuts=0,historyPosts=0;
+  fakeFetch((path,options)=>{
+    if(path==='/api/workspace'){if(options.method==='PUT'){workspacePuts++;}return Response.json({storage:'cloud',workspace:null,updatedAt:null});}
+    if(path==='/api/chats')return Response.json({storage:'account',chats:[]});
+    if(path==='/api/chats/vercel-sync'){historyPosts++;return Response.json({storage:'account',chats:[]});}
+  });
+  let store;function Probe(){store=useWorkspace();const {historyError}=useAppSettings();return h('p',null,historyError??'ok');}
+  try {
+    render(app(h(Probe)));
+    await screen.findByText('historyImportUncertain');await waitFor(()=>assert.equal(store.syncStatus,'error'));
+    assert.equal(workspacePuts,0);assert.equal(historyPosts,0);
+  } finally {proto.setItem=original;}
+});
+
+test("workspace review does not clear a marker created by another operation during its read", async () => {
+  seed();const old='tflash:sync-uncertain:workspace:vercel:ui-test:old';const newer='tflash:sync-uncertain:workspace:vercel:ui-test:new';
+  window.localStorage.setItem(old,'1');let reads=0,release;const pending=new Promise(resolve=>{release=resolve;});
+  fakeFetch((path,options)=>{if(path!=='/api/workspace')return;assert.notEqual(options.method,'PUT');reads++;if(reads===2)return pending;return Response.json({storage:'cloud',workspace:null,updatedAt:null});});
+  let store;function Probe(){store=useWorkspace();return h('button',{onClick:()=>void store.resolveConflict('cloud')},'Use cloud');}
+  render(app(h(Probe)));
+  await waitFor(()=>assert.equal(store.syncStatus,'uncertain'));
+  await userEvent.setup().click(screen.getByRole('button',{name:'Use cloud'}));await waitFor(()=>assert.equal(reads,2));
+  window.localStorage.setItem(newer,'1');
+  await React.act(async()=>{release(Response.json({storage:'cloud',workspace:null,updatedAt:null}));await pending;});
+  await waitFor(()=>assert.equal(store.syncStatus,'uncertain'));
+  assert.equal(window.localStorage.getItem(old),null);assert.equal(window.localStorage.getItem(newer),'1');
+});
+
+test("uncertain chat removal survives remount, blocks replay, and requires an explicit reviewed acknowledgment", async () => {
+  seed({ chats:[{id:'chat-a',title:'Original',updatedAt:1}],chatProofs:{'chat-a':'proof'} });
+  const oldTimeout=AbortSignal.timeout, deadlines=[];
+  AbortSignal.timeout=()=>{const c=new AbortController();deadlines.push(c);return c.signal;};
+  let signal,release,removals=0;const pending=new Promise(r=>{release=r;});
+  const calls=fakeFetch((path,options)=>{
+    if(path==='/api/chats/chat-a' && options.method==='DELETE'){
+      removals++;const headers=new Headers(options.headers);assert.equal(headers.get('x-tflash-expected-user-id'),userId);assert.equal(headers.get('x-tflash-expected-account-kind'),'vercel');
+      if(removals===1){signal=options.signal;return pending;}return Response.json({ok:true});
+    }
+  });
+  let actions;function Probe(){actions=useAppSettings();return h(Sidebar,{open:true,onClose(){},onNewChat(){},onOpenSettings(){}});}
+  try {
+    const mounted=render(app(h(Probe)));await screen.findByRole('link',{name:'Original'});
+    let first,queued;await React.act(async()=>{first=actions.removeChat('chat-a').catch(e=>e);queued=actions.renameChat('chat-a','New').catch(e=>e);});
+    await waitFor(()=>assert.ok(signal));await React.act(async()=>deadlines.find(c=>c.signal===signal).abort());
+    const [failure,queuedFailure]=await Promise.all([first,queued]);assert.equal(failure.name,'ChatActionUncertainError');assert.equal(queuedFailure.name,'ChatActionUncertainError');
+    assert.equal(removals,1);assert.equal(calls.filter(c=>c.path==='/api/chats/chat-a'&&c.options.method==='PATCH').length,0);
+    assert.equal(JSON.parse(window.localStorage.getItem(storageKey)).chats[0].title,'Original');
+    await React.act(async()=>{release(Response.json({ok:true}));await pending;});
+    mounted.unmount();render(app(h(Probe)));
+    const warning=await screen.findByText(/A chat action may have completed or may still finish/);
+    assert.ok(warning);assert.equal(removals,1);
+    const check=screen.getByRole('checkbox',{name:/I inspected the history/});const review=screen.getByRole('button',{name:'Acknowledge and allow new actions'});
+    assert.equal(review.disabled,true);const user=userEvent.setup();await user.click(check);await user.click(review);
+    assert.equal(screen.queryByText(/A chat action may have completed or may still finish/),null);
+    assert.equal(removals,1,'acknowledgment never repeats the action');
+    await React.act(async()=>{await actions.removeChat('chat-a');});assert.equal(removals,2);
+  } finally {AbortSignal.timeout=oldTimeout;}
+});
+
+test("stalled chat response JSON holds only that conversation and preserves local data", async () => {
+  seed({chats:[{id:'chat-a',title:'Original',updatedAt:1}],chatProofs:{'chat-a':'proof','chat-b':'proof'}});
+  const oldTimeout=AbortSignal.timeout,deadlines=[];AbortSignal.timeout=()=>{const c=new AbortController();deadlines.push(c);return c.signal;};
+  let signal,writes=0;fakeFetch((path,options)=>{
+    if(path==='/api/chats/chat-a'&&options.method==='PATCH') {writes++;signal=options.signal;const res=Response.json({ok:true});res.json=()=>new Promise(()=>{});return res;}
+    if(path==='/api/chats/chat-b'&&options.method==='PATCH')return Response.json({ok:true,title:'Other'});
+  });
+  let actions;function Probe(){actions=useAppSettings();return h('p',null,actions.settings.chats[0]?.title??'none');}
+  try {
+    render(app(h(Probe)));await screen.findByText('Original');let failure;
+    await React.act(async()=>{failure=actions.renameChat('chat-a','New').catch(e=>e);});
+    await waitFor(()=>assert.ok(signal));await React.act(async()=>deadlines.find(c=>c.signal===signal).abort());
+    assert.equal((await failure).name,'ChatActionUncertainError');
+    await React.act(async()=>{await actions.recordChatActivity('chat-a','Original').catch(()=>{});await actions.renameChat('chat-b','Other');});
+    assert.equal(writes,1);assert.ok(actions.settings.chats.find(c=>c.id==='chat-a'&&c.title==='Original'));assert.equal(actions.settings.chats[0].title,'Other');
+  } finally {AbortSignal.timeout=oldTimeout;}
+});
+
+test("chat actions fail closed when recovery markers cannot be written", async () => {
+  seed({chats:[{id:'chat-a',title:'Original',updatedAt:1}],chatProofs:{'chat-a':'proof'}});
+  const proto=Object.getPrototypeOf(window.localStorage), original=proto.setItem;
+  proto.setItem=function(k,v){if(k.startsWith('tflash:sync-uncertain:chat-action:'))throw new Error('blocked');return original.call(this,k,v);};
+  let calls=0;fakeFetch((path,options)=>{if(path==='/api/chats/chat-a'&&options.method==='PATCH'){calls++;return Response.json({ok:true});}});
+  let actions;function Probe(){actions=useAppSettings();return h('p',null,actions.chatActionStorageError?'storage blocked':'ready');}
+  try {render(app(h(Probe)));await screen.findByText('ready');await React.act(async()=>{await actions.renameChat('chat-a','New').catch(()=>{});});await screen.findByText('storage blocked');assert.equal(calls,0);}
+  finally {proto.setItem=original;}
+});
+
+test("history action warnings are account-scoped and malformed markers block conservatively", async () => {
+  seed({chats:[{id:'chat-a',title:'Original',updatedAt:1}],chatProofs:{'chat-a':'proof'}});
+  const base='tflash:sync-uncertain:chat-action:vercel:';
+  window.localStorage.setItem(`${base}other-user:one`,JSON.stringify({chatId:'chat-a',action:'remove'}));
+  window.localStorage.setItem(`${base}${encodeURIComponent(userId)}:bad`,'not-json');
+  let mutations=0;fakeFetch((path,options)=>{if(path==='/api/chats/chat-a'&&options.method==='PATCH'){mutations++;return Response.json({ok:true});}});
+  let actions;function Probe(){actions=useAppSettings();return h('p',null,String(actions.chatActionWarnings.length));}
+  render(app(h(Probe)));await screen.findByText('1');
+  let error;await React.act(async()=>{error=await actions.renameChat('chat-a','New').catch(e=>e);});
+  assert.equal(error.name,'ChatActionUncertainError');assert.equal(mutations,0);
+  await React.act(async()=>actions.acknowledgeChatAction(actions.chatActionWarnings[0].key));
+  await React.act(async()=>actions.renameChat('chat-a','New'));
+  assert.equal(mutations,1);assert.ok(window.localStorage.getItem(`${base}other-user:one`));
+});
+
+test("a non-successful chat action response that could follow a partial write requires review", async () => {
+  seed({chats:[{id:'chat-a',title:'Original',updatedAt:1}],chatProofs:{'chat-a':'proof'}});
+  let writes=0;fakeFetch((path,options)=>{if(path==='/api/chats/chat-a'&&options.method==='PATCH'){writes++;return Response.json({error:'not found'},{status:404});}});
+  let actions;function Probe(){actions=useAppSettings();return h('p',null,String(actions.chatActionWarnings.length));}
+  render(app(h(Probe)));await screen.findByText('0');
+  let failure;await React.act(async()=>{failure=await actions.renameChat('chat-a','New').catch(e=>e);});
+  assert.equal(failure.name,'ChatActionUncertainError');await screen.findByText('1');
+  await React.act(async()=>actions.recordChatActivity('chat-a','Original').catch(()=>{}));assert.equal(writes,1);
+});
+
+test("Somali chat action recovery warning requires a reviewed acknowledgment", async () => {
+  seed({language:'so',chats:[{id:'chat-a',title:'Qoraal',updatedAt:1}],chatProofs:{'chat-a':'proof'}});
+  window.localStorage.setItem(`tflash:sync-uncertain:chat-action:vercel:${encodeURIComponent(userId)}:old`,JSON.stringify({chatId:'chat-a',action:'rename'}));
+  fakeFetch();render(app(h(Sidebar,{open:true,onClose(){},onNewChat(){},onOpenSettings(){}})));
+  assert.ok(await screen.findByText(/Ficil wada hadal ayaa laga yaabaa/));
+  const checkbox=screen.getByRole('checkbox',{name:/Waxaan hubiyay taariikhda/});
+  const button=screen.getByRole('button',{name:'Qiro oo oggolow ficillo cusub'});assert.equal(button.disabled,true);
+  await userEvent.setup().click(checkbox);assert.equal(button.disabled,false);
+});
+
+test("a confirmed chat action removes an in-flight warning without acknowledging another marker", async () => {
+  seed({chats:[{id:'chat-a',title:'Original',updatedAt:1}],chatProofs:{'chat-a':'proof'}});
+  let resolve,started=false;const pending=new Promise(r=>{resolve=r;});
+  fakeFetch((path,options)=>{if(path==='/api/chats/chat-a'&&options.method==='PATCH'){started=true;return pending;}});
+  let actions;function Probe(){actions=useAppSettings();return h('p',null,String(actions.chatActionWarnings.length));}
+  render(app(h(Probe)));await screen.findByText('0');let action;
+  await React.act(async()=>{action=actions.renameChat('chat-a','New');});await waitFor(()=>assert.equal(started,true));
+  window.localStorage.setItem(`tflash:sync-uncertain:chat-action:vercel:${encodeURIComponent(userId)}:other`,JSON.stringify({chatId:'chat-b',action:'remove'}));
+  await React.act(async()=>window.dispatchEvent(new window.StorageEvent('storage',{key:null})));
+  await screen.findByText('2');
+  await React.act(async()=>{resolve(Response.json({ok:true,title:'New'}));await action;});
+  await screen.findByText('1');assert.equal(actions.chatActionWarnings[0].chatId,'chat-b');
+});
+
+function renewalTestLock() {
+  Object.defineProperty(navigator, 'locks', {configurable:true,value:{request:async(_name,_opts,fn)=>fn({})}});
+}
+function expiringGrant(token='v1.original') {
+  return {token,label:'Authorized',connectedAt:Date.now(),tokenExpiresAt:Date.now()+60_000,expiresAt:Date.now()+86_400_000,refreshable:true,source:'oauth'};
+}
+
+test('an uncertain OAuth renewal retains the grant, survives remount, and never retries automatically',async()=>{
+  seed({integrationTokens:{linear:expiringGrant()}});renewalTestLock();const originalTimeout=AbortSignal.timeout,deadlines=[];
+  AbortSignal.timeout=()=>{const c=new AbortController();deadlines.push(c);return c.signal;};
+  let signal,calls=0,release;const pending=new Promise(resolve=>{release=resolve;});
+  fakeFetch((path,options)=>{if(path==='/api/integrations/oauth/refresh'){
+    calls++;signal=options.signal;const headers=new Headers(options.headers);assert.equal(headers.get('x-tflash-expected-user-id'),userId);assert.equal(headers.get('x-tflash-expected-account-kind'),'vercel');return pending;
+  }});
+  try {
+    const mounted=render(app(h(ConnectionsPanel)));await waitFor(()=>assert.ok(signal));
+    await React.act(async()=>deadlines.find(c=>c.signal===signal).abort());
+    await screen.findByText(/The previous renewal may have rotated this grant/);
+    assert.equal(JSON.parse(window.localStorage.getItem(storageKey)).integrationTokens.linear.token,'v1.original');
+    await React.act(async()=>{release(Response.json({ok:true,token:'v1.late'}));await pending;});
+    mounted.unmount();render(app(h(ConnectionsPanel)));await screen.findByText(/The previous renewal may have rotated this grant/);
+    assert.equal(calls,1);const checkbox=screen.getByRole('checkbox',{name:/I checked the provider, revoked the old grant/});
+    const button=screen.getByRole('button',{name:'Acknowledge and allow renewal of the new grant'});assert.equal(button.disabled,true);
+    await userEvent.setup().click(checkbox);await userEvent.setup().click(button);
+    await screen.findByText(/Review is unavailable: reconnect a different grant/);assert.equal(calls,1);
+  } finally {AbortSignal.timeout=originalTimeout;delete navigator.locks;}
+});
+
+test('successful OAuth renewal persists the new grant and prevents replay of a stale browser copy',async()=>{
+  seed({integrationTokens:{linear:expiringGrant()}});renewalTestLock();let calls=0;
+  fakeFetch((path)=>{if(path==='/api/integrations/oauth/refresh'){calls++;return Response.json({ok:true,token:'v1.rotated',expiresAt:Date.now()+86_400_000,tokenExpiresAt:Date.now()+3_600_000});}});
+  try {
+    const first=render(app(h(ConnectionsPanel)));await waitFor(()=>assert.equal(JSON.parse(window.localStorage.getItem(storageKey)).integrationTokens.linear.token,'v1.rotated'));
+    assert.equal(calls,1);const marker=Object.keys(window.localStorage).find(k=>k.startsWith('tflash:sync-uncertain:oauth-refresh:'));
+    const data=JSON.parse(window.localStorage.getItem(marker));assert.equal(data.state,'settled');assert.ok(!JSON.stringify(data).includes('v1.original'));
+    first.unmount();const disk=JSON.parse(window.localStorage.getItem(storageKey));disk.integrationTokens.linear=expiringGrant();window.localStorage.setItem(storageKey,JSON.stringify(disk));
+    render(app(h(ConnectionsPanel)));await screen.findByText(/This saved grant was already renewed/);assert.equal(calls,1);
+  } finally {delete navigator.locks;}
+});
+
+test('OAuth renewal fails closed without browser locks or recovery storage',async()=>{
+  seed({integrationTokens:{linear:expiringGrant()}});let calls=0;
+  fakeFetch(path=>{if(path==='/api/integrations/oauth/refresh'){calls++;return Response.json({ok:true,token:'v1.changed'});}});
+  const first=render(app(h(ConnectionsPanel)));await screen.findByText(/Automatic renewal is unavailable/);assert.equal(calls,0);first.unmount();
+  renewalTestLock();const proto=Object.getPrototypeOf(window.localStorage),original=proto.setItem;
+  proto.setItem=function(k,v){if(k.startsWith('tflash:sync-uncertain:oauth-refresh:'))throw new Error('denied');return original.call(this,k,v);};
+  try {render(app(h(ConnectionsPanel)));await screen.findByText(/Automatic renewal is unavailable/);assert.equal(calls,0);assert.equal(JSON.parse(window.localStorage.getItem(storageKey)).integrationTokens.linear.token,'v1.original');}
+  finally {proto.setItem=original;delete navigator.locks;}
+});
+
+test('an uncertain OAuth grant requires a different reconnected grant and explicit provider review',async()=>{
+  seed({integrationTokens:{linear:expiringGrant()}});renewalTestLock();const originalTimeout=AbortSignal.timeout,deadlines=[];
+  AbortSignal.timeout=()=>{const c=new AbortController();deadlines.push(c);return c.signal;};
+  let signal,calls=0;fakeFetch((path,options)=>{if(path==='/api/integrations/oauth/refresh'){calls++;signal=options.signal;return new Promise(()=>{});}});
+  let context;function Probe(){context=useAppSettings();return h(ConnectionsPanel);}
+  try {
+    render(app(h(Probe)));await waitFor(()=>assert.ok(signal));await React.act(async()=>deadlines.find(c=>c.signal===signal).abort());
+    await screen.findByText(/The previous renewal may have rotated this grant/);
+    await React.act(async()=>context.connectIntegration('linear',expiringGrant('v1.new-consent')));
+    await waitFor(()=>assert.equal(JSON.parse(window.localStorage.getItem(storageKey)).integrationTokens.linear.token,'v1.new-consent'));
+    const user=userEvent.setup();await user.click(screen.getByRole('checkbox',{name:/I checked the provider, revoked the old grant/}));
+    await user.click(screen.getByRole('button',{name:'Acknowledge and allow renewal of the new grant'}));
+    await waitFor(()=>assert.equal(screen.queryByText(/The previous renewal may have rotated this grant/),null));
+    assert.equal(calls,1,'acknowledgment does not itself replay or renew');
+    const marker=Object.keys(window.localStorage).find(k=>k.startsWith('tflash:sync-uncertain:oauth-refresh:'));assert.equal(JSON.parse(window.localStorage.getItem(marker)).state,'settled');
+  } finally {AbortSignal.timeout=originalTimeout;delete navigator.locks;}
+});
+
+test('browser coordination admits at most one simultaneous renewal for the same account and integration',async()=>{
+  seed({integrationTokens:{linear:expiringGrant()}});let held=false,signal,posts=0;
+  Object.defineProperty(navigator,'locks',{configurable:true,value:{request:async(_name,_options,fn)=>{
+    if(held)return fn(null);held=true;try{return await fn({});}finally{held=false;}
+  }}});
+  const originalTimeout=AbortSignal.timeout,deadlines=[];AbortSignal.timeout=()=>{const c=new AbortController();deadlines.push(c);return c.signal;};
+  fakeFetch((path,options)=>{if(path==='/api/integrations/oauth/refresh'){posts++;signal=options.signal;return new Promise(()=>{});}});
+  try {
+    render(h(React.Fragment,null,app(h('div',null,'First')),app(h('div',null,'Second'))));
+    await waitFor(()=>assert.ok(signal));await React.act(async()=>deadlines.find(c=>c.signal===signal).abort());
+    assert.equal(posts,1);assert.equal(JSON.parse(window.localStorage.getItem(storageKey)).integrationTokens.linear.token,'v1.original');
+  } finally {AbortSignal.timeout=originalTimeout;delete navigator.locks;}
+});
+
+test('server renewal error keeps the sealed grant and does not replay on the next timer tick',async()=>{
+  seed({integrationTokens:{linear:expiringGrant()}});renewalTestLock();const realInterval=window.setInterval;let tick,calls=0;
+  window.setInterval=(fn,ms,...args)=>{if(ms===300000){tick=fn;return 98765;}return realInterval(fn,ms,...args);};
+  const realClear=window.clearInterval;window.clearInterval=id=>{if(id!==98765)realClear(id);};
+  fakeFetch(path=>{if(path==='/api/integrations/oauth/refresh'){calls++;return Response.json({ok:false},{status:401});}});
+  try {
+    render(app(h(ConnectionsPanel)));await screen.findByText(/The previous renewal may have rotated this grant/);assert.equal(calls,1);
+    await React.act(async()=>tick());assert.equal(calls,1);
+    assert.equal(JSON.parse(window.localStorage.getItem(storageKey)).integrationTokens.linear.token,'v1.original');
+  } finally {window.setInterval=realInterval;window.clearInterval=realClear;delete navigator.locks;}
+});
+
+test('failure persisting a rotated OAuth grant keeps the old copy and an uncertain marker',async()=>{
+  seed({integrationTokens:{linear:expiringGrant()}});renewalTestLock();const proto=Object.getPrototypeOf(window.localStorage),original=proto.setItem;
+  let calls=0;fakeFetch(path=>{if(path==='/api/integrations/oauth/refresh'){
+    calls++;proto.setItem=function(k,v){if(k===storageKey && String(v).includes('v1.rotated'))throw new Error('quota');return original.call(this,k,v);};
+    return Response.json({ok:true,token:'v1.rotated',tokenExpiresAt:Date.now()+3_600_000});
+  }});
+  try {
+    render(app(h(ConnectionsPanel)));await screen.findByText(/The previous renewal may have rotated this grant/);
+    assert.equal(calls,1);assert.equal(JSON.parse(window.localStorage.getItem(storageKey)).integrationTokens.linear.token,'v1.original');
+    const key=Object.keys(window.localStorage).find(k=>k.startsWith('tflash:sync-uncertain:oauth-refresh:'));assert.equal(JSON.parse(window.localStorage.getItem(key)).state,'pending');
+  } finally {proto.setItem=original;delete navigator.locks;}
+});
+
+test('successful renewal without an expiry does not automatically rotate on every timer tick',async()=>{
+  seed({integrationTokens:{linear:expiringGrant()}});renewalTestLock();const realInterval=window.setInterval,realClear=window.clearInterval;let tick,calls=0;
+  window.setInterval=(fn,ms,...args)=>{if(ms===300000){tick=fn;return 98765;}return realInterval(fn,ms,...args);};window.clearInterval=id=>{if(id!==98765)realClear(id);};
+  fakeFetch(path=>{if(path==='/api/integrations/oauth/refresh'){calls++;return Response.json({ok:true,token:'v1.new'});}});
+  try {
+    render(app(h(ConnectionsPanel)));await waitFor(()=>assert.equal(JSON.parse(window.localStorage.getItem(storageKey)).integrationTokens.linear.token,'v1.new'));
+    const record=JSON.parse(window.localStorage.getItem(storageKey)).integrationTokens.linear;assert.equal(record.tokenExpiresAt,undefined);assert.ok(record.lastRenewalAt);
+    await React.act(async()=>tick());assert.equal(calls,1);
+  } finally {window.setInterval=realInterval;window.clearInterval=realClear;delete navigator.locks;}
+});
+
+test('another tab rotating a grant marks the visible old copy stale even before expiry',async()=>{
+  seed({integrationTokens:{linear:{...expiringGrant(),tokenExpiresAt:Date.now()+3_600_000}}});renewalTestLock();fakeFetch();
+  try {
+    render(app(h(ConnectionsPanel)));await screen.findByRole('button',{name:'Linear Connected'});
+    const disk=JSON.parse(window.localStorage.getItem(storageKey));disk.integrationTokens.linear=expiringGrant('v1.other-tab');window.localStorage.setItem(storageKey,JSON.stringify(disk));
+    await React.act(async()=>window.dispatchEvent(new window.StorageEvent('storage',{key:storageKey,newValue:JSON.stringify(disk)})));
+    await screen.findByText(/This saved grant was already renewed or changed in another tab/);
+    assert.equal(screen.queryByRole('button',{name:'Linear Connected'}),null);
+  } finally {delete navigator.locks;}
+});
+
+test('Somali OAuth renewal warning clearly requires provider review',async()=>{
+  seed({language:'so',integrationTokens:{linear:expiringGrant()}});renewalTestLock();
+  fakeFetch(path=>path==='/api/integrations/oauth/refresh'?Response.json({ok:false},{status:503}):undefined);
+  try {
+    render(app(h(ConnectionsPanel)));await screen.findByText(/Cusboonaysiintii hore waxay beddeli kartay/);
+    assert.equal(screen.getByRole('button',{name:'Qiro oo oggolow cusboonaysiinta rukhsadda cusub'}).disabled,true);
+    assert.ok(screen.getByRole('checkbox',{name:/Waxaan hubiyay adeegga/}));
+  } finally {delete navigator.locks;}
+});
+
+test("model responses are bounded to the current credential even when old fetch ignores abort", async () => {
+  seed({ connections: { openrouter: { token: "v1.old", source: "browser", label: "old", connectedAt: 1 } } });
+  let release, oldSignal, state;
+  const old = new Promise(resolve => { release = resolve; });
+  const calls = fakeFetch((path, options) => {
+    if (path.startsWith('/api/providers/models?')) {
+      if (options.headers['x-tflash-provider-token'] === 'v1.old' || Object.values(options.headers).includes('v1.old')) { oldSignal = options.signal; return old; }
+      return Response.json({ ok: true, providerId: 'openrouter', source: 'live', models: [{ id: 'new/model' }] });
+    }
+  });
+  function Probe() { state = useAppSettings(); return h('p', null, `${state.modelsStateFor('openrouter').source}:${state.modelsFor('openrouter').map(m=>m.id).join(',')}`); }
+  render(app(h(Probe))); await waitFor(() => assert.equal(state.settings.connections.openrouter?.token, 'v1.old'));
+  await React.act(async () => { void state.loadModels('openrouter'); });
+  await waitFor(() => assert.ok(oldSignal));
+  assert.equal(calls.find(c=>c.path.startsWith('/api/providers/models?')).options.headers['x-tflash-expected-user-id'], userId);
+  await React.act(async () => { state.connect('openrouter', { token: 'v1.new', source: 'browser', label: 'new', connectedAt: 2 }); });
+  assert.equal(oldSignal.aborted, true);
+  await React.act(async () => { await state.loadModels('openrouter'); });
+  await screen.findByText('live:new/model');
+  await React.act(async () => { release(Response.json({ ok:true, providerId:'openrouter', source:'live', models:[{id:'old/model'}] })); await old; });
+  assert.ok(screen.getByText('live:new/model')); assert.equal(screen.queryByText('live:old/model'), null);
+});
+
+test("model timeout and malformed live catalog require an explicit retry", async () => {
+  seed(); const original = AbortSignal.timeout; const deadlines=[]; let state, calls=0;
+  AbortSignal.timeout=()=>{const c=new AbortController();deadlines.push(c);return c.signal;};
+  fakeFetch(path=>{if(path.startsWith('/api/providers/models?')) { calls++; if(calls===1)return new Promise(()=>{}); return Response.json({ ok:true, source:'live', models:[] }); }});
+  function Probe(){state=useAppSettings();const status=state.modelsStateFor('openrouter');return h('p',null,status.error??(status.loading?'loading':'idle'));}
+  try {
+    render(app(h(Probe))); await waitFor(()=>assert.ok(state));
+    await React.act(async()=>{void state.loadModels('openrouter');});
+    await screen.findByText('loading');
+    await React.act(async()=>{for(const c of deadlines)c.abort();});
+    await screen.findByText(/Could not load the live model list/);
+    await React.act(async()=>{await state.loadModels('openrouter');}); assert.equal(calls,1);
+    await React.act(async()=>{await state.loadModels('openrouter',true);}); assert.equal(calls,2);
+    assert.match(state.modelsStateFor('openrouter').error,/Could not load/);
+  } finally { AbortSignal.timeout=original; }
+});
+
+test("integration status malformed or stalled shows manual retry and retains local tokens", async () => {
+  seed({ integrationTokens:{ github:{ token:'v1.saved', source:'oauth', connectedAt:1, expiresAt:Date.now()+3600000 } } });
+  let count=0; const original=AbortSignal.timeout, deadlines=[]; AbortSignal.timeout=()=>{const c=new AbortController();deadlines.push(c);return c.signal;};
+  const calls=fakeFetch((path)=>{if(path==='/api/integrations'){count++;if(count===1)return new Promise(()=>{});if(count===2)return Response.json({integrations:[]});return Response.json({integrations:INTEGRATIONS.map(item=>({id:item.id,mode:'none',configured:false,oauthAvailable:true}))});}});
+  try {
+    render(app(h(ConnectionsPanel))); await waitFor(()=>assert.equal(count,1));
+    assert.equal(calls.find(c=>c.path==='/api/integrations').options.headers['x-tflash-expected-account-kind'],'vercel');
+    await React.act(async()=>{for(const c of deadlines)c.abort();});
+    await screen.findByText(/Could not check connections/i);
+    assert.ok(screen.getByRole('button',{name:/GitHub Connected/i}));
+    const user=userEvent.setup(); await user.click(screen.getByRole('button',{name:'Refresh'})); await waitFor(()=>assert.equal(count,2));
+    await screen.findByText(/Could not check connections/i);
+    await user.click(screen.getByRole('button',{name:'Refresh'})); await waitFor(()=>assert.equal(count,3));
+    await waitFor(()=>assert.equal(screen.queryByText(/Could not check connections/i),null));
+  } finally {AbortSignal.timeout=original;}
+});
+
+test("late provider status cannot cross account switch", async () => {
+  seed();let release;const old=new Promise(resolve=>{release=resolve;});let state;
+  fakeFetch((path, options)=>{if(path==='/api/providers'){return options.headers['x-tflash-expected-user-id']===userId?old:Response.json({providers:[{id:'openrouter',envConfigured:false}]});}});
+  function Probe(){state=useAppSettings();return h('p',null,String(state.envConfigured.openrouter));}
+  const tree=(id)=>h(AppSettingsProvider,{userId:id,accountKind:'vercel'},h(Probe));
+  const mounted=render(tree(userId));await waitFor(()=>assert.ok(state));mounted.rerender(tree('another-account'));
+  await screen.findByText('false');
+  await React.act(async()=>{release(Response.json({providers:[{id:'openrouter',envConfigured:true}]}));await old;});
+  assert.ok(screen.getByText('false'));
+});
+
+test("late integration status from another account cannot expose an old consent link", async () => {
+  seed();let release;const old=new Promise(resolve=>{release=resolve;});
+  const calls=fakeFetch((path,options)=>{if(path==='/api/integrations')return options.headers['x-tflash-expected-user-id']===userId?old:Response.json({integrations:INTEGRATIONS.map(item=>({id:item.id,mode:'none',configured:false,oauthAvailable:false}))});});
+  const tree=(id)=>h(AppSettingsProvider,{userId:id,accountKind:'vercel'},h(ConnectionsPanel));
+  const mounted=render(tree(userId));await waitFor(()=>assert.ok(calls.find(c=>c.path==='/api/integrations')));
+  const signal=calls.find(c=>c.path==='/api/integrations').options.signal;
+  mounted.rerender(tree('another-account'));await waitFor(()=>assert.equal(signal.aborted,true));
+  await React.act(async()=>{release(Response.json({integrations:INTEGRATIONS.map(item=>({id:item.id,mode:'none',configured:false,oauthAvailable:true}))}));await old;});
+  assert.equal(screen.queryByRole('link',{name:'Connect GitHub'}),null);
+});
+
+test("provider connect timeout does not save credentials or automatically repeat", async () => {
+  seed();const original=AbortSignal.timeout, deadlines=[];AbortSignal.timeout=()=>{const c=new AbortController();deadlines.push(c);return c.signal;};
+  let count=0; const calls=fakeFetch(path=>{if(path==='/api/providers/connect'){count++;return new Promise(()=>{});}});
+  try {
+    render(app(h(SettingsDialog,{open:true,onOpenChange(){},initialProvider:'openrouter'})));
+    const user=userEvent.setup();const dialog=await screen.findByRole('dialog',{name:'Settings'});
+    await user.type(within(dialog).getByLabelText(/API key/),'temporary-key');
+    await user.click(within(dialog).getByRole('button',{name:'Connect',exact:true}));
+    await waitFor(()=>assert.equal(count,1));
+    assert.equal(calls.find(c=>c.path==='/api/providers/connect').options.headers['x-tflash-expected-user-id'],userId);
+    await React.act(async()=>{for(const c of deadlines)c.abort();});
+    await within(dialog).findByText('Connection failed');
+    assert.equal(count,1);assert.equal(JSON.parse(window.localStorage.getItem(storageKey)).connections.openrouter,undefined);
+  } finally {AbortSignal.timeout=original;}
+});
+
+test("document import timeout preserves the draft, blocks sending while reading, and allows explicit retry", async () => {
+  seed(); const timeout=AbortSignal.timeout, deadlines=[]; AbortSignal.timeout=()=>{const c=new AbortController();deadlines.push(c);return c.signal;};
+  let imports=0,sends=0;const calls=fakeFetch(path=>{if(path==='/api/documents/read'){imports++;return new Promise(()=>{});}});
+  try {
+    render(app(h(TooltipProvider,null,h(PromptInputProvider,null,h(ChatComposer,{isBusy:false,isResuming:false,onCancel(){},onSubmit:async()=>{sends++;}})))));
+    const user=userEvent.setup();await user.type(screen.getByLabelText('Message Tflash'),'Draft remains');
+    const input=screen.getByLabelText('Read PDF or DOCX',{selector:'input'});
+    fireEvent.change(input,{target:{files:[new File(['%PDF-x'],'sample.pdf',{type:'application/pdf'})]}});
+    await screen.findByText('Reading document…');
+    assert.equal(screen.getByRole('button',{name:'Send'}).disabled,true);
+    await user.keyboard('{Enter}');
+    fireEvent.submit(screen.getByLabelText('Message Tflash').closest('form'));
+    assert.equal(sends,0); assert.equal(screen.getByLabelText('Message Tflash').value,'Draft remains');
+    assert.equal(calls.find(c=>c.path==='/api/documents/read').options.headers['x-tflash-expected-user-id'],userId);
+    await React.act(async()=>{for(const c of deadlines)c.abort();});
+    await screen.findByText(/Could not process document/);
+    assert.equal(screen.getByLabelText('Message Tflash').value,'Draft remains');assert.equal(sends,0);assert.equal(imports,1);
+    assert.equal(screen.getByRole('button',{name:'Send'}).disabled,false);
+    fireEvent.change(input,{target:{files:[new File(['%PDF-x'],'sample.pdf',{type:'application/pdf'})]}});
+    await waitFor(()=>assert.equal(imports,2));
+  } finally {AbortSignal.timeout=timeout;}
+});
+
+test("late document imports after unmount cannot add attachments", async () => {
+  const { DocumentImportButton }=await import('../components/chat/documents.tsx');
+  const { usePromptInputAttachments }=await import('../components/ai-elements/prompt-input.tsx');
+  seed();let release,attachments,signal;const old=new Promise(resolve=>{release=resolve;});
+  fakeFetch((path,options)=>{if(path==='/api/documents/read'){signal=options.signal;return old;}});
+  function Reader(){attachments=usePromptInputAttachments();return h(DocumentImportButton);}
+  function Harness(){const [visible,setVisible]=React.useState(true);return h(PromptInputProvider,null,h('button',{onClick:()=>setVisible(false)},'Close'),visible?h(Reader):h(Inspect));}
+  function Inspect(){attachments=usePromptInputAttachments();return null;}
+  render(app(h(TooltipProvider,null,h(Harness))));
+  fireEvent.change(screen.getByLabelText('Read PDF or DOCX',{selector:'input'}),{target:{files:[new File(['%PDF-x'],'sample.pdf')]}});
+  await waitFor(()=>assert.ok(signal));await userEvent.setup().click(screen.getByRole('button',{name:'Close'}));assert.equal(signal.aborted,true);
+  await React.act(async()=>{release(Response.json({text:'late content',truncated:false}));await old;});assert.equal(attachments.files.length,0);
+});
+
+test("late export is not downloaded after document content changes", async () => {
+  const { DocumentExportButtons }=await import('../components/chat/documents.tsx');seed();let release,signal,downloads=0;const old=new Promise(resolve=>{release=resolve;});
+  fakeFetch((path,options)=>{if(path==='/api/documents/export'){signal=options.signal;return old;}});
+  const orig=window.HTMLAnchorElement.prototype.click;window.HTMLAnchorElement.prototype.click=function(){downloads++;};
+  try {
+    const tree=content=>app(h(DocumentExportButtons,{filename:'report.md',content}));
+    const mounted=render(tree('first'));await userEvent.setup().click(screen.getByRole('button',{name:'PDF'}));
+    await waitFor(()=>assert.ok(signal));mounted.rerender(tree('new content'));assert.equal(signal.aborted,true);
+    await React.act(async()=>{release(new Response('%PDF-late',{headers:{'content-type':'application/pdf'}}));await old;});
+    assert.equal(downloads,0);assert.equal(screen.getByRole('button',{name:'PDF'}).disabled,false);
+  } finally {window.HTMLAnchorElement.prototype.click=orig;}
+});
+
+test("document import from previous account is aborted and cannot populate the next account", async () => {
+  const { DocumentImportButton }=await import('../components/chat/documents.tsx');const {usePromptInputAttachments}=await import('../components/ai-elements/prompt-input.tsx');
+  seed();let release,signal,attachments;const old=new Promise(resolve=>{release=resolve;});
+  fakeFetch((path,options)=>{if(path==='/api/documents/read'){signal=options.signal;return old;}});
+  function Reader(){attachments=usePromptInputAttachments();return h(DocumentImportButton);}
+  const tree=id=>h(AppSettingsProvider,{userId:id,accountKind:'vercel'},h(TooltipProvider,null,h(PromptInputProvider,null,h(Reader))));
+  const mounted=render(tree(userId));
+  fireEvent.change(screen.getByLabelText('Read PDF or DOCX',{selector:'input'}),{target:{files:[new File(['%PDF-x'],'private.pdf')]}});
+  await waitFor(()=>assert.ok(signal));mounted.rerender(tree('other-user'));assert.equal(signal.aborted,true);
+  await React.act(async()=>{release(Response.json({text:'private content',truncated:false}));await old;});
+  assert.equal(attachments.files.length,0);assert.equal(screen.queryByText('Reading document…'),null);
+});
+
+test("stalled document JSON and binary bodies show failure without late attachment or download", async () => {
+  const {DocumentImportButton,DocumentExportButtons}=await import('../components/chat/documents.tsx'); const {usePromptInputAttachments}=await import('../components/ai-elements/prompt-input.tsx');
+  seed();const timeout=AbortSignal.timeout,deadlines=[];AbortSignal.timeout=()=>{const c=new AbortController();deadlines.push(c);return c.signal;};
+  let attachments,cancelled=0,downloads=0;
+  const stalled=(headers)=>new Response(new ReadableStream({pull(){return new Promise(()=>{});},cancel(){cancelled++;}}),{headers});
+  fakeFetch(path=>path==='/api/documents/read'?stalled({'content-type':'application/json'}):path==='/api/documents/export'?stalled({'content-type':'application/pdf'}):undefined);
+  function Reader(){attachments=usePromptInputAttachments();return h(DocumentImportButton);}
+  const click=window.HTMLAnchorElement.prototype.click;window.HTMLAnchorElement.prototype.click=function(){downloads++;};
+  try {
+    render(app(h(TooltipProvider,null,h(PromptInputProvider,null,h(Reader),h(DocumentExportButtons,{filename:'report.md',content:'hello'})))));
+    fireEvent.change(screen.getByLabelText('Read PDF or DOCX',{selector:'input'}),{target:{files:[new File(['%PDF-x'],'file.pdf')]}});
+    await userEvent.setup().click(screen.getByRole('button',{name:'PDF'}));
+    await React.act(async()=>{for(const c of deadlines)c.abort();});
+    await waitFor(()=>assert.equal(screen.getAllByText(/Could not process document/).length,2));
+    assert.equal(attachments.files.length,0);assert.equal(downloads,0);assert.equal(cancelled,2);
+  } finally {AbortSignal.timeout=timeout;window.HTMLAnchorElement.prototype.click=click;}
+});
+
+test("Somali document timeout is visible and never sends a draft", async () => {
+  seed({language:'so'});const timeout=AbortSignal.timeout,deadlines=[];AbortSignal.timeout=()=>{const c=new AbortController();deadlines.push(c);return c.signal;};
+  let calls=0,sends=0;fakeFetch(path=>{if(path==='/api/documents/read'){calls++;return new Promise(()=>{});}});
+  try {
+    render(app(h(TooltipProvider,null,h(PromptInputProvider,null,h(ChatComposer,{isBusy:false,isResuming:false,onCancel(){},onSubmit:async()=>{sends++;}})))));
+    await waitFor(()=>assert.equal(document.documentElement.lang,'so'));
+    const input=document.querySelector('input[accept=".pdf,.docx"]');
+    fireEvent.change(input,{target:{files:[new File(['%PDF-x'],'file.pdf')]}});await waitFor(()=>assert.equal(calls,1));
+    await React.act(async()=>{for(const c of deadlines)c.abort();});
+    assert.ok(await screen.findByText(/Dukumeentiga lama farsamayn ama wakhtigii wuu dhammaaday/));assert.equal(sends,0);
+  } finally {AbortSignal.timeout=timeout;}
+});
+
+function handoffLocks() {
+  const active=new Set();
+  Object.defineProperty(navigator,'locks',{configurable:true,value:{request:async(name,options,callback)=>{
+    if(active.has(name)) return callback(null);
+    active.add(name);try{return await callback({name});}finally{active.delete(name);}
+  }}});
+}
+
+test("uncertain OAuth handoff survives reload, is not retried and requires explicit provider review", async () => {
+  seed();handoffLocks();window.history.replaceState({},'', '/?integration=linear&connected=1');
+  const timeout=AbortSignal.timeout,deadlines=[];AbortSignal.timeout=()=>{const c=new AbortController();deadlines.push(c);return c.signal;};
+  let count=0,signal;const calls=fakeFetch((path,options)=>{if(path==='/api/integrations/oauth/result'){count++;signal=options.signal;return new Promise(()=>{});}});
+  try {
+    const mounted=render(app(h(ConnectionsPanel)));await waitFor(()=>assert.equal(count,1));
+    assert.equal(calls.find(c=>c.path==='/api/integrations/oauth/result').options.headers['x-tflash-expected-user-id'],userId);
+    await screen.findByText(/provider may have created an OAuth client or granted access/i);
+    const user=userEvent.setup(); await user.click(screen.getByLabelText(/I checked the provider and understand/));
+    await user.click(screen.getByRole('button',{name:'Acknowledge review'}));
+    await screen.findByText(/Review is unavailable while another handoff/);
+    await React.act(async()=>{for(const c of deadlines)c.abort();});assert.equal(signal.aborted,true);
+    await waitFor(()=>assert.equal(window.location.search,''));assert.equal(count,1);
+    mounted.unmount();window.history.replaceState({},'', '/?integration=linear&connected=1');render(app(h(ConnectionsPanel)));
+    await screen.findByText(/provider may have created an OAuth client or granted access/i);await waitFor(()=>assert.equal(window.location.search,''));
+    assert.equal(count,1);assert.equal(JSON.parse(window.localStorage.getItem(storageKey)).integrationTokens.linear,undefined);
+    await user.click(screen.getByLabelText(/I checked the provider and understand/));
+    await user.click(screen.getByRole('button',{name:'Acknowledge review'}));
+    await waitFor(()=>assert.equal(screen.queryByText(/provider may have created an OAuth client or granted access/i),null));assert.ok(await screen.findByRole('link',{name:'Connect Linear'}));assert.equal(count,1);
+  } finally {AbortSignal.timeout=timeout;delete navigator.locks;}
+});
+
+test("OAuth handoff body timeout and failed durable storage never claim a connection", async () => {
+  seed();handoffLocks();window.history.replaceState({},'', '/?integration=linear&connected=1');
+  const timeout=AbortSignal.timeout,deadlines=[];AbortSignal.timeout=()=>{const c=new AbortController();deadlines.push(c);return c.signal;};
+  let cancel=0,calls=0;
+  fakeFetch(path=>{if(path==='/api/integrations/oauth/result'){calls++;return new Response(new ReadableStream({pull(){return new Promise(()=>{});},cancel(){cancel++;}}),{headers:{'content-type':'application/json'}});}});
+  try {
+    render(app(h(ConnectionsPanel)));await waitFor(()=>assert.equal(calls,1));
+    await React.act(async()=>{for(const c of deadlines)c.abort();});
+    await screen.findByText(/provider may have created an OAuth client or granted access/i);assert.equal(cancel,1);
+    assert.equal(JSON.parse(window.localStorage.getItem(storageKey)).integrationTokens.linear,undefined);
+    assert.equal(screen.queryByText('Connected with one-tap authorization.'),null);
+  } finally {AbortSignal.timeout=timeout;delete navigator.locks;}
+});
+
+test("OAuth handoff fails closed without browser locks or recovery storage", async () => {
+  seed();window.history.replaceState({},'', '/?integration=linear&connected=1');let calls=0;
+  fakeFetch(path=>{if(path==='/api/integrations/oauth/result'){calls++;return Response.json({connected:true});}});
+  const mounted=render(app(h(ConnectionsPanel)));await screen.findByText(/Authorization recovery is unavailable/);assert.equal(calls,0);
+  mounted.unmount();handoffLocks();window.history.replaceState({},'', '/?integration=linear&connected=1');
+  const proto=Object.getPrototypeOf(window.localStorage),original=proto.setItem;
+  proto.setItem=function(key,value){if(key.startsWith('tflash:sync-uncertain:oauth-handoff:'))throw new Error('denied');return original.call(this,key,value);};
+  try {render(app(h(ConnectionsPanel)));await screen.findByText(/Authorization recovery is unavailable/);assert.equal(calls,0);}
+  finally {proto.setItem=original;delete navigator.locks;}
+});
+
+test("a delayed OAuth handoff cannot resurrect a disconnected or replaced grant", async () => {
+  seed({integrationTokens:{linear:{token:'v1.old',label:'Old',connectedAt:1,source:'oauth'}}});handoffLocks();window.history.replaceState({},'', '/?integration=linear&connected=1');
+  let finish,state;const old=new Promise(resolve=>{finish=resolve;});fakeFetch(path=>path==='/api/integrations/oauth/result'?old:undefined);
+  function Probe(){state=useAppSettings();return h(ConnectionsPanel);}
+  try {
+    render(app(h(Probe)));await screen.findByText(/provider may have created an OAuth client or granted access/i);
+    await React.act(async()=>state.disconnectIntegration('linear'));
+    await React.act(async()=>{finish(Response.json({connected:true,integrationId:'linear',token:'v1.late',expiresAt:Date.now()+86400000}));await old;});
+    await waitFor(()=>assert.equal(JSON.parse(window.localStorage.getItem(storageKey)).integrationTokens.linear,undefined));
+    assert.ok(screen.getByText(/provider may have created an OAuth client or granted access/i));assert.equal(screen.queryByText('Connected with one-tap authorization.'),null);
+  } finally {delete navigator.locks;}
+});
+
+test("Somali handoff uncertainty warns before an explicit acknowledgment", async () => {
+  seed({language:'so'});handoffLocks();window.history.replaceState({},'', '/?integration=linear&connected=1');
+  fakeFetch(path=>path==='/api/integrations/oauth/result'?Response.json({connected:false}):undefined);
+  try {
+    render(app(h(ConnectionsPanel)));
+    assert.ok(await screen.findByText(/Adeeggu OAuth client wuu samayn karay/));
+    assert.equal(screen.getByRole('button',{name:'Qiro dib-u-eegista'}).disabled,true);
+  } finally {delete navigator.locks;}
+});
+
+test("a handoff response is not called connected when the sealed grant cannot be persisted", async () => {
+  seed();handoffLocks();window.history.replaceState({},'', '/?integration=linear&connected=1');
+  const proto=Object.getPrototypeOf(window.localStorage),original=proto.setItem;
+  proto.setItem=function(key,value){if(key===storageKey && String(value).includes('v1.new-grant')) throw new Error('storage denied');return original.call(this,key,value);};
+  fakeFetch(path=>path==='/api/integrations/oauth/result'?Response.json({connected:true,integrationId:'linear',token:'v1.new-grant',expiresAt:Date.now()+60000}):undefined);
+  try {
+    render(app(h(ConnectionsPanel)));await screen.findByText(/provider may have created an OAuth client or granted access/i);
+    await waitFor(()=>assert.equal(window.location.search,''));
+    assert.equal(JSON.parse(window.localStorage.getItem(storageKey)).integrationTokens.linear,undefined);
+    assert.equal(screen.queryByText('Connected with one-tap authorization.'),null);
+    const keys=Object.keys(window.localStorage).filter(k=>k.startsWith('tflash:sync-uncertain:oauth-handoff:'));
+    assert.equal(keys.length,1);assert.doesNotMatch(window.localStorage.getItem(keys[0]),/v1\.new-grant/);
+  } finally {proto.setItem=original;delete navigator.locks;}
+});
+
+test("a late handoff from an earlier account cannot populate a new account", async () => {
+  seed();handoffLocks();window.history.replaceState({},'', '/?integration=linear&connected=1');
+  let finish,signal;const old=new Promise(resolve=>{finish=resolve;});
+  fakeFetch((path,options)=>{if(path==='/api/integrations/oauth/result'){signal=options.signal;return old;}});
+  let state;function Probe(){state=useAppSettings();return h(ConnectionsPanel);}
+  const tree=id=>h(AppSettingsProvider,{userId:id,accountKind:'vercel'},h(Probe));
+  try {
+    const mounted=render(tree(userId));await waitFor(()=>assert.ok(signal));
+    window.history.replaceState({},'', '/');mounted.rerender(tree('other-account'));await waitFor(()=>assert.equal(signal.aborted,true));
+    await React.act(async()=>{finish(Response.json({connected:true,integrationId:'linear',token:'v1.late',expiresAt:Date.now()+60000}));await old;});
+    assert.equal(state.accountId,'other-account');assert.equal(state.settings.integrationTokens.linear,undefined);
+    assert.equal(screen.queryByText('Connected with one-tap authorization.'),null);
+  } finally {delete navigator.locks;}
+});
+
+test("Strict Mode does not duplicate an OAuth handoff read", async () => {
+  seed();handoffLocks();window.history.replaceState({},'', '/?integration=linear&connected=1');let calls=0;
+  fakeFetch(path=>{if(path==='/api/integrations/oauth/result'){calls++;return Response.json({connected:true,integrationId:'linear',token:'v1.strict',expiresAt:Date.now()+3600000});}});
+  try {
+    render(h(React.StrictMode,null,app(h(ConnectionsPanel))));
+    await screen.findByText('Connected with one-tap authorization.');assert.equal(calls,1);
+    assert.equal(JSON.parse(window.localStorage.getItem(storageKey)).integrationTokens.linear.token,'v1.strict');
+  } finally {delete navigator.locks;}
+});
+
+test("same-browser concurrent handoff readers do not dispatch twice", async () => {
+  seed();handoffLocks();window.history.replaceState({},'', '/?integration=linear&connected=1');let calls=0,resolve;
+  const request=new Promise(r=>{resolve=r;});fakeFetch(path=>{if(path==='/api/integrations/oauth/result'){calls++;return request;}});
+  try {
+    render(h(React.Fragment,null,app(h(ConnectionsPanel)),app(h(ConnectionsPanel))));
+    await waitFor(()=>assert.equal(calls,1));
+    await React.act(async()=>{resolve(Response.json({connected:true,integrationId:'linear',token:'v1.once',expiresAt:Date.now()+3600000}));await request;});
+    await waitFor(()=>assert.equal(JSON.parse(window.localStorage.getItem(storageKey)).integrationTokens.linear?.token,'v1.once'));
+    assert.equal(calls,1);
+  } finally {delete navigator.locks;}
+});
+
+test('uncertain OAuth exchange redirects persist review, never trigger a new attempt, and require acknowledgment',async()=>{
+  seed();handoffLocks();window.history.replaceState({},'', '/?integration=linear&oauth=exchange_uncertain');
+  let calls=0;fakeFetch(path=>{if(path.includes('/api/integrations/oauth/')){calls++;throw new Error('no replay');}});
+  try {
+    const mounted=render(app(h(ConnectionsPanel)));
+    await screen.findByText(/authorization code exchange could not be confirmed/i);
+    await screen.findByText(/provider may have created an OAuth client or granted access/i);
+    await waitFor(()=>assert.equal(window.location.search,''));assert.equal(calls,0);
+    assert.equal(screen.queryByRole('link',{name:'Connect Linear'}),null);
+    mounted.unmount();render(app(h(ConnectionsPanel)));
+    await screen.findByText(/provider may have created an OAuth client or granted access/i);
+    const user=userEvent.setup();await user.click(screen.getByLabelText(/I checked the provider and understand/));
+    await user.click(screen.getByRole('button',{name:'Acknowledge review'}));
+    await screen.findByRole('link',{name:'Connect Linear'});assert.equal(calls,0);
+  } finally {delete navigator.locks;}
+});
+
+test('uncertain registration keeps a durable warning without locks and keeps URL if storage fails',async()=>{
+  seed();window.history.replaceState({},'', '/?integration=linear&oauth=registration_uncertain');let calls=0;
+  fakeFetch(path=>{if(path.includes('/api/integrations/oauth/'))calls++;});
+  let mounted=render(app(h(ConnectionsPanel)));
+  await screen.findByText(/OAuth client registration could not be confirmed/i);
+  await screen.findByText(/provider may have created an OAuth client or granted access/i);
+  assert.equal(calls,0);await waitFor(()=>assert.equal(window.location.search,''));
+  mounted.unmount();window.localStorage.clear();window.history.replaceState({},'', '/?integration=linear&oauth=registration_uncertain');
+  const proto=Object.getPrototypeOf(window.localStorage),original=proto.setItem;
+  proto.setItem=function(key,value){if(key.startsWith('tflash:sync-uncertain:oauth-handoff:'))throw new Error('denied');return original.call(this,key,value);};
+  try {
+    render(app(h(ConnectionsPanel)));await screen.findByText(/Authorization recovery is unavailable/);
+    assert.match(window.location.search,/oauth=registration_uncertain/);assert.equal(calls,0);
+  } finally {proto.setItem=original;}
+});
+
+test('Somali uncertain OAuth exchange offers review rather than claiming refusal',async()=>{
+  seed({language:'so'});handoffLocks();window.history.replaceState({},'', '/?integration=linear&oauth=exchange_uncertain');fakeFetch();
+  try {
+    render(app(h(ConnectionsPanel)));assert.ok(await screen.findByText(/Beddelka code-ka fasaxa lama xaqiijin/));
+    assert.equal(screen.queryByText('Adeeggu wuu diiday beddelka token-ka.'),null);
+  } finally {delete navigator.locks;}
+});
+
+test('legacy OAuth exchange failure is treated as unconfirmed and held for review',async()=>{
+  seed();handoffLocks();window.history.replaceState({},'', '/?integration=linear&oauth=exchange');fakeFetch();
+  try {
+    render(app(h(ConnectionsPanel)));await screen.findByText(/authorization code exchange could not be confirmed/i);
+    await screen.findByText(/provider may have created an OAuth client or granted access/i);
+    assert.equal(screen.queryByRole('link',{name:'Connect Linear'}),null);
+  } finally {delete navigator.locks;}
+});
+
+test('uncertain permission grant survives reload, blocks replay, but emergency revoke stays available',async()=>{
+  const {PermissionsPanel}=await import('../components/chat/permissions-panel.tsx');seed();
+  const timeout=AbortSignal.timeout,deadlines=[];AbortSignal.timeout=()=>{const c=new AbortController();deadlines.push(c);return c.signal;};
+  let writes=0,revokes=0,signal;
+  const calls=fakeFetch((path,options)=>{
+    if(path.endsWith('/permissions/revoke-all')){revokes++;return Response.json({revoked:true});}
+    if(path.endsWith('/permissions')){if(options.method==='POST'){writes++;signal=options.signal;return new Promise(()=>{});}return Response.json({epoch:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',grants:[]});}
+  });
+  try {
+    const mounted=render(app(h(PermissionsPanel,{sessionId:'chat-a',ownerProof:'proof'})));const user=userEvent.setup();
+    await user.click(screen.getByText('Permissions for this conversation'));await screen.findByText('No active reusable permissions.');
+    const field=screen.getByLabelText('HTTPS homepage');await user.type(field,'https://private.example');await user.click(screen.getByRole('button',{name:'Allow homepage for one hour'}));
+    await waitFor(()=>assert.equal(writes,1));assert.equal(calls.find(c=>c.options.method==='POST').options.headers['x-tflash-expected-user-id'],userId);
+    await React.act(async()=>{for(const c of deadlines)c.abort();});assert.equal(signal.aborted,true);
+    await screen.findByText(/A previous change may have completed/);assert.equal(field.value,'https://private.example');
+    const keys=Object.keys(window.localStorage).filter(k=>k.startsWith('tflash:sync-uncertain:control-permission:'));assert.equal(keys.length,1);assert.doesNotMatch(window.localStorage.getItem(keys[0]),/private\.example|proof/);
+    await user.click(screen.getByRole('button',{name:'Refresh permissions'}));await screen.findByText('No active reusable permissions.');
+    assert.equal(screen.getByRole('button',{name:'Allow homepage for one hour'}).disabled,true);
+    await user.click(screen.getByRole('button',{name:'Revoke all reusable permissions'}));await screen.findByText(/Reusable permissions revoked/);assert.equal(revokes,1);assert.equal(writes,1);
+    mounted.unmount();render(app(h(PermissionsPanel,{sessionId:'chat-a',ownerProof:'proof'})));await user.click(screen.getByText('Permissions for this conversation'));
+    await screen.findByText(/A previous change may have completed/);assert.equal(writes,1);
+    await user.click(screen.getByLabelText(/I reviewed the state and understand/));await user.click(screen.getByRole('button',{name:'Acknowledge review'}));
+    await waitFor(()=>assert.equal(screen.queryByText(/A previous change may have completed/),null));assert.equal(writes,1);
+  } finally {AbortSignal.timeout=timeout;}
+});
+
+test('stalled task response keeps draft and blocks writes across remount until explicit review',async()=>{
+  const {TrackedTaskPanel}=await import('../components/chat/tracked-task-panel.tsx');seed();const timeout=AbortSignal.timeout,deadlines=[];AbortSignal.timeout=()=>{const c=new AbortController();deadlines.push(c);return c.signal;};
+  let puts=0,cancelled=false;
+  fakeFetch((path,options)=>{if(path.endsWith('/task')){if(options.method==='PUT'){puts++;return new Response(new ReadableStream({pull(){return new Promise(()=>{});},cancel(){cancelled=true;}}));}return Response.json({task:null});}});
+  try {
+    const mounted=render(app(h(TrackedTaskPanel,{sessionId:'chat-a'})));const user=userEvent.setup();await user.click(screen.getByText('Track a file criterion'));
+    await waitFor(()=>assert.equal(screen.getByRole('button',{name:'Save or replace tracked task'}).disabled,false));
+    await user.type(screen.getByLabelText('Objective'),'Keep this draft');await user.type(screen.getByLabelText('Workspace-relative file path'),'out.txt');await user.type(screen.getByLabelText('Expected SHA-256 (64 hexadecimal characters)'),'a'.repeat(64));
+    await user.click(screen.getByRole('button',{name:'Save or replace tracked task'}));await waitFor(()=>assert.equal(puts,1));
+    await React.act(async()=>{for(const c of deadlines)c.abort();});assert.equal(cancelled,true);await screen.findByText(/A previous change may have completed/);
+    assert.equal(screen.getByLabelText('Objective').value,'Keep this draft');
+    await user.click(screen.getByRole('button',{name:'Refresh task'}));await waitFor(()=>assert.equal(screen.getByRole('button',{name:'Save or replace tracked task'}).disabled,true));
+    mounted.unmount();render(app(h(TrackedTaskPanel,{sessionId:'chat-a'})));await user.click(screen.getByText('Track a file criterion'));
+    await screen.findByText(/A previous change may have completed/);assert.equal(puts,1);
+    await user.click(screen.getByLabelText(/I reviewed the state and understand/));await user.click(screen.getByRole('button',{name:'Acknowledge review'}));
+    await waitFor(()=>assert.equal(screen.queryByText(/A previous change may have completed/),null));assert.equal(puts,1);
+  } finally {AbortSignal.timeout=timeout;}
+});
+
+test('control snapshots reject malformed data rather than claiming permissions or task state',async()=>{
+  const {PermissionsPanel}=await import('../components/chat/permissions-panel.tsx');const {TrackedTaskPanel}=await import('../components/chat/tracked-task-panel.tsx');seed();
+  fakeFetch(path=>path.endsWith('/permissions')?Response.json({epoch:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',grants:[{origin:'https://evil.test/path',revision:'11111111-1111-4111-8111-111111111111',expiresAt:'2030-01-01T00:00:00Z'}]}):path.endsWith('/task')?Response.json({task:{objective:'bad'}}):undefined);
+  render(app(h(React.Fragment,null,h(PermissionsPanel,{sessionId:'chat-a'}),h(TrackedTaskPanel,{sessionId:'chat-a'}))));const user=userEvent.setup();
+  await user.click(screen.getByText('Permissions for this conversation'));await user.click(screen.getByText('Track a file criterion'));
+  await screen.findByText(/Could not load or confirm permissions/);await screen.findByText(/Task storage unavailable or invalid input/);
+  assert.equal(screen.queryByText('No active reusable permissions.'),null);
+  assert.equal(screen.getByRole('button',{name:'Allow homepage for one hour'}).disabled,true);assert.equal(screen.getByRole('button',{name:'Save or replace tracked task'}).disabled,true);
+});
+
+test('recovery storage failure blocks grants but never prevents an explicit emergency revoke',async()=>{
+  const {PermissionsPanel}=await import('../components/chat/permissions-panel.tsx');seed();let grants=0,revokes=0;
+  const proto=Object.getPrototypeOf(window.localStorage),original=proto.setItem;
+  proto.setItem=function(key,value){if(key.startsWith('tflash:sync-uncertain:control-permission:'))throw new Error('blocked');return original.call(this,key,value);};
+  fakeFetch((path,options)=>{if(path.endsWith('/permissions/revoke-all')){revokes++;return Response.json({error:'unknown'},{status:503});}if(path.endsWith('/permissions')){if(options.method==='POST')grants++;return Response.json({epoch:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',grants:[]});}});
+  try {
+    render(app(h(PermissionsPanel,{sessionId:'chat-a'})));const user=userEvent.setup();await user.click(screen.getByText('Permissions for this conversation'));await screen.findByText('No active reusable permissions.');
+    await user.type(screen.getByLabelText('HTTPS homepage'),'https://example.com');await user.click(screen.getByRole('button',{name:'Allow homepage for one hour'}));
+    await screen.findByText(/Recovery storage is unavailable/);assert.equal(grants,0);
+    await user.click(screen.getByRole('button',{name:'Revoke all reusable permissions'}));await waitFor(()=>assert.equal(revokes,1));
+    assert.equal(screen.queryByText(/Reusable permissions revoked/),null);
+  } finally {proto.setItem=original;}
+});
+
+test('in-flight permission grant cannot be acknowledged and emergency revoke interrupts it without clearing its marker',async()=>{
+  const {PermissionsPanel}=await import('../components/chat/permissions-panel.tsx');seed();let signal,post=0,all=0;
+  fakeFetch((path,options)=>{if(path.endsWith('/permissions/revoke-all')){all++;return Response.json({revoked:true});}if(path.endsWith('/permissions')){if(options.method==='POST'){post++;signal=options.signal;return new Promise(()=>{});}return Response.json({epoch:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',grants:[]});}});
+  render(app(h(PermissionsPanel,{sessionId:'chat-a'})));const user=userEvent.setup();await user.click(screen.getByText('Permissions for this conversation'));await screen.findByText('No active reusable permissions.');
+  await user.type(screen.getByLabelText('HTTPS homepage'),'https://example.com');await user.click(screen.getByRole('button',{name:'Allow homepage for one hour'}));
+  await waitFor(()=>assert.equal(post,1));await user.click(screen.getByLabelText(/I reviewed the state and understand/));
+  assert.equal(screen.getByRole('button',{name:'Acknowledge review'}).disabled,true);
+  await user.click(screen.getByRole('button',{name:'Revoke all reusable permissions'}));assert.equal(signal.aborted,true);await screen.findByText(/Reusable permissions revoked/);
+  assert.equal(all,1);assert.equal(post,1);assert.ok(screen.getByText(/A previous change may have completed/));
+});
+
+test('permission and task list timeouts release busy and require manual refresh',async()=>{
+  const {PermissionsPanel}=await import('../components/chat/permissions-panel.tsx');const {TrackedTaskPanel}=await import('../components/chat/tracked-task-panel.tsx');seed();
+  const timeout=AbortSignal.timeout,deadlines=[];AbortSignal.timeout=()=>{const c=new AbortController();deadlines.push(c);return c.signal;};
+  let permissions=0,tasks=0;fakeFetch((path)=>{
+    if(path.endsWith('/permissions')){permissions++;return permissions===1?new Promise(()=>{}):Response.json({epoch:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',grants:[]});}
+    if(path.endsWith('/task')){tasks++;return tasks===1?new Promise(()=>{}):Response.json({task:null});}
+  });
+  try {
+    render(app(h(React.Fragment,null,h(PermissionsPanel,{sessionId:'chat-a'}),h(TrackedTaskPanel,{sessionId:'chat-a'}))));const user=userEvent.setup();
+    await user.click(screen.getByText('Permissions for this conversation'));await user.click(screen.getByText('Track a file criterion'));
+    await waitFor(()=>{assert.equal(permissions,1);assert.equal(tasks,1);});
+    await React.act(async()=>{for(const c of deadlines)c.abort();});
+    await screen.findByText(/Could not load or confirm permissions/);await screen.findByText(/Task storage unavailable or invalid input/);
+    assert.equal(Object.keys(window.localStorage).filter(k=>k.includes(':control-permission:')||k.includes(':control-task:')).length,0);
+    await user.click(screen.getByRole('button',{name:'Refresh permissions'}));await user.click(screen.getByRole('button',{name:'Refresh task'}));
+    await screen.findByText('No active reusable permissions.');await waitFor(()=>assert.equal(screen.getByRole('button',{name:'Save or replace tracked task'}).disabled,false));
+    assert.equal(permissions,2);assert.equal(tasks,2);
+  } finally {AbortSignal.timeout=timeout;}
+});
+
+test('control recovery markers are session scoped and malformed markers fail closed',async()=>{
+  const {PermissionsPanel}=await import('../components/chat/permissions-panel.tsx');seed();
+  const key='tflash:sync-uncertain:control-permission:vercel:ui-test:test';window.localStorage.setItem(key,JSON.stringify({sessionId:'chat-a',action:'grant'}));
+  fakeFetch(path=>path.endsWith('/permissions')?Response.json({epoch:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',grants:[]}):undefined);
+  const tree=id=>app(h(PermissionsPanel,{sessionId:id}));const mounted=render(tree('chat-b'));const user=userEvent.setup();await user.click(screen.getByText('Permissions for this conversation'));
+  await screen.findByText('No active reusable permissions.');assert.equal(screen.queryByText(/A previous change may have completed/),null);
+  mounted.rerender(tree('chat-a'));await screen.findByText(/A previous change may have completed/);
+  window.localStorage.setItem(key,'corrupt');await React.act(async()=>window.dispatchEvent(new window.StorageEvent('storage',{key})));mounted.rerender(tree('chat-b'));
+  await screen.findByText(/A previous change may have completed/);assert.equal(screen.getByRole('button',{name:'Allow homepage for one hour'}).disabled,true);
+});
+
+test('late continuation begin after an account switch never starts the agent',async()=>{
+  const {TaskContinuation}=await import('../components/chat/task-continuation.tsx');seed();let release,started=0,signal;
+  const delayed=new Promise(resolve=>{release=resolve;});
+  fakeFetch((path,options)=>{if(path.endsWith('/task/continuations')){if(options.method==='GET')return Response.json({attempt:null,history:[]});
+    const body=JSON.parse(options.body);if(body.action==='begin'){signal=options.signal;return delayed;}return Response.json({ok:true});}});
+  const task={objective:'Task',path:'out.txt',sha256:'a'.repeat(64),revision:'r1',continuationBudget:1,state:'awaiting_evidence',verifiedAt:null,reason:null};
+  const tree=id=>h(AppSettingsProvider,{userId:id,accountKind:'vercel'},h(TaskContinuation,{sessionId:'chat-a',task,disabled:false,onContinue:async()=>{started++;},onRefreshTask(){}}));
+  const mounted=render(tree(userId));const user=userEvent.setup();await user.click(await screen.findByLabelText(/I reviewed the prior turn and external effects/i));
+  await user.click(screen.getByRole('button',{name:/Start one budgeted turn/i}));await waitFor(()=>assert.ok(signal));
+  mounted.rerender(tree('another-user'));assert.equal(signal.aborted,true);
+  await React.act(async()=>{release(Response.json({ok:true}));await delayed;});assert.equal(started,0);
+});
+
+test('Somali permission uncertainty describes review without claiming cancellation',async()=>{
+  const {PermissionsPanel}=await import('../components/chat/permissions-panel.tsx');seed({language:'so'});
+  window.localStorage.setItem('tflash:sync-uncertain:control-permission:vercel:ui-test:one',JSON.stringify({sessionId:'chat-a',action:'grant'}));
+  fakeFetch(path=>path.endsWith('/permissions')?Response.json({epoch:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',grants:[]}):undefined);
+  render(app(h(PermissionsPanel,{sessionId:'chat-a'})));await userEvent.setup().click(await screen.findByText('Oggolaanshaha wada sheekaysigan'));
+  assert.ok(await screen.findByText(/Isbeddel hore wuu dhammayn karay/));assert.ok(screen.getByText('Oggolaansho la bixiyey'));
+  assert.equal(screen.getByRole('button',{name:'Qiro dib-u-eegista'}).disabled,true);
+});
+
+test('HTTP 503 after a control mutation retains an uncertain marker even after a successful refresh',async()=>{
+  const {PermissionsPanel}=await import('../components/chat/permissions-panel.tsx');seed();let changes=0;
+  fakeFetch((path,options)=>{if(path.endsWith('/permissions')){if(options.method==='POST'){changes++;return Response.json({error:'unavailable'},{status:503});}return Response.json({epoch:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',grants:[]});}});
+  render(app(h(PermissionsPanel,{sessionId:'chat-a'})));const user=userEvent.setup();await user.click(screen.getByText('Permissions for this conversation'));await screen.findByText('No active reusable permissions.');
+  await user.type(screen.getByLabelText('HTTPS homepage'),'https://example.com');await user.click(screen.getByRole('button',{name:'Allow homepage for one hour'}));
+  await screen.findByText(/A previous change may have completed/);await user.click(screen.getByRole('button',{name:'Refresh permissions'}));await screen.findByText('No active reusable permissions.');
+  assert.equal(changes,1);assert.equal(screen.getByRole('button',{name:'Allow homepage for one hour'}).disabled,true);
+});
+
+test('a conflict without an explicit pre-dispatch assertion remains uncertain',async()=>{
+  const {PermissionsPanel}=await import('../components/chat/permissions-panel.tsx');seed();let attempts=0;
+  fakeFetch((path,options)=>{if(path.endsWith('/permissions')){if(options.method==='POST'){attempts++;return Response.json({error:'conflict'},{status:409});}return Response.json({epoch:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',grants:[]});}});
+  render(app(h(PermissionsPanel,{sessionId:'chat-a'})));const user=userEvent.setup();await user.click(screen.getByText('Permissions for this conversation'));await screen.findByText('No active reusable permissions.');
+  await user.type(screen.getByLabelText('HTTPS homepage'),'https://example.com');await user.click(screen.getByRole('button',{name:'Allow homepage for one hour'}));
+  await screen.findByText(/A previous change may have completed/);assert.equal(attempts,1);
+  await user.click(screen.getByRole('button',{name:'Refresh permissions'}));await screen.findByText('No active reusable permissions.');
+  assert.equal(screen.getByRole('button',{name:'Allow homepage for one hour'}).disabled,true);
+});
+
+test('unmounting a pending control write retains its warning without replay',async()=>{
+  const {PermissionsPanel}=await import('../components/chat/permissions-panel.tsx');seed();let writes=0,signal;
+  fakeFetch((path,options)=>{if(path.endsWith('/permissions')){if(options.method==='POST'){writes++;signal=options.signal;return new Promise(()=>{});}return Response.json({epoch:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',grants:[]});}});
+  const mounted=render(app(h(PermissionsPanel,{sessionId:'chat-a'})));const user=userEvent.setup();await user.click(screen.getByText('Permissions for this conversation'));await screen.findByText('No active reusable permissions.');
+  await user.type(screen.getByLabelText('HTTPS homepage'),'https://example.com');await user.click(screen.getByRole('button',{name:'Allow homepage for one hour'}));await waitFor(()=>assert.equal(writes,1));
+  mounted.unmount();assert.equal(signal.aborted,true);render(app(h(PermissionsPanel,{sessionId:'chat-a'})));await user.click(screen.getByText('Permissions for this conversation'));
+  await screen.findByText(/A previous change may have completed/);assert.equal(writes,1);
+});
+
+test('oversized success or marker deletion failure cannot silently clear control uncertainty',async()=>{
+  const {PermissionsPanel}=await import('../components/chat/permissions-panel.tsx');seed();
+  fakeFetch((path,options)=>{if(path.endsWith('/permissions')){if(options.method==='POST')return new Response('{}',{headers:{'content-length':'600000'}});return Response.json({epoch:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',grants:[]});}});
+  const mounted=render(app(h(PermissionsPanel,{sessionId:'chat-a'})));const user=userEvent.setup();await user.click(screen.getByText('Permissions for this conversation'));await screen.findByText('No active reusable permissions.');
+  await user.type(screen.getByLabelText('HTTPS homepage'),'https://example.com');await user.click(screen.getByRole('button',{name:'Allow homepage for one hour'}));await screen.findByText(/A previous change may have completed/);
+  const proto=Object.getPrototypeOf(window.localStorage),original=proto.removeItem;
+  proto.removeItem=function(key){if(key.includes(':control-permission:'))throw new Error('blocked');return original.call(this,key);};
+  try {await user.click(screen.getByLabelText(/I reviewed the state and understand/));await user.click(screen.getByRole('button',{name:'Acknowledge review'}));assert.ok(screen.getByText(/Could not save the review/));assert.ok(screen.getByText(/A previous change may have completed/));}
+  finally {proto.removeItem=original;mounted.unmount();}
+});
+
+test('uncertain reservation stays blocked after empty refresh and reload without replay',async()=>{
+  const {TaskContinuation}=await import('../components/chat/task-continuation.tsx');seed();const realTimeout=AbortSignal.timeout, deadlines=[];
+  AbortSignal.timeout=()=>{const c=new AbortController();deadlines.push(c);return c.signal;};let posts=0,sends=0,postSignal;
+  fakeFetch((path,options)=>{if(path.endsWith('/task/continuations')){if(options.method==='POST'){posts++;postSignal=options.signal;return new Promise(()=>{});}return Response.json({attempt:null,history:[]});}});
+  const task={objective:'private objective',path:'private.txt',sha256:'a'.repeat(64),revision:'r1',continuationBudget:1,state:'awaiting_evidence',verifiedAt:null,reason:null};
+  const props={sessionId:'chat-a',ownerProof:'private-proof',task,disabled:false,onContinue:async()=>{sends++;},onRefreshTask(){}};
+  try {
+    const view=render(app(h(TaskContinuation,props)));const user=userEvent.setup();await user.click(await screen.findByRole('checkbox',{name:/explicitly authorize one new turn/}));
+    await user.click(screen.getByRole('button',{name:'Start one budgeted turn'}));await waitFor(()=>assert.equal(posts,1));
+    await React.act(async()=>deadlines.at(-1).abort());assert.equal(postSignal.aborted,true);
+    await screen.findByText('Reserve a continuation');await waitFor(()=>assert.ok(screen.getByRole('button',{name:'Start one budgeted turn'}).disabled));
+    const keys=Object.keys(window.localStorage).filter(k=>k.includes(':control-continuation:'));assert.equal(keys.length,1);
+    assert.doesNotMatch(window.localStorage.getItem(keys[0]),/private|proof|aaaa|attemptId/);
+    view.unmount();render(app(h(TaskContinuation,props)));await screen.findByText('Reserve a continuation');assert.equal(posts,1);assert.equal(sends,0);
+    await user.click(screen.getByLabelText(/I reviewed the state and understand/));await user.click(screen.getByRole('button',{name:'Acknowledge review'}));
+    await waitFor(()=>assert.equal(screen.queryByText('Reserve a continuation'),null));assert.equal(posts,1);assert.equal(sends,0);
+  } finally {AbortSignal.timeout=realTimeout;}
+});
+
+test('unconfirmed resolve blocks a new start even if the ledger refresh is empty',async()=>{
+  const {TaskContinuation}=await import('../components/chat/task-continuation.tsx');seed();let posts=0,attempt={attemptId:crypto.randomUUID(),reviewRevision:crypto.randomUUID(),state:'dispatching',createdAt:new Date().toISOString(),holdNote:null,holdAt:null};
+  fakeFetch((path,options)=>{if(path.endsWith('/task/continuations')){if(options.method==='POST'){posts++;attempt=null;return Response.json({error:'lost'},{status:503});}return Response.json({attempt,history:[]});}});
+  const task={objective:'Task',path:'out.txt',sha256:'a'.repeat(64),revision:'r1',continuationBudget:1,state:'awaiting_evidence',verifiedAt:null,reason:null};
+  render(app(h(TaskContinuation,{sessionId:'chat-a',task,disabled:false,onContinue:async()=>{throw new Error('must not send')},onRefreshTask(){}})));
+  const user=userEvent.setup();await user.type(await screen.findByLabelText(/What did you check/),'The service status is uncertain.');await user.click(screen.getByRole('checkbox',{name:/I inspected the conversation/}));
+  await user.click(screen.getByRole('button',{name:'Confirm review and release hold'}));await screen.findByText('Release a continuation hold');
+  await waitFor(()=>assert.equal(screen.getByRole('button',{name:'Start one budgeted turn'}).disabled,true));assert.equal(posts,1);
+});
+
+test('holding an unresolved continuation remains possible despite warning or blocked marker storage',async()=>{
+  const {TaskContinuation}=await import('../components/chat/task-continuation.tsx');seed();let holds=0;
+  let attempt={attemptId:crypto.randomUUID(),reviewRevision:crypto.randomUUID(),state:'dispatching',createdAt:new Date().toISOString(),holdNote:null,holdAt:null};
+  window.localStorage.setItem('tflash:sync-uncertain:control-continuation:vercel:ui-test:one',JSON.stringify({sessionId:'chat-a',action:'begin'}));
+  const proto=Object.getPrototypeOf(window.localStorage),original=proto.setItem;
+  proto.setItem=function(key,value){if(key.includes(':control-continuation:'))throw new Error('blocked');return original.call(this,key,value);};
+  fakeFetch((path,options)=>{if(path.endsWith('/task/continuations')){if(options.method==='POST'){holds++;const body=JSON.parse(options.body);assert.equal(body.action,'hold');attempt={...attempt,reviewRevision:crypto.randomUUID(),holdNote:body.note,holdAt:new Date().toISOString()};return Response.json({ok:true});}return Response.json({attempt,history:[]});}});
+  const task={objective:'Task',path:'out.txt',sha256:'a'.repeat(64),revision:'r1',continuationBudget:1,state:'awaiting_evidence',verifiedAt:null,reason:null};
+  try {
+    render(app(h(TaskContinuation,{sessionId:'chat-a',task,disabled:false,onContinue:async()=>{},onRefreshTask(){}})));const user=userEvent.setup();
+    await screen.findByText('Begin a continuation');await user.type(await screen.findByLabelText(/What did you check/),'External effect remains uncertain.');
+    await user.click(screen.getByRole('button',{name:'Save note and keep on hold'}));await screen.findByText(/Last unresolved note: External effect remains uncertain/);
+    assert.equal(holds,1);assert.ok(screen.getByText('Begin a continuation'));assert.ok(screen.getByText(/Recovery storage is unavailable/));
+    assert.equal(screen.getByRole('button',{name:'Confirm review and release hold'}).disabled,true);
+  } finally {proto.setItem=original;}
+});
+
+test('malformed continuation snapshot fails closed and manual refresh can recover',async()=>{
+  const {TaskContinuation}=await import('../components/chat/task-continuation.tsx');seed();let reads=0,posts=0;
+  fakeFetch((path,options)=>{if(path.endsWith('/task/continuations')){if(options.method==='POST'){posts++;return Response.json({ok:true});}return Response.json(++reads===1?{attempt:null,history:[null]}:{attempt:null,history:[]});}});
+  const task={objective:'Task',path:'out.txt',sha256:'a'.repeat(64),revision:'r1',continuationBudget:1,state:'awaiting_evidence',verifiedAt:null,reason:null};
+  render(app(h(TaskContinuation,{sessionId:'chat-a',task,disabled:false,onContinue:async()=>{},onRefreshTask(){}})));const user=userEvent.setup();
+  await screen.findByRole('alert');assert.equal(screen.queryByRole('button',{name:'Start one budgeted turn'}),null);assert.equal(posts,0);
+  await user.click(screen.getByRole('button',{name:'Refresh continuation'}));await screen.findByRole('checkbox',{name:/explicitly authorize one new turn/});assert.equal(posts,0);
+});
+
+test('continuation hides old account data in the commit before effects clear state',async()=>{
+  const {TaskContinuation}=await import('../components/chat/task-continuation.tsx');seed();const seen=[];
+  const attempt={attemptId:crypto.randomUUID(),reviewRevision:crypto.randomUUID(),state:'dispatching',createdAt:new Date().toISOString(),holdNote:'Private previous account note',holdAt:new Date().toISOString()};
+  fakeFetch((path,options)=>{if(path.endsWith('/task/continuations'))return options.headers['x-tflash-expected-user-id']===userId?Response.json({attempt,history:[]}):new Promise(()=>{});});
+  const task={objective:'Task',path:'out.txt',sha256:'a'.repeat(64),revision:'r1',continuationBudget:1,state:'awaiting_evidence',verifiedAt:null,reason:null};
+  function Probe({id}){React.useLayoutEffect(()=>{seen.push({id,text:document.body.textContent});},[id]);return h(TaskContinuation,{sessionId:'chat-a',task,disabled:false,onContinue:async()=>{},onRefreshTask(){}});}
+  const tree=id=>h(AppSettingsProvider,{userId:id,accountKind:'vercel'},h(Probe,{id}));const view=render(tree(userId));await screen.findByText(/Private previous account note/);
+  view.rerender(tree('other-user'));assert.equal(seen.at(-1).id,'other-user');assert.doesNotMatch(seen.at(-1).text,/Private previous account note|Dispatch began but the outcome is unknown/);
+});
+
+test('continuation 409 clears uncertainty only for an explicit server pre-dispatch rejection',async()=>{
+  const {TaskContinuation}=await import('../components/chat/task-continuation.tsx');seed();let asserted=false,posts=0;
+  fakeFetch((path,options)=>{if(path.endsWith('/task/continuations')){if(options.method==='POST'){posts++;return Response.json(asserted?{continuationNotStarted:true}:{error:'conflict'},{status:409});}return Response.json({attempt:null,history:[]});}});
+  const task={objective:'Task',path:'out.txt',sha256:'a'.repeat(64),revision:'r1',continuationBudget:1,state:'awaiting_evidence',verifiedAt:null,reason:null};
+  render(app(h(TaskContinuation,{sessionId:'chat-a',task,disabled:false,onContinue:async()=>{throw new Error('must not send')},onRefreshTask(){}})));const user=userEvent.setup();
+  await user.click(await screen.findByRole('checkbox',{name:/explicitly authorize one new turn/}));await user.click(screen.getByRole('button',{name:'Start one budgeted turn'}));
+  await screen.findByText('Reserve a continuation');await user.click(screen.getByLabelText(/I reviewed the state and understand/));await user.click(screen.getByRole('button',{name:'Acknowledge review'}));
+  await waitFor(()=>assert.equal(screen.queryByText('Reserve a continuation'),null));asserted=true;
+  await user.click(screen.getByRole('checkbox',{name:/explicitly authorize one new turn/}));await user.click(screen.getByRole('button',{name:'Start one budgeted turn'}));
+  await waitFor(()=>assert.equal(posts,2));await waitFor(()=>assert.equal(screen.getByRole('button',{name:'Refresh continuation'}).disabled,false));
+  assert.equal(screen.queryByText('Reserve a continuation'),null);
+});
+
+test('Somali continuation warning blocks a new start until explicit review',async()=>{
+  const {TaskContinuation}=await import('../components/chat/task-continuation.tsx');seed({language:'so'});
+  window.localStorage.setItem('tflash:sync-uncertain:control-continuation:vercel:ui-test:one',JSON.stringify({sessionId:'chat-a',action:'reserve'}));
+  fakeFetch(path=>path.endsWith('/task/continuations')?Response.json({attempt:null,history:[]}):undefined);
+  const task={objective:'Task',path:'out.txt',sha256:'a'.repeat(64),revision:'r1',continuationBudget:1,state:'awaiting_evidence',verifiedAt:null,reason:null};
+  render(app(h(TaskContinuation,{sessionId:'chat-a',task,disabled:false,onContinue:async()=>{},onRefreshTask(){}})));
+  await screen.findByText('Qabashada sii-wadista');assert.ok(screen.getByText(/Isbeddel hore wuu dhammayn karay/));
+  assert.equal(screen.getByRole('button',{name:'Qiro dib-u-eegista'}).disabled,true);
+});
+
+test('continuation marker storage failure prevents new reservations before dispatch',async()=>{
+  const {TaskContinuation}=await import('../components/chat/task-continuation.tsx');seed();let posts=0;
+  const proto=Object.getPrototypeOf(window.localStorage),original=proto.setItem;
+  proto.setItem=function(key,value){if(key.includes(':control-continuation:'))throw new Error('blocked');return original.call(this,key,value);};
+  fakeFetch((path,options)=>{if(path.endsWith('/task/continuations')){if(options.method==='POST')posts++;return Response.json({attempt:null,history:[]});}});
+  const task={objective:'Task',path:'out.txt',sha256:'a'.repeat(64),revision:'r1',continuationBudget:1,state:'awaiting_evidence',verifiedAt:null,reason:null};
+  try {render(app(h(TaskContinuation,{sessionId:'chat-a',task,disabled:false,onContinue:async()=>{throw new Error('must not send')},onRefreshTask(){}})));const user=userEvent.setup();
+    await user.click(await screen.findByRole('checkbox',{name:/explicitly authorize one new turn/}));await user.click(screen.getByRole('button',{name:'Start one budgeted turn'}));
+    await screen.findByText(/Recovery storage is unavailable/);assert.equal(posts,0);assert.equal(screen.getByRole('button',{name:'Start one budgeted turn'}).disabled,true);
+  } finally {proto.setItem=original;}
+});
+
+test('unmount during an uncertain begin leaves its durable marker and never sends late',async()=>{
+  const {TaskContinuation}=await import('../components/chat/task-continuation.tsx');seed();let attempt=null,release,begun=false,sends=0;
+  fakeFetch((path,options)=>{if(path.endsWith('/task/continuations')){if(options.method==='GET')return Response.json({attempt,history:[]});const body=JSON.parse(options.body);
+    if(body.action==='reserve'){attempt={attemptId:body.attemptId,reviewRevision:crypto.randomUUID(),state:'reserved',createdAt:new Date().toISOString(),holdNote:null,holdAt:null};return Response.json({ok:true});}
+    if(body.action==='begin'){begun=true;return new Promise(resolve=>{release=resolve;});}}});
+  const task={objective:'Task',path:'out.txt',sha256:'a'.repeat(64),revision:'r1',continuationBudget:1,state:'awaiting_evidence',verifiedAt:null,reason:null};
+  const props={sessionId:'chat-a',task,disabled:false,onContinue:async()=>{sends++;},onRefreshTask(){}};const view=render(app(h(TaskContinuation,props))),user=userEvent.setup();
+  await user.click(await screen.findByRole('checkbox',{name:/explicitly authorize one new turn/}));await user.click(screen.getByRole('button',{name:'Start one budgeted turn'}));
+  await waitFor(()=>assert.equal(begun,true));view.unmount();await React.act(async()=>release(Response.json({ok:true})));render(app(h(TaskContinuation,props)));
+  await screen.findByText('Begin a continuation');assert.equal(sends,0);assert.ok(await screen.findByText(/Reserved; it is not confirmed/));
+});
+
+test('a stalled begin response body keeps its marker and cannot dispatch a turn',async()=>{
+  const {TaskContinuation}=await import('../components/chat/task-continuation.tsx');seed();const realTimeout=AbortSignal.timeout,deadlines=[];
+  AbortSignal.timeout=()=>{const c=new AbortController();deadlines.push(c);return c.signal;};let attempt=null,sends=0,begins=0,cancelled=false;
+  fakeFetch((path,options)=>{if(path.endsWith('/task/continuations')){if(options.method==='GET')return Response.json({attempt,history:[]});const data=JSON.parse(options.body);
+    if(data.action==='reserve'){attempt={attemptId:data.attemptId,reviewRevision:crypto.randomUUID(),state:'reserved',createdAt:new Date().toISOString(),holdNote:null,holdAt:null};return Response.json({ok:true});}
+    if(data.action==='begin'){begins++;attempt={...attempt,state:'dispatching',reviewRevision:crypto.randomUUID()};return new Response(new ReadableStream({pull(){return new Promise(()=>{});},cancel(){cancelled=true;}}));}}});
+  const task={objective:'Task',path:'out.txt',sha256:'a'.repeat(64),revision:'r1',continuationBudget:1,state:'awaiting_evidence',verifiedAt:null,reason:null};
+  try {render(app(h(TaskContinuation,{sessionId:'chat-a',task,disabled:false,onContinue:async()=>{sends++;},onRefreshTask(){}})));const user=userEvent.setup();
+    await user.click(await screen.findByRole('checkbox',{name:/explicitly authorize one new turn/}));await user.click(screen.getByRole('button',{name:'Start one budgeted turn'}));await waitFor(()=>assert.equal(begins,1));
+    await React.act(async()=>deadlines.at(-1).abort());await screen.findByText('Begin a continuation');await screen.findByText(/Dispatch began but the outcome is unknown/);
+    assert.equal(cancelled,true);assert.equal(sends,0);assert.equal(begins,1);
+  } finally {AbortSignal.timeout=realTimeout;}
+});
+
+test('an oversized continuation ledger is not treated as empty',async()=>{
+  const {TaskContinuation}=await import('../components/chat/task-continuation.tsx');seed();
+  fakeFetch(path=>path.endsWith('/task/continuations')?new Response('{}',{headers:{'content-length':'131073'}}):undefined);
+  const task={objective:'Task',path:'out.txt',sha256:'a'.repeat(64),revision:'r1',continuationBudget:1,state:'awaiting_evidence',verifiedAt:null,reason:null};
+  render(app(h(TaskContinuation,{sessionId:'chat-a',task,disabled:false,onContinue:async()=>{},onRefreshTask(){}})));
+  await screen.findByRole('alert');assert.equal(screen.queryByRole('button',{name:'Start one budgeted turn'}),null);
 });

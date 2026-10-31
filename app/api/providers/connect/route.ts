@@ -1,3 +1,4 @@
+import { expectedPrincipalMatches } from "@/lib/security/expected-principal";
 import { currentPrincipal } from "@/lib/identity";
 import { getProvider } from "@/lib/providers/catalog";
 import { sealCredential, validateBaseURL } from "@/lib/providers/credentials";
@@ -27,6 +28,7 @@ export type ConnectResponse = {
 async function handlePost(request: Request): Promise<Response> {
   const principal = await currentPrincipal();
   if (!principal) return Response.json({ ok: false, error: "Sign in to continue." }, { status: 401 });
+  if (!expectedPrincipalMatches(request, principal)) return Response.json({ ok: false, error: "Account changed. Reload to continue." }, { status: 409, headers: { "cache-control": "no-store" } });
   const limited = guardRateLimit("providerConnect", request, principal.id);
   if (limited) return limited;
   if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) return Response.json({ ok: false, error: "Expected JSON." }, { status: 415 });
@@ -61,11 +63,15 @@ async function handlePost(request: Request): Promise<Response> {
     const validatedBase = validateBaseURL(baseURL, provider);
     const started = Date.now();
     const check = await testConnection(provider, credential);
+    const count = check.source === "live" ? check.models.length : 0;
+    const note = !check.ok ? "Saved without verification; the connection test failed." : check.source === "static"
+      ? (check.error ?? "Built-in suggestions only; the provider connection was not verified.")
+      : `Model endpoint responded; ${count} models found.`;
     if (!check.ok && !force) {
       const body: ConnectResponse = {
         ok: false,
         providerId: provider.id,
-        modelCount: check.models.length,
+        modelCount: count,
         latencyMs: check.latencyMs ?? Date.now() - started,
         message: check.error ?? "Connection test failed.",
       };
@@ -78,9 +84,9 @@ async function handlePost(request: Request): Promise<Response> {
       const body: ConnectResponse = {
         ok: true,
         providerId: provider.id,
-        modelCount: check.models.length,
+        modelCount: count,
         latencyMs: check.latencyMs ?? Date.now() - started,
-        message: `${provider.name} is ready using the server's API key.`,
+        message: `${provider.name} uses the server's API key. ${note}`,
       };
       return Response.json(body);
     }
@@ -90,9 +96,9 @@ async function handlePost(request: Request): Promise<Response> {
       const body: ConnectResponse = {
         ok: true,
         providerId: provider.id,
-        modelCount: check.models.length,
+        modelCount: count,
         latencyMs: check.latencyMs ?? Date.now() - started,
-        message: `${provider.name} is ready on the server (no browser key needed).`,
+        message: `${provider.name} is configured without a browser key. ${note}`,
       };
       return Response.json(body);
     }
@@ -109,9 +115,9 @@ async function handlePost(request: Request): Promise<Response> {
       providerId: provider.id,
       token: sealed.token,
       expiresAt: sealed.expiresAt,
-      modelCount: check.models.length,
+      modelCount: count,
       latencyMs: check.latencyMs ?? Date.now() - started,
-      message: `${provider.name} connected. ${check.models.length} models available.`,
+      message: `${provider.name} credentials saved. ${note}`,
     };
     return Response.json(body, { headers: { "cache-control": "no-store" } });
   } catch (error) {

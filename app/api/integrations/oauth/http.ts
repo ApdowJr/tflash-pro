@@ -36,7 +36,7 @@ export function callbackUrl(request: Request): string {
 export function backToApp(_request: Request, params: Readonly<Record<string, string>>, returnTo?: string): Response {
   const url = new URL(safeLocalPath(returnTo), "https://local.invalid");
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
-  return new Response(null, { status: 302, headers: { location: `${url.pathname}${url.search}${url.hash}`, "cache-control": "no-store" } });
+  return new Response(null, { status: 302, headers: { location: `${url.pathname}${url.search}${url.hash}`, "cache-control": "no-store", "referrer-policy": "no-referrer" } });
 }
 
 export function readCookie(request: Request, name: string): string | undefined {

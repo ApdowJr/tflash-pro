@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { waitWithAbort } from "@/lib/abortable";
 import { searchChats } from "@/lib/chat-history";
 import { MAX_MESSAGE_QUERY_LENGTH, MIN_MESSAGE_QUERY_LENGTH, type SearchSnippet } from "@/lib/chat-search";
 import { OWNER_PROOF_HEADER } from "@/lib/security/chat-ownership-wire";
@@ -74,11 +75,15 @@ export function useChatSearch({
             if (accountKind === "vercel" && !candidate.proof) throw new Error("Missing ownership proof");
             const headers = new Headers({ "content-type": "application/json" });
             if (accountKind === "vercel" && candidate.proof) headers.set(OWNER_PROOF_HEADER, candidate.proof);
-            const response = await fetch(`/api/chats/${encodeURIComponent(candidate.id)}/search`, {
+            const pending = fetch(`/api/chats/${encodeURIComponent(candidate.id)}/search`, {
               method: "POST", headers, body: JSON.stringify({ query: needle }), cache: "no-store", signal: requestController.signal,
             });
+            void pending.then((response) => {
+              if (requestController.signal.aborted && response.body) void response.body.cancel().catch(() => {});
+            }, () => {});
+            const response = await waitWithAbort(pending, requestController.signal);
             if (!response.ok) throw new Error("Search unavailable");
-            const body: unknown = await response.json();
+            const body: unknown = await waitWithAbort(response.json(), requestController.signal);
             if (!body || typeof body !== "object") throw new Error("Invalid result");
             const result = body as Record<string, unknown>;
             if (result.status === "matched" && validSnippet(result.snippet)) snippet = result.snippet;

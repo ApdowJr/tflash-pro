@@ -1,3 +1,5 @@
+import { readBoundedJson } from "@/lib/bounded-json";
+import { waitWithAbort } from "@/lib/abortable";
 import { MAX_MESSAGE_QUERY_LENGTH, MIN_MESSAGE_QUERY_LENGTH } from "@/lib/chat-search";
 import { searchEveStream } from "@/lib/chat-search-stream";
 import { OWNER_PROOF_HEADER } from "@/lib/security/chat-ownership";
@@ -17,36 +19,12 @@ function reply(body: unknown, status = 200) {
 }
 
 async function readQuery(request: Request): Promise<string | undefined> {
-  if (Number(request.headers.get("content-length")) > MAX_BODY_BYTES || !request.body) return;
-  const reader = request.body.getReader();
-  const decoder = new TextDecoder("utf-8", { fatal: true });
-  let bytes = 0;
-  let text = "";
-  const signal = AbortSignal.any([request.signal, AbortSignal.timeout(5_000)]);
-  const abort = () => { void reader.cancel().catch(() => {}); };
-  signal.addEventListener("abort", abort, { once: true });
-  try {
-    while (!signal.aborted) {
-      const part = await reader.read();
-      if (signal.aborted) return;
-      if (part.done) break;
-      bytes += part.value.byteLength;
-      if (bytes > MAX_BODY_BYTES) { void reader.cancel().catch(() => {}); return; }
-      text += decoder.decode(part.value, { stream: true });
-    }
-    text += decoder.decode();
-    const body: unknown = JSON.parse(text);
-    if (!body || typeof body !== "object" || Array.isArray(body)) return;
-    const query = (body as { query?: unknown }).query;
-    if (typeof query !== "string") return;
-    const trimmed = query.trim();
-    if (trimmed.length < MIN_MESSAGE_QUERY_LENGTH || trimmed.length > MAX_MESSAGE_QUERY_LENGTH) return;
-    return trimmed;
-  } catch { return; }
-  finally {
-    signal.removeEventListener("abort", abort);
-    reader.releaseLock();
-  }
+  const body = await readBoundedJson(request, MAX_BODY_BYTES);
+  if (!body.ok || !body.value || typeof body.value !== "object" || Array.isArray(body.value)) return;
+  const query = (body.value as { query?: unknown }).query;
+  if (typeof query !== "string") return;
+  const trimmed = query.trim();
+  return trimmed.length >= MIN_MESSAGE_QUERY_LENGTH && trimmed.length <= MAX_MESSAGE_QUERY_LENGTH ? trimmed : undefined;
 }
 
 export async function POST(request: Request, context: { params: Promise<{ sessionId: string }> }): Promise<Response> {
@@ -71,9 +49,13 @@ export async function POST(request: Request, context: { params: Promise<{ sessio
       accept: "application/x-ndjson",
     });
     if (owned.kind === "vercel") headers.set(OWNER_PROOF_HEADER, owned.proof);
-    const response = await fetch(`${internalOrigin()}/eve/v1/session/${encodeURIComponent(sessionId)}/stream?follow=false&includeTailIndex=1`, {
+    const pending = fetch(`${internalOrigin()}/eve/v1/session/${encodeURIComponent(sessionId)}/stream?follow=false&includeTailIndex=1`, {
       method: "GET", headers, cache: "no-store", redirect: "error", signal,
     });
+    // If a transport ignores abort and later returns, release its body without
+    // waiting or interpreting a stale response.
+    void pending.then((response) => { if (signal.aborted && response.body) void response.body.cancel().catch(() => {}); }, () => {});
+    const response = await waitWithAbort(pending, signal);
     // Expired, forbidden, missing and temporarily unavailable transcripts all
     // remain partial results; never expose Eve's raw body or error details.
     const result = await searchEveStream(response, query, signal);

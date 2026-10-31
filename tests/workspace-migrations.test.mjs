@@ -316,3 +316,49 @@ test("the chat migration enforces owner-only reads, writes and deletes with real
     );
   } finally { await db.close(); }
 });
+
+test("Vercel history SQL keeps verified imports isolated, rename-safe and tombstoned", async () => {
+  const db = new PGlite();
+  try {
+    await db.exec(`create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;`);
+    await db.exec(await readFile(new URL("20261031130000_vercel_chat_history.sql", migrationDirectory), "utf8"));
+    const perms = await db.query(`select has_table_privilege('authenticated','public.tflash_vercel_chats','select') as read, has_function_privilege('authenticated','public.tflash_vercel_history_import(text,jsonb)','execute') as write, has_function_privilege('service_role','public.tflash_vercel_history_import(text,jsonb)','execute') as service`);
+    assert.deepEqual(perms.rows[0], {read:false,write:false,service:true});
+    await db.exec("set role service_role");
+    const item=JSON.stringify([{id:'s1',title:'Old',updatedAt:1700000000000}]);
+    assert.equal((await db.query(`select public.tflash_vercel_history_import('alice',$1::jsonb) as n`,[item])).rows[0].n,1);
+    assert.equal((await db.query(`select public.tflash_vercel_history_update('alice','s1','Renamed',false) as title`)).rows[0].title,'Renamed');
+    assert.equal((await db.query(`select public.tflash_vercel_history_update('alice','s1','Stale',true) as title`)).rows[0].title,'Renamed');
+    assert.equal((await db.query(`select public.tflash_vercel_history_import('alice',$1::jsonb) as n`,[item])).rows[0].n,0);
+    assert.equal((await db.query(`select public.tflash_vercel_history_update('bob','s1','Hijack',false) as title`)).rows[0].title,null);
+    assert.equal((await db.query(`select public.tflash_vercel_history_remove('bob','s1') as ok`)).rows[0].ok,false);
+    assert.equal((await db.query(`select public.tflash_vercel_history_remove('alice','s1') as ok`)).rows[0].ok,true);
+    assert.equal((await db.query(`select public.tflash_vercel_history_import('alice',$1::jsonb) as n`,[item])).rows[0].n,0);
+    assert.equal((await db.query(`select public.tflash_vercel_history_update('alice','s1','Return',true) as title`)).rows[0].title,null);
+    const rows=await db.query(`select owner_id,title,deleted_at is not null as deleted from public.tflash_vercel_chats where session_id='s1'`);
+    assert.deepEqual(rows.rows,[{owner_id:'alice',title:null,deleted:true}]);
+    await db.query(`select public.tflash_vercel_history_remove('alice','not-yet-imported')`);
+    assert.equal((await db.query(`select public.tflash_vercel_history_import('alice',$1::jsonb) as n`,[JSON.stringify([{id:'not-yet-imported',title:'Stale',updatedAt:1}])])).rows[0].n,0);
+  } finally { await db.close(); }
+});
+
+test("Vercel workspace table is service-only with owner-scoped compare-and-set writes", async () => {
+  const db=new PGlite();
+  try {
+    await db.exec(`create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;`);
+    await db.exec(await readFile(new URL("20261031140000_vercel_workspace_sync.sql",migrationDirectory),"utf8"));
+    const permissions=await db.query(`select has_table_privilege('anon','public.tflash_vercel_workspaces','select') as anon, has_table_privilege('authenticated','public.tflash_vercel_workspaces','update') as auth, has_table_privilege('service_role','public.tflash_vercel_workspaces','update') as service`);
+    assert.deepEqual(permissions.rows[0],{anon:false,auth:false,service:true});
+    await db.exec("set role service_role");
+    await db.query(`insert into public.tflash_vercel_workspaces values ('alice',$1,'2026-01-01T00:00:00.000Z')`,[JSON.stringify(emptyWorkspace)]);
+    await assert.rejects(db.query(`insert into public.tflash_vercel_workspaces values ('alice',$1,now())`,[JSON.stringify(emptyWorkspace)]));
+    await assert.rejects(db.query(`insert into public.tflash_vercel_workspaces values ('bad','[]'::jsonb,now())`));
+    const changed={...emptyWorkspace,maxSteps:14};
+    const win=await db.query(`update public.tflash_vercel_workspaces set workspace=$1,updated_at='2026-01-01T00:00:00.001Z' where owner_id='alice' and updated_at='2026-01-01T00:00:00.000Z' returning workspace`,[JSON.stringify(changed)]);
+    assert.equal(win.rows.length,1);
+    const stale=await db.query(`update public.tflash_vercel_workspaces set workspace=$1 where owner_id='alice' and updated_at='2026-01-01T00:00:00.000Z' returning workspace`,[JSON.stringify(emptyWorkspace)]);
+    const wrongOwner=await db.query(`update public.tflash_vercel_workspaces set workspace=$1 where owner_id='bob' and updated_at='2026-01-01T00:00:00.001Z' returning workspace`,[JSON.stringify(emptyWorkspace)]);
+    assert.equal(stale.rows.length,0); assert.equal(wrongOwner.rows.length,0);
+    assert.deepEqual((await db.query(`select workspace from public.tflash_vercel_workspaces where owner_id='alice'`)).rows[0].workspace,changed);
+  } finally { await db.close(); }
+});

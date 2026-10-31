@@ -1,12 +1,13 @@
+import { expectedPrincipalMatches } from "@/lib/security/expected-principal";
 import { currentPrincipal } from "@/lib/identity";
 import { serverSupabase } from "@/lib/supabase/server";
 import { OWNER_PROOF_HEADER, verifyChatOwnership } from "@/lib/security/chat-ownership";
 
 /** Authorize against the account's signed browser proof or its RLS-protected row. */
-export async function ownedChat(request: Request, sessionId: string) {
+export async function ownedChat(request: Request, sessionId: string, enforceExpectedPrincipal = true) {
   if (!/^[a-zA-Z0-9_-]{1,200}$/.test(sessionId)) return null;
   const principal = await currentPrincipal();
-  if (!principal) return null;
+  if (!principal || (enforceExpectedPrincipal && !expectedPrincipalMatches(request, principal))) return null;
   if (principal.kind === "vercel") {
     const proof = request.headers.get(OWNER_PROOF_HEADER);
     return verifyChatOwnership(principal.id, sessionId, proof)
