@@ -54,11 +54,13 @@ export function SettingsDialog({
   onOpenChange,
   initialTab = "providers",
   initialProvider,
+  conversationControls,
 }: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly initialTab?: Tab;
   readonly initialProvider?: string;
+  readonly conversationControls?: ReactNode;
 }) {
   const { settings, t, connect, disconnect, isConnected, envConfigured, refreshStatus, loadModels, update, clearConnections } =
     useAppSettings();
@@ -239,7 +241,7 @@ export function SettingsDialog({
           </nav>
 
           <div aria-labelledby={`settings-tab-${tab}`} className="tflash-scroll tf-safe-bottom min-h-0 flex-1 overflow-y-auto p-4 sm:p-5" id="settings-panel" role="tabpanel" tabIndex={0}>
-            {tab === "workspace" ? <WorkspacePanel /> : null}
+            {tab === "workspace" ? <div className="space-y-4"><WorkspacePanel />{conversationControls}</div> : null}
             {tab === "providers" ? (
               <div className="space-y-3">
                 <div className="relative">

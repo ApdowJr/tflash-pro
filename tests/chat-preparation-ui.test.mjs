@@ -689,6 +689,9 @@ test("tracked manual continuation reserves and begins before the real chat send 
   });
   globalThis.__prepareAgent.send=async(message,options)=>{steps.push('send');sends.push({message,options});};
   render(app({sessionId:'owned-chat'})); const user=userEvent.setup();
+  await user.click(screen.getByRole('button',{name:'More actions'}));
+  await user.click(await screen.findByRole('menuitem',{name:'Settings'}));
+  await user.click(screen.getByRole('tab',{name:'Workspace'}));
   await user.click(await screen.findByText('Track a file criterion'));
   await user.click(await screen.findByRole('checkbox',{name:/explicitly authorize one new turn/}));
   await user.click(screen.getByRole('button',{name:'Start one budgeted turn'}));
@@ -697,4 +700,31 @@ test("tracked manual continuation reserves and begins before the real chat send 
   assert.match(sends[0].message,new RegExp(`Tracked continuation attempt: ${attempt.attemptId}`));
   assert.match(sends[0].message,/not proof of execution or an idempotency key/);
   await screen.findByText(/Dispatch began but the outcome is unknown/);
+});
+
+
+test("conversation panels are removed from chat while permission revocation remains in settings", async () => {
+  seed();
+  globalThis.__prepareAgent.data.messages = [{id:'message-1',role:'user',parts:[{type:'text',text:'Hello'}]}];
+  let revocations=0;
+  fakeFetch((path,options)=>{
+    if(path.endsWith('/permissions/revoke-all')) { revocations++; return Response.json({revoked:true}); }
+    if(path.endsWith('/permissions')) return Response.json({epoch:crypto.randomUUID(),grants:[]});
+  });
+  render(app({sessionId:'owned-chat'}));
+  const user=userEvent.setup();
+  await screen.findAllByText('Hello');
+  assert.equal(screen.queryByText('Permissions for this conversation'),null);
+  assert.equal(screen.queryByText('Track a file criterion'),null);
+  assert.equal(screen.queryByText('Activity & usage'),null);
+  await user.click(screen.getByRole('button',{name:'More actions'}));
+  await user.click(await screen.findByRole('menuitem',{name:'Settings'}));
+  await user.click(screen.getByRole('tab',{name:'Workspace'}));
+  await user.click(await screen.findByText('Permissions for this conversation'));
+  await screen.findByText('No active reusable permissions.');
+  await user.click(screen.getByRole('button',{name:'Revoke all reusable permissions'}));
+  await screen.findByText(/Reusable permissions revoked/);
+  assert.equal(revocations,1);
+  assert.ok(screen.getByText('Track a file criterion'));
+  assert.equal(screen.queryByText('Activity & usage'),null);
 });
