@@ -1,10 +1,10 @@
 import type { EveMessage } from "eve/react";
 
-function bashResultState(output: unknown): string {
+export function bashResultState(output: unknown): string {
   if (!output || typeof output !== "object") return "outcome-unknown";
   const value = output as Record<string, unknown>;
   if (value.status === "running") return "background-unknown";
-  if (value.status === "completed" && typeof value.exitCode === "number") {
+  if (value.status === "completed" && typeof value.exitCode === "number" && Number.isSafeInteger(value.exitCode)) {
     return value.exitCode === 0 ? "output-available" : "output-error";
   }
   return "outcome-unknown";
@@ -121,24 +121,30 @@ const number = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isFinite(value) && value >= 0
     ? value
     : undefined;
+const tokenCount = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 function readUsage(value: unknown): Usage {
   if (!value || typeof value !== "object") return {};
   const v = value as Record<string, unknown>;
   return {
-    inputTokens: number(v.inputTokens),
-    outputTokens: number(v.outputTokens),
+    inputTokens: tokenCount(v.inputTokens),
+    outputTokens: tokenCount(v.outputTokens),
     costUsd: number(v.costUsd),
   };
 }
-/** Prefer Eve's cumulative checkpoints, then add new own-session steps only.
- * If a checkpoint or any later step lacks a cost, the total is unknown.
- * Never present a partial sum as the total or invent prices.
+/** Prefer cumulative checkpoints and add only subsequent identifiable steps.
+ * A missing value makes that metric unknown, rather than presenting a partial
+ * token or cost sum as a total. Replayed steps must not be counted twice.
+ * Checkpoints are provider-reported and may themselves omit unpriced calls.
  */
 export function reportedUsage(events: readonly Event[]) {
-  let usage: Usage = {};
+  const keys = ["inputTokens", "outputTokens", "costUsd"] as const;
+  type Metric = typeof keys[number];
+  let checkpoint: Usage | undefined;
   let hasCheckpoint = false;
-  let missingCheckpointUsage = false;
-  const steps = new Map<string, Usage>();
+  const pending = new Map<string, Usage>();
+  const seenSteps = new Map<string, Usage>();
+  const ambiguous = new Set<Metric>();
   const ids = new Set<string>();
   for (const event of events) {
     if (event.meta?.id) {
@@ -146,35 +152,36 @@ export function reportedUsage(events: readonly Event[]) {
       ids.add(event.meta.id);
     }
     const data = event.data && typeof event.data === "object" ? event.data as Record<string, unknown> : {};
-    if (
-      [
-        "session.waiting",
-        "session.failed",
-        "session.completed",
-        "turn.waiting",
-      ].includes(event.type)
-    ) {
+    if (["session.waiting", "session.failed", "session.completed", "turn.waiting"].includes(event.type)) {
       hasCheckpoint = true;
-      if (data.usage) {
-        usage = readUsage(data.usage);
-        missingCheckpointUsage = false;
-        steps.clear();
-      } else {
-        // Keep known tokens, but a checkpoint without usage cannot establish
-        // the cumulative cost even if earlier or later steps report prices.
-        missingCheckpointUsage = true;
-      }
+      checkpoint = readUsage(data.usage);
+      pending.clear();
+      ambiguous.clear();
     } else if (event.type === "step.completed") {
-      const key = `${data.turnId}:${data.stepIndex}`;
-      steps.set(key, readUsage(data.usage));
+      if (typeof data.turnId !== "string" || !data.turnId ||
+          typeof data.stepIndex !== "number" || !Number.isSafeInteger(data.stepIndex) || data.stepIndex < 0) {
+        keys.forEach((key) => ambiguous.add(key));
+        continue;
+      }
+      const key = JSON.stringify([data.turnId, data.stepIndex]);
+      const step = readUsage(data.usage);
+      const previous = seenSteps.get(key);
+      if (previous) {
+        for (const metric of keys) if (previous[metric] !== step[metric]) ambiguous.add(metric);
+        continue;
+      }
+      seenSteps.set(key, step);
+      pending.set(key, step);
     }
   }
-  const costUnknown = missingCheckpointUsage || (hasCheckpoint && usage.costUsd === undefined) ||
-    [...steps.values()].some((step) => step.costUsd === undefined);
-  for (const step of steps.values())
-    for (const key of ["inputTokens", "outputTokens", "costUsd"] as const) {
-      if (step[key] !== undefined) usage[key] = (usage[key] ?? 0) + step[key];
-    }
-  if (costUnknown) delete usage.costUsd;
-  return usage;
+  const result: Usage = {};
+  for (const metric of keys) {
+    if (ambiguous.has(metric) || (hasCheckpoint && checkpoint?.[metric] === undefined) ||
+        [...pending.values()].some((step) => step[metric] === undefined)) continue;
+    if (!hasCheckpoint && pending.size === 0) continue;
+    let value = checkpoint?.[metric] ?? 0;
+    for (const step of pending.values()) value += step[metric]!;
+    if (Number.isFinite(value) && (metric === "costUsd" || Number.isSafeInteger(value))) result[metric] = value;
+  }
+  return result;
 }

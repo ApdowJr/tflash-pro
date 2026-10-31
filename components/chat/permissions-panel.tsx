@@ -2,8 +2,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAppSettings } from "@/components/settings/app-settings";
 import { Button } from "@/components/ui/button";
+import { useControlRecovery, ControlRecoveryNotice } from "./control-recovery";
+import { fetchCatalogResponse, readCatalogJson } from "@/lib/catalog-fetch";
+import { parsePermissionsSnapshot, type GrantSnapshot as Grant } from "@/lib/control-snapshot";
 import { OWNER_PROOF_HEADER } from "@/lib/security/chat-ownership-wire";
-type Grant = { origin: string; expiresAt: string; revision: string };
 export function PermissionsPanel({
   sessionId,
   ownerProof,
@@ -11,7 +13,8 @@ export function PermissionsPanel({
   sessionId: string;
   ownerProof?: string;
 }) {
-  const { t } = useAppSettings();
+  const { t, accountId, accountKind } = useAppSettings();
+  const recovery = useControlRecovery("control-permission", sessionId);
   const [open, setOpen] = useState(false),
     [grants, setGrants] = useState<Grant[]>(),
     [origin, setOrigin] = useState(""),
@@ -24,54 +27,75 @@ export function PermissionsPanel({
   const url = `/api/chats/${encodeURIComponent(sessionId)}/permissions`;
   const pending = useRef<AbortController | undefined>(undefined);
   const allRequest = useRef<AbortController | undefined>(undefined);
+  const identity = `${accountKind}:${accountId}:${sessionId}:${ownerProof ?? ""}`;
+  const currentIdentity = useRef(identity);
+  currentIdentity.current = identity;
+  const [snapshotIdentity, setSnapshotIdentity] = useState(identity);
+  const sameScope = snapshotIdentity === identity;
   const epochRef = useRef<string | undefined>(undefined);
-  epochRef.current = epoch;
+  epochRef.current = sameScope ? epoch : undefined;
   useEffect(() => {
-    setGrants(undefined); setEpoch(undefined); setAllRevoked(false); setChecked(undefined); setError(undefined); setBusy(false); setOrigin("");
+    setSnapshotIdentity(identity); setGrants(undefined); setEpoch(undefined); setAllRevoked(false); setChecked(undefined); setError(undefined); setBusy(false); setOrigin("");
     return () => { const active = pending.current; pending.current = undefined; active?.abort(); };
-  }, [url, ownerProof]);
+  }, [url, ownerProof, identity]);
   const request = useCallback(
     async (method: "GET" | "POST" | "DELETE" | "ALL", value?: string, revision?: string | null) => {
       if (pending.current && (method !== "ALL" || pending.current === allRequest.current)) return;
       if (method === "ALL") { pending.current?.abort(); pending.current = undefined; }
       if ((method === "POST" || method === "DELETE") && !epochRef.current) return;
+      let marker: string | undefined;
+      if (method !== "GET") {
+        try { marker = recovery.begin(method === "ALL" ? "revoke-all" : method === "POST" ? "grant" : "revoke", method === "ALL"); }
+        catch {
+          // Emergency revocation stays available even if local storage failed.
+          if (method !== "ALL") { setError("unavailable"); return; }
+        }
+      }
       const controller = new AbortController();
       pending.current = controller;
       if (method === "ALL") allRequest.current = controller;
+      const current = () => pending.current === controller && !controller.signal.aborted && currentIdentity.current === identity;
       setBusy(true);
       setError(undefined);
       setAllRevoked(false);
       try {
-        const r = await fetch(method === "ALL" ? `${url}/revoke-all` : url, {
-          method: method === "ALL" ? "POST" : method,
-          cache: "no-store",
-          signal: controller.signal,
-          headers: {
+        const { response: r, signal } = await fetchCatalogResponse(method === "ALL" ? `${url}/revoke-all` : url, {
+          method: method === "ALL" ? "POST" : method, cache: "no-store", signal: controller.signal,
+          headers: { "x-tflash-expected-user-id": accountId, "x-tflash-expected-account-kind": accountKind,
             ...(ownerProof ? { [OWNER_PROOF_HEADER]: ownerProof } : {}),
-            ...(method === "GET" || method === "ALL" ? {} : { "content-type": "application/json" }),
-          },
-          ...(method === "GET" || method === "ALL"
-            ? {}
-            : { body: JSON.stringify({ origin: value, expectedRevision: revision, expectedEpoch: epochRef.current }) }),
-        });
-        const body = (await r.json()) as { grants?: Grant[]; epoch?: string; revoked?: boolean };
-        if (!r.ok || (method === "ALL" ? body.revoked !== true : !Array.isArray(body.grants) || typeof body.epoch !== "string")) throw new Error(r.status === 409 ? "conflict" : "unavailable");
-        if (pending.current !== controller) return;
+            ...(method === "GET" || method === "ALL" ? {} : { "content-type": "application/json" }) },
+          ...(method === "GET" || method === "ALL" ? {} : { body: JSON.stringify({ origin: value, expectedRevision: revision, expectedEpoch: epochRef.current }) }),
+        }, 12_000);
+        if (!r.ok) {
+          let notStarted = false;
+          if (marker && [400, 403, 404, 409, 413, 415].includes(r.status)) {
+            try {
+              const rejection = await readCatalogJson(r, signal, 16 * 1024);
+              notStarted = Boolean(rejection && typeof rejection === "object" && !Array.isArray(rejection) && (rejection as { changeNotStarted?: unknown }).changeNotStarted === true);
+            } catch { /* A missing or stalled rejection is unconfirmed. */ }
+          } else if (r.body) void r.body.cancel().catch(() => {});
+          if (marker && current() && notStarted) { recovery.finish(marker); marker = undefined; }
+          throw new Error(r.status === 409 && notStarted ? "conflict" : "unavailable");
+        }
+        const body = await readCatalogJson(r, signal, 512 * 1024);
+        const snapshot = method === "ALL" ? undefined : parsePermissionsSnapshot(body);
+        if (method === "ALL" ? !body || typeof body !== "object" || (body as { revoked?: unknown }).revoked !== true : !snapshot) throw new Error("unavailable");
+        if (!current()) return;
+        if (marker) { recovery.finish(marker); marker = undefined; }
         if (method === "ALL") {
           setGrants(undefined); setEpoch(undefined); setAllRevoked(true); setChecked(undefined);
           return;
         }
-        setGrants(body.grants); setEpoch(body.epoch);
-        setChecked(Date.now());
-        setNow(Date.now());
+        setGrants(snapshot!.grants); setEpoch(snapshot!.epoch);
+        setChecked(Date.now()); setNow(Date.now());
         if (method === "POST") setOrigin("");
       } catch (reason) {
-        if (pending.current === controller) { setGrants(undefined); setEpoch(undefined); setError(reason instanceof Error && reason.message === "conflict" ? "conflict" : "unavailable"); }
+        if (current()) { recovery.refresh(); setGrants(undefined); setEpoch(undefined); setError(reason instanceof Error && reason.message === "conflict" ? "conflict" : "unavailable"); }
       } finally {
-        if (pending.current === controller) { pending.current = undefined; if (allRequest.current === controller) allRequest.current = undefined; setBusy(false); }
+        if (current()) { pending.current = undefined; if (allRequest.current === controller) allRequest.current = undefined; setBusy(false); }
       }
     },
-    [url, ownerProof],
+    [url, ownerProof, accountId, accountKind, identity, recovery.begin, recovery.finish, recovery.refresh],
   );
   useEffect(() => {
     if (open) void request("GET");
@@ -89,7 +113,8 @@ export function PermissionsPanel({
     );
     return () => window.clearTimeout(timer);
   }, [open, grants, now]);
-  const active = grants?.filter((g) => Date.parse(g.expiresAt) > now);
+  const visibleGrants = sameScope ? grants : undefined;
+  const active = visibleGrants?.filter((g) => Date.parse(g.expiresAt) > now);
   return (
     <details
       className="mx-auto w-full max-w-2xl rounded-lg border bg-card text-xs"
@@ -102,13 +127,15 @@ export function PermissionsPanel({
         <div className="space-y-3 p-3 pt-0">
           <p>{t("permissionsExplanation")}</p>
           <p className="text-muted-foreground">{t("permissionsLimits")}</p>
-          {error ? (
+          {recovery.unavailable ? <p role="alert" className="text-destructive">{t("controlRecoveryUnavailable")}</p> : null}
+          {recovery.warnings.map((warning) => <ControlRecoveryNotice key={warning.key} warning={warning} review={recovery.review} busy={busy} />)}
+          {sameScope && error ? (
             <p role="alert" className="text-destructive">
               {t(error === "conflict" ? "permissionsConflict" : "permissionsUnavailable")}
             </p>
           ) : null}
-          {allRevoked ? <p role="status">{t("permissionsAllRevoked")}</p> : null}
-          {checked && active ? (
+          {sameScope && allRevoked ? <p role="status">{t("permissionsAllRevoked")}</p> : null}
+          {sameScope && checked && active ? (
             <p>
               {t("permissionsChecked")} {new Date(checked).toLocaleString()}
             </p>
@@ -128,7 +155,7 @@ export function PermissionsPanel({
                     <Button
                       size="sm"
                       variant="outline"
-                      disabled={busy}
+                      disabled={busy || recovery.unavailable || recovery.warnings.length > 0}
                       onClick={() => void request("DELETE", g.origin, g.revision)}
                     >
                       {t("permissionsRevoke")}
@@ -144,10 +171,10 @@ export function PermissionsPanel({
             className="flex flex-wrap gap-2"
             onSubmit={(e) => {
               e.preventDefault();
-              if (!origin.trim() || !grants) return;
+              if (!origin.trim() || !visibleGrants) return;
               let normalized: string;
               try { normalized = new URL(origin.trim()).origin; } catch { normalized = origin.trim(); }
-              void request("POST", origin.trim(), grants.find((g) => g.origin === normalized)?.revision ?? null);
+              void request("POST", origin.trim(), visibleGrants.find((g) => g.origin === normalized)?.revision ?? null);
             }}
           >
             <label className="flex min-w-48 flex-1 flex-col gap-1">
@@ -157,11 +184,11 @@ export function PermissionsPanel({
                 type="url"
                 required
                 placeholder="https://example.com"
-                value={origin}
+                value={sameScope ? origin : ""}
                 onChange={(e) => setOrigin(e.target.value)}
               />
             </label>
-            <Button className="self-end" type="submit" disabled={busy || !grants}>
+            <Button className="self-end" type="submit" disabled={busy || !visibleGrants || recovery.unavailable || recovery.warnings.length > 0}>
               {t("permissionsGrant")}
             </Button>
           </form>

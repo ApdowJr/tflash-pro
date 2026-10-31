@@ -4,6 +4,7 @@ import { registerHooks } from "node:module";
 
 registerHooks({
   resolve(specifier, context, nextResolve) {
+    if (specifier === "server-only") return { url: "data:text/javascript,export {}", shortCircuit: true };
     if (specifier === "@/lib/identity") return { url: "data:text/javascript,export async function currentPrincipal() { return globalThis.__tflashWorkspacePrincipal(); }", shortCircuit: true };
     if (specifier === "@/lib/supabase/server") return { url: "data:text/javascript,export async function serverSupabase() { return globalThis.__tflashWorkspaceSupabase(); }", shortCircuit: true };
     if (specifier.startsWith("@/")) return { url: new URL("../" + specifier.slice(2) + ".ts", import.meta.url).href, shortCircuit: true };
@@ -180,4 +181,79 @@ test("database failures and corrupt stored workspaces fail without overwriting d
   assert.equal((await route.GET(getRequest())).status, 503);
   assert.equal((await route.PUT(putWorkspace(emptyWorkspace()))).status, 503);
   assert.deepEqual(rows.get("user-a").workspace, { invalid: true });
+});
+
+test("opt-in Vercel workspace uses verified owner, CAS and fails closed on service errors", async () => {
+  process.env.TFLASH_VERCEL_WORKSPACE_SYNC = "1";
+  process.env.TFLASH_VERCEL_WORKSPACE_SUPABASE_URL = "https://isolated.example.test";
+  process.env.TFLASH_VERCEL_WORKSPACE_SERVICE_ROLE_KEY = "fake-workspace-service-secret";
+  principal = { id: "vercel-alice", kind: "vercel" };
+  const oldFetch = globalThis.fetch;
+  const store = new Map();
+  const calls = [];
+  let fail = false;
+  globalThis.fetch = async (input, options) => {
+    const url = new URL(String(input));
+    const owner = url.searchParams.get("owner_id")?.replace(/^eq\./, "");
+    calls.push({ url, options });
+    if (fail) return Response.json({ message: "private database details" }, { status: 500 });
+    if (options.method === "GET") return Response.json(store.get(owner) ?? null);
+    const body = JSON.parse(options.body);
+    if (options.method === "POST") {
+      if (store.has(body.owner_id)) return Response.json({ code: "23505" }, { status: 409 });
+      store.set(body.owner_id, body); return new Response(null, { status: 201 });
+    }
+    if (options.method === "PATCH") {
+      const row = store.get(owner);
+      const expected = url.searchParams.get("updated_at")?.replace(/^eq\./, "");
+      if (!row || row.updated_at !== expected) return Response.json(null);
+      const updated = { ...row, ...body }; store.set(owner, updated);
+      return Response.json({ updated_at: updated.updated_at });
+    }
+    throw new Error("Unexpected workspace service request");
+  };
+  try {
+    assert.equal((await route.GET(getRequest("other-user"))).status, 409);
+    assert.equal((await route.PUT(putWorkspace(emptyWorkspace(), null, { expectedUserId:"other-user" }))).status, 409);
+    assert.equal(calls.length, 0);
+    const initial = await route.GET(getRequest());
+    assert.equal(initial.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await initial.json(), { storage:"cloud", workspace:null, updatedAt:null });
+    const workspace = { ...emptyWorkspace(), memoryEnabled:true, notes:[{id:"note",text:"Personal note",enabled:true,projectId:null}] };
+    const created = await route.PUT(putWorkspace(workspace));
+    assert.equal(created.status,200);
+    const revision = (await created.json()).updatedAt;
+    assert.equal(store.get("vercel-alice").workspace.notes[0].text,"Personal note");
+    assert.equal((await route.PUT(putWorkspace(workspace,null))).status,409);
+    const changed={...workspace,maxSteps:8};
+    const updated=await route.PUT(putWorkspace(changed,revision));
+    assert.equal(updated.status,200);
+    assert.equal((await route.PUT(putWorkspace(workspace,revision))).status,409);
+    principal={id:"vercel-bob",kind:"vercel"};
+    assert.deepEqual((await (await route.GET(getRequest())).json()).workspace,null);
+    assert.equal((await route.PUT(putWorkspace(workspace,revision))).status,409);
+    assert.equal(store.get("vercel-alice").workspace.maxSteps,8);
+    assert.ok(calls.every(call=>!call.url.href.includes("fake-workspace-service-secret")));
+    fail=true;
+    const failed=await route.GET(getRequest());
+    assert.equal(failed.status,503);
+    assert.doesNotMatch(await failed.text(),/private database details|fake-workspace-service-secret/);
+    assert.equal((await route.PUT(putWorkspace(workspace))).status,503);
+    assert.equal(store.get("vercel-alice").workspace.maxSteps,8);
+  } finally {
+    globalThis.fetch=oldFetch;
+    delete process.env.TFLASH_VERCEL_WORKSPACE_SYNC;
+    delete process.env.TFLASH_VERCEL_WORKSPACE_SUPABASE_URL;
+    delete process.env.TFLASH_VERCEL_WORKSPACE_SERVICE_ROLE_KEY;
+  }
+});
+
+test("workspace requests bind the login kind even when account ids happen to match", async () => {
+  principal={id:'same-id',kind:'vercel'};
+  const headers={'x-tflash-expected-user-id':'same-id','x-tflash-expected-account-kind':'supabase','content-type':'application/json'};
+  const get=new Request('https://tflash.example.test/api/workspace',{headers});
+  const put=new Request('https://tflash.example.test/api/workspace',{method:'PUT',headers,body:JSON.stringify({workspace:emptyWorkspace(),expectedUpdatedAt:null})});
+  assert.equal((await route.GET(get)).status,409);
+  assert.equal((await route.PUT(put)).status,409);
+  assert.equal(rows.size,0);
 });

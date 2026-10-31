@@ -1,3 +1,5 @@
+import { readBoundedJson } from "@/lib/bounded-json";
+import { readVercelWorkspace, vercelWorkspaceEnabled, writeVercelWorkspace } from "@/lib/vercel-workspace-store";
 import { currentPrincipal } from "@/lib/identity";
 import { serverSupabase } from "@/lib/supabase/server";
 import { workspaceSchema } from "@/lib/workspace";
@@ -7,6 +9,12 @@ export const dynamic = "force-dynamic";
 const noStore = { "cache-control": "no-store" };
 const MAX_BODY_BYTES = 200_000;
 const EXPECTED_USER_HEADER = "x-tflash-expected-user-id";
+const EXPECTED_KIND_HEADER = "x-tflash-expected-account-kind";
+function accountMismatch(request: Request, principal: { id: string; kind: string }): boolean {
+  const user = request.headers.get(EXPECTED_USER_HEADER);
+  const kind = request.headers.get(EXPECTED_KIND_HEADER);
+  return (user !== null && user !== principal.id) || (kind !== null && kind !== principal.kind);
+}
 const CONFLICT_MESSAGE = "Workspace changed elsewhere. Choose which copy to keep before syncing.";
 
 function conflictResponse(): Response {
@@ -21,13 +29,21 @@ function nextUpdatedAt(expectedUpdatedAt: string | null): string {
 export async function GET(request: Request): Promise<Response> {
   const principal = await currentPrincipal();
   if (!principal) return Response.json({ error: "Sign in to continue." }, { status: 401, headers: noStore });
-  // Vercel identities are not Supabase JWTs and must never be mapped to a Supabase row.
-  if (principal.kind !== "supabase") return Response.json({ storage: "browser", workspace: null, updatedAt: null }, { headers: noStore });
+  if (accountMismatch(request, principal)) return conflictResponse();
+  // Vercel identities are not Supabase JWTs; their optional server-only
+  // store is separate and scoped to the verified Better Auth principal.
+  if (principal.kind === "vercel" && !vercelWorkspaceEnabled()) return Response.json({ storage: "browser", workspace: null, updatedAt: null }, { headers: noStore });
   if (request.headers.get(EXPECTED_USER_HEADER) !== principal.id) return conflictResponse();
-  const supabase = await serverSupabase();
-  const { data, error } = await supabase.from("tflash_workspaces")
-    .select("workspace, updated_at").eq("user_id", principal.id).maybeSingle();
-  if (error) return Response.json({ error: "Workspace cloud sync is unavailable." }, { status: 503, headers: noStore });
+  let data: { workspace: unknown; updated_at: unknown } | null;
+  try {
+    if (principal.kind === "vercel") data = await readVercelWorkspace(principal.id);
+    else {
+      const supabase = await serverSupabase();
+      const result = await supabase.from("tflash_workspaces").select("workspace, updated_at").eq("user_id", principal.id).maybeSingle();
+      if (result.error) throw new Error("Workspace unavailable.");
+      data = result.data;
+    }
+  } catch { return Response.json({ error: "Workspace cloud sync is unavailable." }, { status: 503, headers: noStore }); }
   if (!data) return Response.json({ storage: "cloud", workspace: null, updatedAt: null }, { headers: noStore });
   const parsed = workspaceSchema.safeParse(data.workspace);
   if (!parsed.success || typeof data.updated_at !== "string") {
@@ -42,18 +58,12 @@ export async function PUT(request: Request): Promise<Response> {
   }
   const principal = await currentPrincipal();
   if (!principal) return Response.json({ error: "Sign in to continue." }, { status: 401, headers: noStore });
-  if (principal.kind !== "supabase") return Response.json({ storage: "browser" }, { headers: noStore });
+  if (accountMismatch(request, principal)) return conflictResponse();
+  if (principal.kind === "vercel" && !vercelWorkspaceEnabled()) return Response.json({ storage: "browser" }, { headers: noStore });
   if (request.headers.get(EXPECTED_USER_HEADER) !== principal.id) return conflictResponse();
-  let raw: string;
-  try {
-    raw = await request.text();
-    if (new TextEncoder().encode(raw).byteLength > MAX_BODY_BYTES) return Response.json({ error: "Workspace is too large." }, { status: 413, headers: noStore });
-  } catch {
-    return Response.json({ error: "Invalid request." }, { status: 400, headers: noStore });
-  }
-  let input: unknown;
-  try { input = JSON.parse(raw); }
-  catch { return Response.json({ error: "Invalid JSON." }, { status: 400, headers: noStore }); }
+  const body = await readBoundedJson(request, MAX_BODY_BYTES);
+  if (!body.ok) return Response.json({ error: body.error }, { status: body.status, headers: noStore });
+  const input = body.value;
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     return Response.json({ error: "Workspace data is invalid." }, { status: 400, headers: noStore });
   }
@@ -68,13 +78,20 @@ export async function PUT(request: Request): Promise<Response> {
     (expectedUpdatedAt !== null &&
       (typeof expectedUpdatedAt !== "string" ||
         expectedUpdatedAt.length > 64 ||
-        !Number.isFinite(Date.parse(expectedUpdatedAt))))
+        !Number.isFinite(Date.parse(expectedUpdatedAt)) ||
+        Date.parse(expectedUpdatedAt) >= 8_640_000_000_000_000))
   ) {
     return Response.json({ error: "Workspace data is invalid." }, { status: 400, headers: noStore });
   }
 
-  const supabase = await serverSupabase();
   const updatedAt = nextUpdatedAt(expectedUpdatedAt);
+  if (principal.kind === "vercel") {
+    try {
+      const written = await writeVercelWorkspace(principal.id, parsed.data, expectedUpdatedAt, updatedAt);
+      return written ? Response.json({ ok: true, storage: "cloud", updatedAt }, { headers: noStore }) : conflictResponse();
+    } catch { return Response.json({ error: "Could not save workspace to the signed-in account." }, { status: 503, headers: noStore }); }
+  }
+  const supabase = await serverSupabase();
   if (expectedUpdatedAt === null) {
     const { error } = await supabase.from("tflash_workspaces").insert({
       user_id: principal.id,

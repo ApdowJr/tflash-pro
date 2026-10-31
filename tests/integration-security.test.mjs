@@ -6,7 +6,7 @@ import { registerHooks } from "node:module";
 registerHooks({ resolve(specifier, context, nextResolve) {
   if (specifier === "@/lib/identity") return { url: "data:text/javascript,export async function currentPrincipal() { return globalThis.__integrationPrincipal; }", shortCircuit: true };
   if (specifier.startsWith("@/")) return { url: new URL(`../${specifier.slice(2)}.ts`, import.meta.url).href, shortCircuit: true };
-  if ((context.parentURL?.includes("/lib/integrations/") || context.parentURL?.includes("/app/api/integrations/oauth/")) && /^\.\.?\//.test(specifier) && !/\.[cm]?[jt]s$/.test(specifier)) return nextResolve(`${specifier}.ts`, context);
+  if ((context.parentURL?.includes("/lib/integrations/") || context.parentURL?.includes("/app/api/integrations/oauth/") || context.parentURL?.endsWith("/lib/catalog-fetch.ts") || context.parentURL?.endsWith("/lib/bounded-response.ts")) && /^\.\.?\//.test(specifier) && !/\.[cm]?[jt]s$/.test(specifier)) return nextResolve(`${specifier}.ts`, context);
   return nextResolve(specifier, context);
 }});
 process.env.NODE_ENV = "production";
@@ -223,7 +223,7 @@ test("registration errors fail closed, untrusted hosts never register, and denia
   try {
     const request = (extra = "") => new Request(`https://app.example.test/api/integrations/oauth/start?id=linear${extra}`, { headers });
     const failed = await start.GET(request("&returnTo=%2Fs%2Fmy-chat"));
-    assert.equal(failed.headers.get("location"), "/s/my-chat?integration=linear&oauth=misconfigured");
+    assert.equal(failed.headers.get("location"), "/s/my-chat?integration=linear&oauth=registration_uncertain");
     assert.equal(failed.headers.getSetCookie().length, 0);
     await start.GET(new Request("https://app.example.test/api/integrations/oauth/start?id=linear", { headers: { host: "evil.example", "x-forwarded-proto": "https" } }));
     assert.equal(calls, 1, "untrusted origins cannot create vendor clients");
@@ -275,4 +275,129 @@ test("earlier REST OAuth grants can still renew with their original client", asy
     delete process.env.LINEAR_OAUTH_CLIENT_ID;
     delete process.env.LINEAR_OAUTH_CLIENT_SECRET;
   }
+});
+
+test('OAuth renewal binds expected identity and bounds malformed bodies before provider access',async()=>{
+  globalThis.__integrationPrincipal=userA;const sealed=await sealIntegrationToken({integrationId:'linear',ownerId:userA.id,token:'access',refreshToken:'refresh',oauthClient:{clientId:'client'}});
+  const original=globalThis.fetch;let calls=0;globalThis.fetch=async()=>{calls++;return Response.json({access_token:'unexpected'});};
+  const req=(headers,body)=>new Request('https://app.example.test/api/integrations/oauth/refresh',{method:'POST',headers:{'content-type':'application/json',...headers},body});
+  try {
+    assert.equal((await refresh.POST(req({'x-tflash-expected-user-id':'user-b'},JSON.stringify({token:sealed.token})))).status,409);
+    assert.equal((await refresh.POST(req({'x-tflash-expected-account-kind':'vercel'},JSON.stringify({token:sealed.token})))).status,409);
+    assert.equal((await refresh.POST(req({},'null'))).status,400);
+    assert.equal((await refresh.POST(req({},JSON.stringify({token:'x'.repeat(33_000)})))).status,413);
+    assert.equal(calls,0);
+  } finally {globalThis.fetch=original;}
+});
+
+test('OAuth provider timeout or malformed rotation response is uncertain, never an auth rejection',async()=>{
+  globalThis.__integrationPrincipal=userA;const sealed=await sealIntegrationToken({integrationId:'linear',ownerId:userA.id,token:'access',refreshToken:'refresh',oauthClient:{clientId:'client'}});
+  const originalFetch=globalThis.fetch,originalTimeout=AbortSignal.timeout;
+  const req=()=>new Request('https://app.example.test/api/integrations/oauth/refresh',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({token:sealed.token})});
+  try {
+    for(const mode of ['fetch','body']){
+      const controllers=new Map();let called;const started=new Promise(resolve=>{called=resolve;});
+      AbortSignal.timeout=ms=>{const c=new AbortController();controllers.set(ms,c);return c.signal;};
+      globalThis.fetch=async()=>{called();if(mode==='fetch')return new Promise(()=>{});return new Response(new ReadableStream({pull(){return new Promise(()=>{});}}));};
+      const pending=refresh.POST(req());await started;controllers.get(10_000).abort();
+      const response=await pending;assert.equal(response.status,503);assert.match((await response.json()).message,/could not be confirmed/);
+    }
+    globalThis.fetch=async()=>Response.json({access_token:'access',refresh_token:{not:'a token'}}, {status:200});
+    const response=await refresh.POST(req());assert.equal(response.status,503);
+  } finally {globalThis.fetch=originalFetch;AbortSignal.timeout=originalTimeout;}
+});
+
+test("OAuth handoff identity mismatch never consumes another account's cookie", async () => {
+  const { sealJson } = await import('../lib/secrets.ts');
+  globalThis.__integrationPrincipal = userA;
+  const handoff = await sealJson({ integrationId:'github', ownerId:userA.id, ownerKind:'supabase', token:'v1.fake', grantExpiresAt:Date.now()+60000 }, 60000);
+  const cookie=`tflash-oauth-handoff=${handoff.token}`;
+  let response=await result.GET(new Request('https://app.example.test/api/integrations/oauth/result',{headers:{cookie,'x-tflash-expected-user-id':userB.id,'x-tflash-expected-account-kind':'supabase'}}));
+  assert.equal(response.status,409);assert.equal(response.headers.get('set-cookie'),null);
+  globalThis.__integrationPrincipal=userB;
+  response=await result.GET(new Request('https://app.example.test/api/integrations/oauth/result',{headers:{cookie}}));
+  assert.equal(response.status,403);assert.equal(response.headers.get('set-cookie'),null);
+  globalThis.__integrationPrincipal={...userA,kind:'vercel'};
+  response=await result.GET(new Request('https://app.example.test/api/integrations/oauth/result',{headers:{cookie}}));
+  assert.equal(response.status,403);assert.equal(response.headers.get('set-cookie'),null);
+  globalThis.__integrationPrincipal=userA;
+  response=await result.GET(new Request('https://app.example.test/api/integrations/oauth/result',{headers:{cookie, 'sec-fetch-site':'cross-site'}}));
+  assert.equal(response.status,403);assert.equal(response.headers.get('set-cookie'),null);
+  response=await result.GET(new Request('https://app.example.test/api/integrations/oauth/result',{headers:{cookie}}));
+  assert.equal((await response.json()).connected,true);assert.match(response.headers.get('set-cookie'),/Max-Age=0/);
+});
+
+test('registration bounds uncooperative fetch and body, reporting unconfirmed creation without retry',async()=>{
+  globalThis.__integrationPrincipal=userA;
+  const previous=globalThis.fetch,timeout=AbortSignal.timeout;
+  try {
+    for(const mode of ['fetch','body','oversize']) {
+      let calls=0,cancelled=false,started;const ready=new Promise(r=>{started=r;}); const deadlines=[];
+      AbortSignal.timeout=()=>{const c=new AbortController();deadlines.push(c);return c.signal;};
+      globalThis.fetch=async()=>{calls++;started();
+        if(mode==='fetch')return new Promise(()=>{});
+        if(mode==='oversize')return new Response('x'.repeat(65_537));
+        return new Response(new ReadableStream({pull(){return new Promise(()=>{});},cancel(){cancelled=true;}}));
+      };
+      const pending=start.GET(new Request('https://app.example.test/api/integrations/oauth/start?id=linear',{headers}));
+      await ready;
+      if(mode==='body') await new Promise(r=>setImmediate(r));
+      if(mode!=='oversize') deadlines[0].abort();
+      const response=await pending;
+      assert.match(response.headers.get('location'),/oauth=registration_uncertain/);
+      assert.equal(response.headers.get('referrer-policy'),'no-referrer');assert.equal(calls,1);
+      assert.equal(response.headers.getSetCookie().length,0);
+      if(mode==='body')assert.equal(cancelled,true);
+    }
+  } finally {globalThis.fetch=previous;AbortSignal.timeout=timeout;}
+});
+
+test('callback binds kind and conservatively handles a lost or invalid token response without replay',async()=>{
+  globalThis.__integrationPrincipal=userA;
+  const previous=globalThis.fetch,timeout=AbortSignal.timeout;
+  try {
+    const initial=await start.GET(new Request('https://app.example.test/api/integrations/oauth/start?id=github',{headers}));
+    const state=new URL(initial.headers.get('location')).searchParams.get('state');const cookie=cookiePair(initial.headers.getSetCookie()[0]);
+    const makeRequest=(code='sensitive-code')=>new Request(`https://app.example.test/api/integrations/oauth/callback?code=${code}&state=${encodeURIComponent(state)}`,{headers:{...headers,cookie}});
+    let calls=0;
+    globalThis.fetch=async()=>{calls++;return Response.json({access_token:'must-not-send'});};
+    globalThis.__integrationPrincipal={...userA,kind:'vercel'};
+    assert.match((await callback.GET(makeRequest())).headers.get('location'),/oauth=state/);assert.equal(calls,0);
+    globalThis.__integrationPrincipal=userA;
+    assert.match((await callback.GET(makeRequest('a'.repeat(4097)))).headers.get('location'),/oauth=state/);assert.equal(calls,0);
+    for(const mode of ['fetch','body','oversize','http']) {
+      let started,cancelled=false;const ready=new Promise(r=>{started=r;});const deadlines=[];
+      AbortSignal.timeout=()=>{const c=new AbortController();deadlines.push(c);return c.signal;};
+      globalThis.fetch=async()=>{calls++;started();
+        if(mode==='fetch')return new Promise(()=>{});
+        if(mode==='body')return new Response(new ReadableStream({pull(){return new Promise(()=>{});},cancel(){cancelled=true;}}));
+        if(mode==='oversize')return new Response('x'.repeat(65_537));
+        return Response.json({error:'invalid_grant',error_description:'sensitive-code'}, {status:400});
+      };
+      const prior=calls,pending=callback.GET(makeRequest());await ready;
+      if(mode==='body')await new Promise(r=>setImmediate(r));
+      if(mode==='fetch'||mode==='body')deadlines[0].abort();
+      const response=await pending;
+      assert.match(response.headers.get('location'),/oauth=exchange_uncertain/);
+      assert.doesNotMatch(response.headers.get('location'),/sensitive-code|invalid_grant/);
+      assert.equal(response.headers.get('referrer-policy'),'no-referrer');
+      assert.ok(response.headers.getSetCookie().some(c=>c.includes('Max-Age=0')));
+      assert.ok(!response.headers.getSetCookie().some(c=>c.startsWith('tflash-oauth-handoff=')));
+      assert.equal(calls,prior+1);if(mode==='body')assert.equal(cancelled,true);
+    }
+  } finally {globalThis.fetch=previous;AbortSignal.timeout=timeout;}
+});
+
+test('OAuth token endpoint retains form-encoded success compatibility with bounded reads',async()=>{
+  globalThis.__integrationPrincipal=userA;const previous=globalThis.fetch;
+  try {
+    const initial=await start.GET(new Request('https://app.example.test/api/integrations/oauth/start?id=github',{headers}));
+    const state=new URL(initial.headers.get('location')).searchParams.get('state');const cookie=cookiePair(initial.headers.getSetCookie()[0]);
+    globalThis.fetch=async()=>new Response('access_token=form-token&token_type=bearer',{headers:{'content-type':'application/x-www-form-urlencoded'}});
+    const response=await callback.GET(new Request(`https://app.example.test/api/integrations/oauth/callback?code=sample&state=${encodeURIComponent(state)}`,{headers:{...headers,cookie}}));
+    assert.match(response.headers.get('location'),/connected=1/);
+    const handoff=response.headers.getSetCookie().find(c=>c.startsWith('tflash-oauth-handoff='));
+    const data=await (await result.GET(new Request('https://app.example.test/api/integrations/oauth/result',{headers:{cookie:cookiePair(handoff)}}))).json();
+    assert.equal((await openIntegrationToken(data.token,userA.id)).token,'form-token');
+  } finally {globalThis.fetch=previous;}
 });

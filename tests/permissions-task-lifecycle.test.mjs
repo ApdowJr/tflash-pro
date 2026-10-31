@@ -418,7 +418,9 @@ test("stale task edits and cancels cannot replace or cancel a newer task", async
   assert.equal((await tasks.PUT(req("PUT", "supabase:alice", {task: definition, expectedRevision: null}), route)).status, 200);
   const old = (await task()).revision;
   assert.equal((await tasks.PUT(req("PUT", "supabase:alice", {task: {...definition, objective: "newer"}, expectedRevision: old}), route)).status, 200);
-  assert.equal((await tasks.PUT(req("PUT", "supabase:alice", {task: definition, expectedRevision: old}), route)).status, 409);
+  const staleTask = await tasks.PUT(req("PUT", "supabase:alice", {task: definition, expectedRevision: old}), route);
+  assert.equal(staleTask.status, 409);
+  assert.equal((await staleTask.json()).changeNotStarted, true);
   assert.equal((await tasks.PUT(req("PUT", "supabase:alice", {task: definition, expectedRevision: null}), route)).status, 409);
   assert.equal((await tasks.DELETE(req("DELETE", "supabase:alice", {expectedRevision: old}), route)).status, 409);
   assert.equal((await task()).objective, "newer");
@@ -456,7 +458,9 @@ test("stale grants and revokes cannot undo a newer permission decision", async (
   const staleGrant = permissionReq("POST"), staleRevoke = permissionReq("DELETE");
   assert.equal((await permissions.DELETE(permissionReq("DELETE"), route)).status, 200);
   assert.equal(await web.approval(ctx), "user-approval");
-  assert.equal((await permissions.POST(staleGrant, route)).status, 409);
+  const staleGrantResult = await permissions.POST(staleGrant, route);
+  assert.equal(staleGrantResult.status, 409);
+  assert.equal((await staleGrantResult.json()).changeNotStarted, true);
   assert.equal(await web.approval(ctx), "user-approval");
   assert.equal((await permissions.POST(permissionReq("POST"), route)).status, 200);
   assert.equal((await permissions.DELETE(staleRevoke, route)).status, 409);

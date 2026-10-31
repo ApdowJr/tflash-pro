@@ -9,6 +9,7 @@ import type {
   EveMessagePart,
 } from "eve/react";
 import { useRef, useState, type FormEvent } from "react";
+import { bashResultState } from "@/lib/activity";
 import { planOutputSchema, artifactOutputSchema } from "@/lib/agent-workspace";
 import { AgentPlanCard, AgentArtifactCard } from "./agent-workspace";
 import { researchFetchOutputSchema, researchReportOutputSchema } from "@/lib/research";
@@ -112,6 +113,7 @@ function AgentMessagePart({
   readonly questionsFor: (callId: string) => readonly ConversationInput[];
   readonly showCaret: boolean;
 }) {
+  const { t } = useAppSettings();
   switch (part.type) {
     case "step-start":
       return null;
@@ -168,11 +170,21 @@ function AgentMessagePart({
         );
       }
 
+      const bashState = part.toolName === "bash" && part.state === "output-available" && !part.partial
+        ? bashResultState(part.output) : undefined;
+      const statusKey = part.state === "approval-requested" ? "activityPending" :
+        part.state === "approval-responded" ? (part.approval?.approved === true ? "activityApproved" : part.approval?.approved === false ? "activityDenied" : "activityPending") :
+        part.state === "input-streaming" ? "activityPreparing" :
+        part.state === "input-available" || (part.state === "output-available" && part.partial) ? "activityRunning" :
+        part.state === "output-denied" ? "activityDenied" : part.state === "output-error" || bashState === "output-error" ? "activityFailed" :
+        bashState === "background-unknown" ? "activityBackgroundUnknown" : bashState === "outcome-unknown" ? "activityOutcomeUnknown" : undefined;
       return (
         <>
           <Tool key={part.state === "approval-requested" ? "review" : "activity"} defaultOpen={false}>
             <ToolHeader
               state={part.state}
+              statusLabel={statusKey ? t(statusKey) : undefined}
+              statusError={statusKey === "activityFailed"}
               title={part.toolMetadata?.eve?.label ?? part.toolName}
               toolName={part.toolName}
               type="dynamic-tool"
@@ -215,6 +227,8 @@ function QuestionRequest({
   readonly inputResponse?: AgentInputResponse;
   readonly onInputResponses: (responses: readonly AgentInputResponse[]) => void | Promise<void>;
 }) {
+  const [draft, setDraft] = useState("");
+  const [submittedOption, setSubmittedOption] = useState<string>();
   const options = inputRequest.options ?? [];
   const acceptsFreeform = inputRequest.allowFreeform === true || options.length === 0;
   const disabled = !canRespond || inputResponse !== undefined;
@@ -227,11 +241,13 @@ function QuestionRequest({
     }
 
     const option = options.find(({ id }) => id === answer);
-    void onInputResponses([
+    if (option === undefined) { setDraft(answer); setSubmittedOption(undefined); }
+    else setSubmittedOption(option.id);
+    void Promise.resolve().then(() => onInputResponses([
       option === undefined
         ? { requestId: inputRequest.requestId, text: answer.trim() }
         : { optionId: option.id, requestId: inputRequest.requestId },
-    ]);
+    ])).catch(() => { /* The session recovery notice reports unconfirmed responses. */ });
   };
 
   return (
@@ -251,7 +267,7 @@ function QuestionRequest({
           {options.map((option) => (
             <QuestionnaireChoice
               className={cn(inputResponse?.optionId === option.id && "data-disabled:opacity-100")}
-              defaultChecked={inputResponse?.optionId === option.id}
+              defaultChecked={inputResponse?.optionId === option.id || (inputResponse === undefined && submittedOption === option.id)}
               disabled={disabled}
               key={option.id}
               value={option.id}
@@ -268,7 +284,8 @@ function QuestionRequest({
             <QuestionnaireInput
               aria-label="Answer"
               className={cn(inputResponse?.text !== undefined && "disabled:opacity-100")}
-              defaultValue={inputResponse?.text}
+              defaultValue={inputResponse?.text ?? draft}
+              onChange={event => setDraft(event.target.value)}
               disabled={disabled}
               placeholder="Type your answer…"
             />

@@ -15,7 +15,7 @@ import { Input } from "@/components/ui/input";
 
 const textClass = "w-full rounded-md border bg-background p-2 text-sm";
 export function WorkspacePanel() {
-  const { workspace, ready, storageError, syncStatus, cloudEnabled, change, clear, resolveConflict } = useWorkspace();
+  const { workspace, ready, storageError, syncStatus, cloudEnabled, change, clear, resolveConflict, retrySync } = useWorkspace();
   const { settings, t } = useAppSettings();
   const [project, setProject] = useState<Project>();
   const [note, setNote] = useState<MemoryNote>();
@@ -61,15 +61,20 @@ export function WorkspacePanel() {
       ? "workspaceCloudSynced"
       : syncStatus === "syncing"
         ? "workspaceCloudSyncing"
-        : syncStatus === "conflict"
+        : syncStatus === "uncertain"
+          ? "workspaceCloudUncertain"
+          : syncStatus === "conflict"
           ? "workspaceCloudConflictStatus"
           : "workspaceCloudSyncFailed";
   return (
     <section className="space-y-5" aria-label={t("workspace")}>
       <p role="status" aria-live="polite" className="text-xs text-muted-foreground">{t(syncMessage)}</p>
-      {cloudEnabled && syncStatus === "conflict" ? (
+      {cloudEnabled && syncStatus === "error" ? (
+        <Button type="button" size="sm" variant="outline" onClick={retrySync}>{t("workspaceRetrySync")}</Button>
+      ) : null}
+      {cloudEnabled && (syncStatus === "conflict" || syncStatus === "uncertain") ? (
         <div className="rounded-md border p-3">
-          <p role="alert" className="text-sm font-medium">{t("workspaceCloudConflictStatus")}</p>
+          <p role="alert" className="text-sm font-medium">{t(syncStatus === "uncertain" ? "workspaceCloudUncertain" : "workspaceCloudConflictStatus")}</p>
           <p className="mt-1 text-xs text-muted-foreground">{t("workspaceCloudConflictDetail")}</p>
           <div className="flex flex-col gap-2 pt-3 sm:flex-row">
             <Button className="min-h-11 w-full sm:w-auto" size="sm" variant="outline" onClick={() => void resolveConflict("browser")}>

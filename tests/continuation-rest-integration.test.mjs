@@ -53,7 +53,8 @@ test("real continuation route, Supabase HTTP client and SQL do not redispatch un
     assert.equal((await route.POST(request('POST',data,'bob'),context)).status,404);
     assert.equal((await route.POST(request('POST',data,'alice','https://other.test'),context)).status,403);
     assert.equal((await route.POST(request('POST',data),context)).status,200);
-    assert.equal((await route.POST(request('POST',data),context)).status,409);
+    const conflict=await route.POST(request('POST',data),context);
+    assert.equal(conflict.status,409); assert.equal((await conflict.json()).continuationNotStarted,true);
     let snapshot=await (await route.GET(request('GET'),context)).json();
     assert.equal(snapshot.attempt.attemptId,id); assert.equal(snapshot.attempt.state,'reserved');
     const reservedRevision=snapshot.attempt.reviewRevision;

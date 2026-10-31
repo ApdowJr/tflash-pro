@@ -12,7 +12,13 @@ import {
   resolveCredential,
   sealCredential,
 } from "../lib/providers/credentials.ts";
-import { fetchLiveModels } from "../lib/providers/live-models.ts";
+import { registerHooks } from "node:module";
+registerHooks({ resolve(specifier, context, nextResolve) {
+  if ((context.parentURL?.endsWith("/lib/providers/live-models.ts") && specifier === "../catalog-fetch") ||
+      (context.parentURL?.endsWith("/lib/catalog-fetch.ts") && specifier === "./abortable")) return nextResolve(`${specifier}.ts`, context);
+  return nextResolve(specifier, context);
+} });
+const { fetchLiveModels } = await import("../lib/providers/live-models.ts");
 import { safeLocalPath } from "../lib/security/redirect.ts";
 import { internalEveHeaders, internalOrigin } from "../lib/security/internal-origin.ts";
 import { OWNER_PROOF_HEADER as CLIENT_OWNER_PROOF_HEADER } from "../lib/security/chat-ownership-wire.ts";

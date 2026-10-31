@@ -125,3 +125,20 @@ test("bash activity does not equate a failed or background command with success"
   assert.equal(activityRows(messages, settled({ status: "running" }))[0].state, "background-unknown");
   assert.equal(activityRows(messages, settled(undefined))[0].state, "outcome-unknown");
 });
+
+test("reported usage never presents partial token totals as complete and deduplicates replayed steps", () => {
+  const step=(turn,index,usage,id)=>({type:'step.completed',...(id?{meta:{id}}:{}),data:{turnId:turn,stepIndex:index,usage}});
+  const complete=step('turn',0,{inputTokens:100,outputTokens:10,costUsd:0.1});
+  const missingOutput=step('turn',1,{inputTokens:40,costUsd:0.2});
+  assert.deepEqual(reportedUsage([complete,missingOutput]),{inputTokens:140,costUsd:0.30000000000000004});
+  assert.deepEqual(reportedUsage([complete,missingOutput,missingOutput]),{inputTokens:140,costUsd:0.30000000000000004});
+  const checkpoint={type:'session.waiting',data:{usage:{inputTokens:140,outputTokens:20,costUsd:0.3}}};
+  assert.deepEqual(reportedUsage([complete,missingOutput,checkpoint,complete]),{inputTokens:140,outputTokens:20,costUsd:0.3});
+  assert.deepEqual(reportedUsage([complete,{type:'session.waiting',data:{}},step('new',0,{inputTokens:5,outputTokens:3,costUsd:0.01})]),{});
+  assert.deepEqual(reportedUsage([checkpoint,step('next',0,{inputTokens:2,outputTokens:3,costUsd:0.01})]),{inputTokens:142,outputTokens:23,costUsd:0.31});
+  const conflicting=step('turn',0,{inputTokens:101,outputTokens:10,costUsd:0.1});
+  assert.deepEqual(reportedUsage([complete,conflicting]),{outputTokens:10,costUsd:0.1});
+  assert.deepEqual(reportedUsage([complete,{type:'step.completed',data:{usage:{inputTokens:10,outputTokens:5,costUsd:0.1}}}]),{});
+  assert.deepEqual(reportedUsage([step('turn',0,{inputTokens:1.5,outputTokens:-1,costUsd:0})]),{costUsd:0});
+  assert.deepEqual(reportedUsage([step('turn',0,{inputTokens:0,outputTokens:0,costUsd:0})]),{inputTokens:0,outputTokens:0,costUsd:0});
+});

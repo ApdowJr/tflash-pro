@@ -1,3 +1,4 @@
+import { expectedPrincipalMatches } from "@/lib/security/expected-principal";
 import { currentPrincipal } from "@/lib/identity";
 import {
   DEFAULT_PROVIDER_ID,
@@ -21,8 +22,10 @@ export type ProviderCatalogResponse = {
   readonly serverTime: number;
 };
 
-export async function GET(): Promise<Response> {
-  if (!await currentPrincipal()) return Response.json({ ok: false, error: "Sign in to continue." }, { status: 401 });
+export async function GET(request?: Request): Promise<Response> {
+  const principal = await currentPrincipal();
+  if (!principal) return Response.json({ ok: false, error: "Sign in to continue." }, { status: 401 });
+  if (!expectedPrincipalMatches(request, principal)) return Response.json({ ok: false, error: "Account changed. Reload to continue." }, { status: 409, headers: { "cache-control": "no-store" } });
   const providers: ProviderCatalogItem[] = PROVIDERS.map((provider) => ({
     ...provider,
     models: [...provider.models],

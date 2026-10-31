@@ -1,3 +1,4 @@
+import { expectedPrincipalMatches } from "@/lib/security/expected-principal";
 import { currentPrincipal } from "@/lib/identity";
 import { openJson } from "@/lib/secrets";
 import { OAUTH_HANDOFF_COOKIE, OAUTH_HANDOFF_TTL_MS } from "@/lib/integrations/wire";
@@ -11,6 +12,7 @@ type Handoff = {
   readonly grantExpiresAt?: number;
   readonly integrationId: string;
   readonly ownerId: string;
+  readonly ownerKind?: "supabase" | "vercel";
   readonly token: string;
   readonly tokenExpiresAt?: number;
   readonly refreshable?: boolean;
@@ -36,6 +38,10 @@ function readCookie(request: Request, name: string): string | undefined {
 export async function GET(request: Request): Promise<Response> {
   const principal = await currentPrincipal();
   if (!principal) return Response.json({ connected: false }, { status: 401 });
+  if (!expectedPrincipalMatches(request, principal)) return Response.json({ connected: false }, { status: 409, headers: { "cache-control": "no-store" } });
+  if (request.headers.get("sec-fetch-site") === "cross-site" ||
+      (request.headers.get("origin") && request.headers.get("origin") !== new URL(request.url).origin))
+    return Response.json({ connected: false }, { status: 403, headers: { "cache-control": "no-store" } });
   const raw = readCookie(request, OAUTH_HANDOFF_COOKIE);
   const clear = `${OAUTH_HANDOFF_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
   if (!raw) {
@@ -45,13 +51,16 @@ export async function GET(request: Request): Promise<Response> {
     );
   }
 
-  const handoff = await openJson<Handoff>(raw, (payload) => typeof payload.integrationId === "string" && payload.ownerId === principal.id);
+  const handoff = await openJson<Handoff>(raw, (payload) => typeof payload.integrationId === "string" && typeof payload.ownerId === "string");
   if (!handoff) {
     return Response.json(
       { connected: false },
       { headers: { "cache-control": "no-store", "set-cookie": clear } },
     );
   }
+
+  // Never consume another account's still-valid handoff.
+  if (handoff.ownerId !== principal.id || (handoff.ownerKind !== undefined && handoff.ownerKind !== principal.kind)) return Response.json({ connected: false }, { status: 403, headers: { "cache-control": "no-store" } });
 
   return Response.json(
     {

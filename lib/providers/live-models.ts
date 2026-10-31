@@ -4,9 +4,12 @@
  */
 import type { ModelInfo, ProviderInfo } from "./catalog";
 import type { ResolvedCredential } from "./credentials";
+import { fetchCatalogResponse, readCatalogJson } from "../catalog-fetch";
 
 const REQUEST_TIMEOUT_MS = 9_000;
 const MAX_MODELS = 400;
+const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+const MODEL_ID = /^[A-Za-z0-9._:/@+\-]{1,180}$/;
 const SKIP_MODEL = /(embed|tts|whisper|transcri|moderation|rerank|image|dall-e|sora|guard|safety|audio|speech|vision-preview-ocr)/i;
 
 export type LiveModelsResult = {
@@ -56,7 +59,10 @@ function numberFrom(value: unknown): number | undefined {
 }
 
 function normalizeOne(provider: ProviderInfo, raw: unknown): ModelInfo | null {
-  if (typeof raw === "string") return { id: raw, name: raw };
+  if (typeof raw === "string") {
+    const id = raw.replace(/^models\//, "");
+    return MODEL_ID.test(id) && !SKIP_MODEL.test(id) ? { id, name: id } : null;
+  }
   const item = asRecord(raw);
   if (!item) return null;
   const id =
@@ -69,6 +75,7 @@ function normalizeOne(provider: ProviderInfo, raw: unknown): ModelInfo | null {
           : undefined;
   if (!id || SKIP_MODEL.test(id)) return null;
   const cleanId = id.replace(/^models\//, "");
+  if (!MODEL_ID.test(cleanId)) return null;
   const name =
     typeof item.display_name === "string"
       ? item.display_name
@@ -90,10 +97,10 @@ function normalizeOne(provider: ProviderInfo, raw: unknown): ModelInfo | null {
     (asRecord(item.top_provider) ? numberFrom(asRecord(item.top_provider)!.context_length) : undefined);
   return {
     id: cleanId,
-    name,
-    ...(contextWindow ? { contextWindow: Math.round(contextWindow) } : {}),
-    ...(inputPrice !== undefined ? { inputPrice: inputPrice * 1_000_000 } : {}),
-    ...(outputPrice !== undefined ? { outputPrice: outputPrice * 1_000_000 } : {}),
+    name: name.slice(0, 200),
+    ...(contextWindow && contextWindow >= 4_096 && contextWindow <= 4_000_000 ? { contextWindow: Math.round(contextWindow) } : {}),
+    ...(inputPrice !== undefined && inputPrice >= 0 && Number.isFinite(inputPrice * 1_000_000) ? { inputPrice: inputPrice * 1_000_000 } : {}),
+    ...(outputPrice !== undefined && outputPrice >= 0 && Number.isFinite(outputPrice * 1_000_000) ? { outputPrice: outputPrice * 1_000_000 } : {}),
     ...(Array.isArray(modality) && modality.includes("image") ? { vision: true } : {}),
     ...(inputPrice === 0 && outputPrice === 0 ? { free: true } : {}),
   };
@@ -110,7 +117,7 @@ function normalizeList(provider: ProviderInfo, payload: unknown): ModelInfo[] {
         : [];
   const seen = new Set<string>();
   const models: ModelInfo[] = [];
-  for (const raw of list) {
+  for (const raw of list.slice(0, 20_000)) {
     const model = normalizeOne(provider, raw);
     if (!model || seen.has(model.id)) continue;
     seen.add(model.id);
@@ -148,15 +155,14 @@ export async function fetchLiveModels(
   if (!url) return { ok: false, models: [...provider.models], source: "static", error: "Invalid endpoint URL." };
 
   try {
-    const response = await fetch(url, {
+    const { response, signal } = await fetchCatalogResponse(url, {
       headers: requestHeaders(provider, credential.apiKey),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       cache: "no-store",
-      // Do not allow a trusted endpoint to redirect a server request to a
-      // different, potentially private host (or leak credentials there).
+      // Never forward a credential to a redirect target.
       redirect: "error",
-    });
+    }, REQUEST_TIMEOUT_MS);
     if (!response.ok) {
+      if (response.body) void response.body.cancel().catch(() => {});
       return {
         ok: false,
         models: [...provider.models],
@@ -165,21 +171,26 @@ export async function fetchLiveModels(
         error: friendlyError(response.status, provider),
       };
     }
-    const models = normalizeList(provider, await response.json());
+    const payload = await readCatalogJson(response, signal, MAX_RESPONSE_BYTES);
+    const root = asRecord(payload);
+    if (!Array.isArray(payload) && !Array.isArray(root?.data) && !Array.isArray(root?.models)) {
+      return { ok: false, models: [...provider.models], source: "static", latencyMs: Date.now() - started, error: `${provider.name} returned an invalid model list. Showing built-in suggestions.` };
+    }
+    const models = normalizeList(provider, payload);
     return {
       ok: true,
       models: models.length > 0 ? models : [...provider.models],
       source: models.length > 0 ? "live" : "static",
       latencyMs: Date.now() - started,
+      ...(models.length ? {} : { error: `${provider.name} returned no usable model IDs. Built-in suggestions are not verified.` }),
     };
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : "Network error";
+  } catch {
     return {
       ok: false,
       models: [...provider.models],
       source: "static",
       latencyMs: Date.now() - started,
-      error: `Could not reach ${provider.name}: ${detail}`,
+      error: `Could not load ${provider.name} models. Showing built-in suggestions.`,
     };
   }
 }

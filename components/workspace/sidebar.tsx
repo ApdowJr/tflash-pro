@@ -35,6 +35,7 @@ import { MAX_MESSAGE_QUERY_LENGTH } from "@/lib/chat-search";
 import { useChatSearch } from "./use-chat-search";
 import { cn } from "@/lib/utils";
 import { useAppSettings, type ChatRecord } from "@/components/settings/app-settings";
+import { ChatActionUncertainError, type ChatActionWarning } from "@/lib/chat-action-recovery";
 import { authClient } from "@/lib/auth-client";
 import { browserSupabase } from "@/lib/supabase/browser";
 
@@ -63,13 +64,14 @@ export function Sidebar({
   readonly onNewChat: () => void;
   readonly onOpenSettings: () => void;
 }) {
-  const { settings, t, hydrated, accountId, accountKind, renameChat, removeChat, historyError, refreshChats } = useAppSettings();
+  const { settings, t, hydrated, accountId, accountKind, renameChat, removeChat, historyError, refreshChats, chatActionWarnings, chatActionStorageError, acknowledgeChatAction } = useAppSettings();
   const [query, setQuery] = useState("");
   const [action, setAction] = useState<ChatAction | null>(null);
   const [title, setTitle] = useState("");
   const [pending, setPending] = useState(false);
-  const [actionError, setActionError] = useState<"historySaveFailed" | "historyRemoveFailed">();
+  const [actionError, setActionError] = useState<"historySaveFailed" | "historyRemoveFailed" | "chatActionUncertain">();
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const wasOpenRef = useRef(false);
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const contentSearch = useChatSearch({
@@ -129,8 +131,8 @@ export function Sidebar({
       }
       setAction(null);
       if (action.kind === "remove" && action.chat.id === activeChatId) onNewChat();
-    } catch {
-      setActionError(action.kind === "rename" ? "historySaveFailed" : "historyRemoveFailed");
+    } catch (error) {
+      setActionError(error instanceof ChatActionUncertainError ? "chatActionUncertain" : action.kind === "rename" ? "historySaveFailed" : "historyRemoveFailed");
     } finally {
       setPending(false);
     }
@@ -188,18 +190,24 @@ export function Sidebar({
         </div>
 
         <div className="px-3 pb-1">
-          <label className="relative block">
-            <span className="sr-only">{t("searchChats")}</span>
+          <div className="relative">
             <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
             <input
-              className="h-10 w-full rounded-md bg-transparent pr-2 pl-8 text-[13px] text-foreground placeholder:text-muted-foreground/80 focus:bg-card focus:ring-1 focus:ring-border focus:outline-none lg:h-8"
+              ref={searchInputRef}
+              aria-label={t("searchChats")}
+              className="h-10 w-full rounded-md bg-transparent pr-11 pl-8 text-[13px] text-foreground placeholder:text-muted-foreground/80 focus:bg-card focus:ring-1 focus:ring-border focus:outline-none lg:h-8"
               onChange={(event) => setQuery(event.target.value)}
               maxLength={MAX_MESSAGE_QUERY_LENGTH}
               placeholder={t("searchChats")}
               type="search"
               value={query}
             />
-          </label>
+            {query.length > 0 ? <button
+              aria-label={t("clearChatSearch")}
+              className="absolute inset-y-0 right-0 flex min-w-10 items-center justify-center rounded-md text-muted-foreground hover:text-foreground focus-visible:outline focus-visible:outline-2"
+              onClick={() => { setQuery(""); searchInputRef.current?.focus(); }} type="button"
+            ><XIcon className="size-4" aria-hidden="true" /></button> : null}
+          </div>
         </div>
 
         <div aria-live="polite" className="px-3 text-xs leading-relaxed text-muted-foreground" role="status">
@@ -227,6 +235,8 @@ export function Sidebar({
             {t(historyError)} <button className="underline" onClick={() => void refreshChats()} type="button">{t("refresh")}</button>
           </div>
         ) : null}
+        {chatActionStorageError ? <p className="px-3 py-2 text-xs text-destructive" role="alert">{t("chatActionStorageUnavailable")}</p> : null}
+        {chatActionWarnings.map((warning) => <ChatActionReview key={warning.key} warning={warning} acknowledge={acknowledgeChatAction} />)}
         <nav aria-label={t("chats")} className="tflash-scroll min-h-0 flex-1 overflow-y-auto px-2 pb-2">
           {groups.length === 0 ? (
             hydrated && !historyError && !contentSearch.searching && !contentSearch.tooShort && contentSearch.failed === 0 ? (
@@ -342,6 +352,18 @@ export function Sidebar({
       </Dialog>
     </>
   );
+}
+
+function ChatActionReview({ warning, acknowledge }: { readonly warning: ChatActionWarning; readonly acknowledge: (key: string) => void }) {
+  const { t } = useAppSettings();
+  const [reviewed, setReviewed] = useState(false);
+  const label = warning.action === "activity" ? t("chatActionActivity") : warning.action === "rename" ? t("chatActionRename") : warning.action === "remove" ? t("chatActionRemove") : t("chatActionUnknown");
+  return <div className="mx-3 mb-2 rounded-md border border-destructive/50 p-2 text-xs" role="alert">
+    <p>{t("chatActionUncertain")}</p>
+    <p className="mt-1 break-all font-medium">{label}: {warning.chatId ?? t("chatActionUnknown")}</p>
+    <label className="mt-2 flex items-start gap-2"><input type="checkbox" checked={reviewed} onChange={(event) => setReviewed(event.target.checked)} />{t("chatActionReviewLabel")}</label>
+    <Button className="mt-2 h-auto min-h-10 w-full whitespace-normal" size="sm" variant="outline" disabled={!reviewed} onClick={() => acknowledge(warning.key)} type="button">{t("chatActionReviewButton")}</Button>
+  </div>;
 }
 
 function AccountMenu({ account }: { readonly account: Account }) {

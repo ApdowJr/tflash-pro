@@ -15,6 +15,8 @@
  * Server-only: reads `process.env` for client credentials.
  */
 import { sealJson, openJson } from "@/lib/secrets";
+import { fetchCatalogResponse, readCatalogJson } from "@/lib/catalog-fetch";
+import { readBoundedResponseText } from "@/lib/bounded-response";
 import { OAUTH_STATE_TTL_MS, type OAuthEnvelope, type OAuthClientRegistration } from "./wire";
 
 export type OAuthProvider = {
@@ -149,8 +151,8 @@ export async function registerOAuthClient(integrationId: string, redirectUri: st
   if (!provider?.registrationUrl) throw new Error("Automatic registration unavailable.");
   const method = provider.tokenAuth === "basic" ? "client_secret_basic" :
     provider.tokenAuth === "body" ? "client_secret_post" : "none";
-  const response = await fetch(provider.registrationUrl, {
-    method: "POST", redirect: "error", cache: "no-store", signal: AbortSignal.timeout(10_000),
+  const { response, signal } = await fetchCatalogResponse(provider.registrationUrl, {
+    method: "POST", redirect: "error", cache: "no-store",
     headers: { "content-type": "application/json", accept: "application/json" },
     body: JSON.stringify({
       client_name: "Tflash",
@@ -161,9 +163,14 @@ export async function registerOAuthClient(integrationId: string, redirectUri: st
       token_endpoint_auth_method: method,
       ...(provider.scopes.length ? { scope: provider.scopes.join(" ") } : {}),
     }),
-  });
-  if (!response.ok) throw new Error("Registration refused.");
-  const raw = await response.json() as Record<string, unknown>;
+  }, 10_000);
+  if (!response.ok) {
+    if (response.body) void response.body.cancel().catch(() => {});
+    throw new Error("Registration outcome unconfirmed.");
+  }
+  const value = await readCatalogJson(response, signal, 65_536);
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid registration response.");
+  const raw = value as Record<string, unknown>;
   if (typeof raw.client_id !== "string" || !raw.client_id || raw.client_id.length > 512 ||
     (raw.token_endpoint_auth_method !== undefined && raw.token_endpoint_auth_method !== method) ||
     (method !== "none" && (typeof raw.client_secret !== "string" || !raw.client_secret || raw.client_secret.length > 1024))) {
@@ -191,6 +198,7 @@ async function codeChallenge(verifier: string): Promise<string> {
 export async function sealOAuthState(input: {
   readonly integrationId: string;
   readonly ownerId: string;
+  readonly ownerKind?: "supabase" | "vercel";
   readonly flowId: string;
   readonly nonce: string;
   readonly verifier?: string;
@@ -201,6 +209,7 @@ export async function sealOAuthState(input: {
     {
       integrationId: input.integrationId,
       ownerId: input.ownerId,
+      ...(input.ownerKind ? { ownerKind: input.ownerKind } : {}),
       flowId: input.flowId,
       nonce: input.nonce,
       ...(input.verifier ? { verifier: input.verifier } : {}),
@@ -217,6 +226,7 @@ export async function openOAuthState(state: string | null): Promise<OAuthEnvelop
   return openJson<OAuthEnvelope>(state, (payload) =>
     typeof payload.integrationId === "string" && oauthProviderFor(payload.integrationId) !== undefined &&
     typeof payload.ownerId === "string" && payload.ownerId.length > 0 &&
+    (payload.ownerKind === undefined || payload.ownerKind === "supabase" || payload.ownerKind === "vercel") &&
     typeof payload.flowId === "string" && /^[a-f0-9-]{36}$/.test(payload.flowId) &&
     typeof payload.nonce === "string" && /^[a-f0-9]{64}$/.test(payload.nonce),
   );
@@ -287,8 +297,10 @@ function parseTokens(
   now = Date.now(),
 ): OAuthTokens | null {
   const accessToken = raw.access_token ?? raw.token;
-  if (typeof accessToken !== "string" || !accessToken || /\s/.test(accessToken)) return null;
+  if (typeof accessToken !== "string" || !accessToken || accessToken.length > 16_384 || /\s/.test(accessToken)) return null;
+  if (raw.refresh_token !== undefined && (typeof raw.refresh_token !== "string" || !raw.refresh_token || raw.refresh_token.length > 16_384 || /\s/.test(raw.refresh_token))) return null;
   const expiresIn = Number(raw.expires_in);
+  if (Number.isFinite(expiresIn) && expiresIn > 0 && !Number.isFinite(now + expiresIn * 1000)) return null;
   const ttl =
     Number.isFinite(expiresIn) && expiresIn > 0
       ? expiresIn * 1000
@@ -307,7 +319,7 @@ async function postTokenRequest(
   clientId: string,
   clientSecret: string | undefined,
   body: Record<string, string>,
-): Promise<{ tokens: OAuthTokens | null; error?: string }> {
+): Promise<{ tokens: OAuthTokens | null; error?: string; dispatched: boolean }> {
   const headers: Record<string, string> = {
     accept: "application/json",
     ...(provider.tokenHeaders ?? {}),
@@ -331,25 +343,24 @@ async function postTokenRequest(
   }
 
   let response: Response;
+  let text: string;
   try {
-    response = await fetch(provider.tokenUrl, {
-      method: "POST",
-      headers,
-      body:
-        provider.tokenFormat === "json"
-          ? JSON.stringify(payload)
-          : new URLSearchParams(payload).toString(),
-      redirect: "error",
-      signal: AbortSignal.timeout(10_000),
-    });
+    const result = await fetchCatalogResponse(provider.tokenUrl, {
+      method: "POST", headers,
+      body: provider.tokenFormat === "json" ? JSON.stringify(payload) : new URLSearchParams(payload).toString(),
+      redirect: "error", cache: "no-store",
+    }, 10_000);
+    response = result.response;
+    text = await readBoundedResponseText(response, result.signal, 65_536);
   } catch {
-    return { tokens: null, error: "unreachable" };
+    // The provider may already have issued or rotated a grant.
+    return { tokens: null, error: "unconfirmed", dispatched: true };
   }
-
-  const text = await response.text();
   let raw: RawTokenResponse;
   try {
-    raw = JSON.parse(text) as RawTokenResponse;
+    const parsed: unknown = JSON.parse(text);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { tokens: null, error: "invalid_response", dispatched: true };
+    raw = parsed as RawTokenResponse;
   } catch {
     // GitHub answers form-encoded when no Accept header survives a proxy.
     const params = new URLSearchParams(text);
@@ -357,9 +368,9 @@ async function postTokenRequest(
   }
 
   if (!response.ok || raw.error) {
-    return { tokens: null, error: raw.error ?? raw.error_description ?? "exchange_failed" };
+    return { tokens: null, error: "unconfirmed", dispatched: true };
   }
-  return { tokens: parseTokens(provider, raw) };
+  return { tokens: parseTokens(provider, raw), dispatched: true };
 }
 
 export async function exchangeCode(input: {
@@ -368,10 +379,10 @@ export async function exchangeCode(input: {
   readonly redirectUri: string;
   readonly verifier?: string;
   readonly client?: OAuthClientRegistration;
-}): Promise<{ tokens: OAuthTokens | null; error?: string }> {
+}): Promise<{ tokens: OAuthTokens | null; error?: string; dispatched: boolean }> {
   const provider = oauthProviderFor(input.integrationId);
   const clientId = input.client?.clientId ?? oauthClientId(input.integrationId);
-  if (!provider || !clientId) return { tokens: null, error: "not_configured" };
+  if (!provider || !clientId) return { tokens: null, error: "not_configured", dispatched: false };
 
   const clientSecret = input.client?.clientSecret ?? envValue(provider.clientSecretEnv);
   const body: Record<string, string> = {
@@ -379,7 +390,7 @@ export async function exchangeCode(input: {
     code: input.code,
     redirect_uri: input.redirectUri,
   };
-  if (provider.pkce && !input.verifier) return { tokens: null, error: "missing_verifier" };
+  if (provider.pkce && !input.verifier) return { tokens: null, error: "missing_verifier", dispatched: false };
   if (provider.pkce && input.verifier) body.code_verifier = input.verifier;
   if (provider.resource) body.resource = provider.resource;
   return postTokenRequest(provider, clientId, clientSecret, body);
@@ -389,7 +400,7 @@ export async function refreshOAuthToken(input: {
   readonly integrationId: string;
   readonly refreshToken: string;
   readonly client?: OAuthClientRegistration;
-}): Promise<{ tokens: OAuthTokens | null; error?: string }> {
+}): Promise<{ tokens: OAuthTokens | null; error?: string; dispatched: boolean }> {
   const current = oauthProviderFor(input.integrationId);
   // Preserve renewal for grants issued by the earlier REST OAuth app flows.
   // New MCP grants always carry their registered client in the sealed record.
@@ -401,8 +412,8 @@ export async function refreshOAuthToken(input: {
   const provider = current && !input.client && legacy[input.integrationId]
     ? { ...current, ...legacy[input.integrationId] } : current;
   const clientId = input.client?.clientId ?? envValue(provider?.clientIdEnv);
-  if (!provider || !clientId) return { tokens: null, error: "not_configured" };
-  if (!provider.refreshable) return { tokens: null, error: "not_refreshable" };
+  if (!provider || !clientId) return { tokens: null, error: "not_configured", dispatched: false };
+  if (!provider.refreshable) return { tokens: null, error: "not_refreshable", dispatched: false };
 
   const clientSecret = input.client?.clientSecret ?? envValue(provider.clientSecretEnv);
   return postTokenRequest(provider, clientId, clientSecret, {

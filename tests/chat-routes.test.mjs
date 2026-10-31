@@ -6,6 +6,7 @@ import { registerHooks } from "node:module";
 // fake Eve transport. These tests never contact Supabase or an AI provider.
 registerHooks({
   resolve(specifier, context, nextResolve) {
+    if (specifier === "server-only") return { url: "data:text/javascript,export {}", shortCircuit: true };
     if (specifier === "@/lib/identity") return { url: "data:text/javascript,export async function currentPrincipal() { return globalThis.__tflashMockPrincipal(); }", shortCircuit: true };
     if (specifier === "@/lib/supabase/server") {
       return { url: "data:text/javascript,export async function serverSupabase() { return globalThis.__tflashMockSupabase(); }", shortCircuit: true };
@@ -215,7 +216,7 @@ test("missing chat storage is reported before creating an Eve workflow, without 
   assert.equal(response.status, 503);
   assert.equal(response.headers.get("cache-control"), "no-store");
   assert.deepEqual(await response.json(), {
-    code: "CHAT_STORAGE_SETUP_REQUIRED", error: "Chat storage is not configured for this deployment.",
+    code: "CHAT_STORAGE_SETUP_REQUIRED", creationNotStarted: true, error: "Chat storage is not configured for this deployment.",
   });
   assert.equal(eveCalls, 0, "do not create an orphan when storage is already unavailable");
   assert.equal(rows.size, 0);
@@ -267,4 +268,161 @@ test("Vercel identities do not query Supabase during session preparation", async
   assert.ok(body.sessionId);
   assert.ok(body.ownerProof);
   assert.equal(rows.size, 0);
+});
+
+test("optional Vercel account history requires valid proofs and stays isolated on service errors", async () => {
+  const { POST: sync } = await import("../app/api/chats/vercel-sync/route.ts");
+  process.env.TFLASH_VERCEL_HISTORY_SYNC="1";
+  process.env.TFLASH_VERCEL_HISTORY_SUPABASE_URL="https://supabase.example.test";
+  process.env.TFLASH_VERCEL_HISTORY_SERVICE_ROLE_KEY="dummy-service-key";
+  currentUser="alice"; currentKind="vercel";
+  const calls=[];
+  globalThis.fetch=async (input, options) => {
+    const url=String(input); calls.push({url,options});
+    if (url.includes('/rpc/tflash_vercel_history_import')) return Response.json(1);
+    if (url.includes('/tflash_vercel_chats')) return Response.json([{session_id:'s1',title:'Saved',updated_at:'2026-01-01T00:00:00Z'}]);
+    throw new Error('Unexpected service request '+url);
+  };
+  const body={chats:[{id:'s1',title:'Old',updatedAt:1,proof:signChatOwnership('alice','s1')}]};
+  const request=(data,origin='https://app.test')=>jsonRequest('https://app.test/api/chats/vercel-sync','POST',{origin, "x-tflash-expected-user-id":"alice", "x-tflash-expected-account-kind":"vercel"},data);
+  try {
+    assert.equal((await sync(request(body,'https://evil.test'))).status,403);
+    assert.equal((await sync(request({chats:[{...body.chats[0],proof:signChatOwnership('bob','s1')}]}))).status,400);
+    assert.equal(calls.length,0);
+    const response=await sync(request(body));
+    assert.equal(response.status,200);
+    assert.equal(response.headers.get('cache-control'),'no-store');
+    const data=await response.json();
+    assert.equal(data.chats[0].proof,signChatOwnership('alice','s1'));
+    assert.match(calls[1].url,/owner_id=eq.alice/);
+    assert.equal(JSON.parse(calls[0].options.body).p_owner,'alice');
+    assert.equal(JSON.parse(calls[0].options.body).p_chats[0].proof,undefined);
+    globalThis.fetch=async()=>{ throw new Error('private database diagnostic'); };
+    const failed=await GET();
+    assert.equal(failed.status,503);
+    assert.doesNotMatch(await failed.text(),/private database diagnostic/);
+  } finally {
+    delete process.env.TFLASH_VERCEL_HISTORY_SYNC;
+    delete process.env.TFLASH_VERCEL_HISTORY_SUPABASE_URL;
+    delete process.env.TFLASH_VERCEL_HISTORY_SERVICE_ROLE_KEY;
+  }
+});
+
+test("Vercel account mutations use owner proof and commit tombstone before reset", async () => {
+  process.env.TFLASH_VERCEL_HISTORY_SYNC='1'; process.env.TFLASH_VERCEL_HISTORY_SUPABASE_URL='https://supabase.example.test'; process.env.TFLASH_VERCEL_HISTORY_SERVICE_ROLE_KEY='dummy-service-key';
+  currentUser='alice'; currentKind='vercel';
+  const calls=[];
+  globalThis.fetch=async(input,options)=>{
+    const url=String(input); calls.push({url,options});
+    if(url.includes('/rpc/tflash_vercel_history_update')) return Response.json('Remote rename');
+    if(url.includes('/rpc/tflash_vercel_history_remove')) return Response.json(true);
+    if(url.includes('/eve/v1/session/')) return Response.json({ok:true});
+    throw new Error('Unexpected '+url);
+  };
+  try {
+    const proof=signChatOwnership('alice','s1');
+    const invalid=await chatRoute.PATCH(jsonRequest('https://app.test/api/chats/s1','PATCH',{[OWNER_PROOF_HEADER]:signChatOwnership('bob','s1')},{title:'x'}),detail('s1'));
+    assert.equal(invalid.status,404); assert.equal(calls.length,0);
+    const updated=await chatRoute.PATCH(jsonRequest('https://app.test/api/chats/s1','PATCH',{[OWNER_PROOF_HEADER]:proof},{title:'stale',activity:true}),detail('s1'));
+    assert.equal((await updated.json()).title,'Remote rename');
+    assert.deepEqual(JSON.parse(calls[0].options.body),{p_owner:'alice',p_session:'s1',p_title:'stale',p_activity:true});
+    const deleted=await chatRoute.DELETE(jsonRequest('https://app.test/api/chats/s1','DELETE',{[OWNER_PROOF_HEADER]:proof}),detail('s1'));
+    assert.equal(deleted.status,200);
+    assert.match(calls[1].url,/tflash_vercel_history_remove/); assert.match(calls[2].url,/reset/);
+  } finally { delete process.env.TFLASH_VERCEL_HISTORY_SYNC; delete process.env.TFLASH_VERCEL_HISTORY_SUPABASE_URL; delete process.env.TFLASH_VERCEL_HISTORY_SERVICE_ROLE_KEY; }
+});
+
+test("chat history reads and imports reject a changed verified account before service access", async () => {
+  const {POST:sync}=await import('../app/api/chats/vercel-sync/route.ts');
+  process.env.TFLASH_VERCEL_HISTORY_SYNC='1';
+  currentUser='bob'; currentKind='vercel';
+  let calls=0; const original=globalThis.fetch;
+  globalThis.fetch=async()=>{calls++;throw new Error('unexpected database access');};
+  const headers={'x-tflash-expected-user-id':'alice','x-tflash-expected-account-kind':'vercel'};
+  try {
+    const mismatched=await GET(new Request('https://app.test/api/chats',{headers}));
+    assert.equal(mismatched.status,409); assert.equal(mismatched.headers.get('cache-control'),'no-store');
+    assert.equal((await GET(new Request('https://app.test/api/chats',{headers:{'x-tflash-expected-user-id':'bob','x-tflash-expected-account-kind':'supabase'}}))).status,409);
+    const response=await sync(jsonRequest('https://app.test/api/chats/vercel-sync','POST',{...headers,origin:'https://app.test'},{chats:[]}));
+    assert.equal(response.status,409); assert.equal(calls,0);
+    assert.equal((await sync(jsonRequest('https://app.test/api/chats/vercel-sync','POST',{origin:'https://app.test'},{chats:[]}))).status,409);
+  } finally {globalThis.fetch=original;delete process.env.TFLASH_VERCEL_HISTORY_SYNC;}
+});
+
+test("chat mutations reject a changed expected identity before changing history or resetting Eve", async () => {
+  currentUser='alice';currentKind='supabase';
+  rows.set('chat-a',{session_id:'chat-a',user_id:'alice',owner_proof:signChatOwnership('alice','chat-a'),title:'Original',updated_at:new Date().toISOString()});
+  let resets=0;globalThis.fetch=async()=>{resets++;return Response.json({ok:true});};
+  for(const headers of [{'x-tflash-expected-user-id':'bob','x-tflash-expected-account-kind':'supabase'},{'x-tflash-expected-user-id':'alice','x-tflash-expected-account-kind':'vercel'}]){
+    assert.equal((await chatRoute.PATCH(jsonRequest('https://app.test/api/chats/chat-a','PATCH',headers,{title:'New'}),detail('chat-a'))).status,409);
+    assert.equal((await chatRoute.DELETE(jsonRequest('https://app.test/api/chats/chat-a','DELETE',headers),detail('chat-a'))).status,409);
+  }
+  assert.equal(rows.get('chat-a').title,'Original');assert.equal(resets,0);
+});
+
+test("chat rename rejects oversized and stalled request bodies without mutation", async () => {
+  currentUser='alice';currentKind='supabase';rows.set('chat-a',{session_id:'chat-a',user_id:'alice',owner_proof:signChatOwnership('alice','chat-a'),title:'Original',updated_at:new Date().toISOString()});
+  const oversized=jsonRequest('https://app.test/api/chats/chat-a','PATCH',{}, {title:'x'.repeat(5000)});
+  assert.equal((await chatRoute.PATCH(oversized,detail('chat-a'))).status,413);
+  const originalTimeout=AbortSignal.timeout;let deadline;
+  AbortSignal.timeout=()=>{deadline=new AbortController();return deadline.signal;};
+  try {
+    const body=new ReadableStream({pull(){return new Promise(()=>{});}});
+    const request=new Request('https://app.test/api/chats/chat-a',{method:'PATCH',headers:{'content-type':'application/json'},body,duplex:'half'});
+    const pending=chatRoute.PATCH(request,detail('chat-a'));
+    while(!deadline) await new Promise(resolve=>setImmediate(resolve));
+    deadline.abort();assert.equal((await pending).status,400);assert.equal(rows.get('chat-a').title,'Original');
+  } finally {AbortSignal.timeout=originalTimeout;}
+});
+
+test("best-effort Eve reset cannot hang chat deletion when transport ignores abort", async () => {
+  currentUser='alice';currentKind='supabase';rows.set('chat-a',{session_id:'chat-a',user_id:'alice',owner_proof:signChatOwnership('alice','chat-a'),title:'Original',updated_at:new Date().toISOString()});
+  const originalTimeout=AbortSignal.timeout;let deadline,attempts=0;
+  AbortSignal.timeout=()=>{deadline=new AbortController();return deadline.signal;};
+  globalThis.fetch=async()=>{attempts++;return new Promise(()=>{});};
+  try {
+    const pending=chatRoute.DELETE(jsonRequest('https://app.test/api/chats/chat-a','DELETE'),detail('chat-a'));
+    while(!deadline) await new Promise(resolve=>setImmediate(resolve));
+    deadline.abort();assert.equal((await pending).status,200);assert.equal(attempts,1);assert.equal(rows.has('chat-a'),false);
+  } finally {AbortSignal.timeout=originalTimeout;}
+});
+
+test("chat creation refuses an unexpected verified account before starting Eve", async () => {
+  currentUser='alice'; currentKind='vercel'; let calls=0;globalThis.fetch=async()=>{calls++;return Response.json({sessionId:'unexpected'});};
+  for(const headers of [{'x-tflash-expected-user-id':'bob','x-tflash-expected-account-kind':'vercel'},{'x-tflash-expected-user-id':'alice','x-tflash-expected-account-kind':'supabase'}]){
+    const response=await POST(jsonRequest('https://app.test/api/chats','POST',headers));assert.equal(response.status,409);
+  }
+  assert.equal(calls,0);
+});
+
+test("chat creation bounds uncooperative Eve transport and JSON without claiming it did not start", async () => {
+  currentUser='alice';currentKind='vercel';const old=AbortSignal.timeout;
+  try {
+    for(const mode of ['fetch','json']){
+      let deadline,called=0;AbortSignal.timeout=()=>{deadline=new AbortController();return deadline.signal;};
+      globalThis.fetch=async()=>{called++;if(mode==='fetch')return new Promise(()=>{});const response=Response.json({sessionId:'x'});response.json=()=>new Promise(()=>{});return response;};
+      const result=POST(jsonRequest('https://app.test/api/chats','POST'));
+      while(!deadline) await new Promise(resolve=>setImmediate(resolve));
+      deadline.abort();const response=await result;assert.equal(response.status,503);
+      assert.equal((await response.json()).creationNotStarted,undefined);assert.equal(called,1);
+    }
+  } finally {AbortSignal.timeout=old;}
+});
+
+test("creation preflight and index insert are bounded and report uncertainty by dispatch stage", async () => {
+  currentUser='alice';currentKind='supabase';const original=AbortSignal.timeout;
+  try {
+    for(const stage of ['preflight','insert']){
+      let deadline,ready;const started=new Promise(resolve=>{ready=resolve;});let eveCalls=0;
+      AbortSignal.timeout=()=>{deadline=new AbortController();return deadline.signal;};
+      globalThis.__realSupabase={from(){return {
+        select(){return {limit(){if(stage==='preflight'){ready();return new Promise(()=>{});}return Promise.resolve({error:null});}};},
+        insert(){ready();return new Promise(()=>{});},
+      };}};
+      globalThis.fetch=async()=>{eveCalls++;return Response.json({sessionId:'created'});};
+      const result=POST(jsonRequest('https://app.test/api/chats','POST'));await started;deadline.abort();
+      const response=await result;assert.equal(response.status,503);const body=await response.json();
+      assert.equal(body.creationNotStarted,stage==='preflight'?true:undefined);assert.equal(eveCalls,stage==='preflight'?0:1);
+    }
+  } finally {AbortSignal.timeout=original;}
 });

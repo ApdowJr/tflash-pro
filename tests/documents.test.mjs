@@ -63,3 +63,41 @@ test("document routes enforce login for both operations, reject cross-site/inval
   const request = new Request("https://app.test/upload", { method: "POST", body: new Uint8Array(101) });
   await assert.rejects(boundedBody(request, 100), /too large/);
 });
+
+test("document routes bind the expected account before reading a body", async () => {
+  principal = { id: 'alice', kind: 'vercel' };
+  for (const [route, contentType] of [[readRoute, 'application/pdf'], [exportRoute, 'application/json']]) {
+    let pulled = false;
+    const body = new ReadableStream({ pull() { pulled = true; return new Promise(() => {}); } });
+    const request = new Request('https://app.test/doc', { method:'POST', headers:{ 'content-type':contentType, 'x-tflash-expected-user-id':'bob', 'x-tflash-expected-account-kind':'vercel' }, body, duplex:'half' });
+    const result = await route.POST(request);
+    assert.equal(result.status, 409);
+    // A stream implementation may pre-pull, but the route must not lock/read it.
+    assert.equal(request.body.locked, false);
+  }
+});
+
+test("server document body read times out and cancels a stalled or oversized stream", async () => {
+  const timeout = AbortSignal.timeout; const deadlines = [];
+  AbortSignal.timeout = () => { const c = new AbortController(); deadlines.push(c); return c.signal; };
+  try {
+    let cancelled = false;
+    const request = new Request('https://app.test/upload', { method:'POST', duplex:'half', body:new ReadableStream({ pull(){return new Promise(()=>{});}, cancel(){cancelled=true; return new Promise(()=>{});} }) });
+    const pending = boundedBody(request, 100);
+    deadlines[0].abort();
+    await assert.rejects(pending); assert.equal(cancelled, true);
+    let oversizeCancelled = false;
+    const large = new Request('https://app.test/upload', { method:'POST', duplex:'half', body:new ReadableStream({ start(controller){controller.enqueue(new Uint8Array(101));}, cancel(){oversizeCancelled=true;return new Promise(()=>{});} }) });
+    await assert.rejects(boundedBody(large, 100), /too large/); assert.equal(oversizeCancelled, true);
+  } finally { AbortSignal.timeout = timeout; }
+});
+
+test("export response reader enforces type, byte limit and bounded stalled body", async () => {
+  const { readDocumentBlob } = await import('../lib/documents/client-fetch.ts');
+  const controller = new AbortController();
+  await assert.rejects(readDocumentBlob(new Response('bad', {headers:{'content-type':'evil/application/pdf'}}), controller.signal, 'application/pdf'), /type/);
+  await assert.rejects(readDocumentBlob(new Response('x', {headers:{'content-type':'application/pdf','content-length':String(17*1024*1024)}}), controller.signal, 'application/pdf'), /large/);
+  let cancelled=false;
+  const result=readDocumentBlob(new Response(new ReadableStream({pull(){return new Promise(()=>{});},cancel(){cancelled=true;}}),{headers:{'content-type':'application/pdf'}}),controller.signal,'application/pdf');
+  controller.abort(); await assert.rejects(result); assert.equal(cancelled,true);
+});

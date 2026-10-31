@@ -1,3 +1,4 @@
+import { waitWithAbort } from "@/lib/abortable";
 import type { ChatSearchResult, SearchSnippet } from "./chat-search";
 
 // A single event can contain tool output or attachments, so bound both the
@@ -209,7 +210,7 @@ export async function searchEveStream(response: Response, query: string, signal:
   };
   try {
     while (!signal.aborted) {
-      const part = await reader.read();
+      const part = await waitWithAbort(reader.read(), signal);
       if (signal.aborted) return unavailable;
       if (part.done) {
         done = true;
@@ -234,7 +235,7 @@ export async function searchEveStream(response: Response, query: string, signal:
   } finally {
     signal.removeEventListener("abort", abort);
     if (!done) void reader.cancel().catch(() => {});
-    reader.releaseLock();
+    try { reader.releaseLock(); } catch { /* An uncooperative read can still own the lock. */ }
   }
   return unavailable;
 }

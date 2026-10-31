@@ -1,5 +1,6 @@
 "use client";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { fetchDocumentResponse, readDocumentBlob, readDocumentResult } from "@/lib/documents/client-fetch";
 import { BookOpenIcon } from "lucide-react";
 import { useAppSettings } from "@/components/settings/app-settings";
 import {
@@ -20,35 +21,40 @@ export function DocumentExportButtons({
   filename: string;
   content: string;
 }) {
-  const { t } = useAppSettings();
+  const { t, accountId, accountKind } = useAppSettings();
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
+  const operation = useRef<AbortController | null>(null);
+  const scope = useRef({ accountId, accountKind, filename, content });
+  scope.current = { accountId, accountKind, filename, content };
+  useEffect(() => {
+    setPending(false);
+    setFailed(false);
+    return () => { operation.current?.abort(); operation.current = null; };
+  }, [accountId, accountKind, filename, content]);
   if (!/\.(md|txt)$/.test(filename) || content.length > 50_000) return null;
   async function download(format: "pdf" | "docx") {
-    if (pending) return;
+    if (operation.current) return;
+    const controller = new AbortController();
+    operation.current = controller;
+    const current = () => operation.current === controller && !controller.signal.aborted &&
+      scope.current.accountId === accountId && scope.current.accountKind === accountKind &&
+      scope.current.filename === filename && scope.current.content === content;
     setPending(true);
     setFailed(false);
     try {
-      const response = await fetch("/api/documents/export", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
+      const { response, signal } = await fetchDocumentResponse("/api/documents/export", {
+        method: "POST", signal: controller.signal,
+        headers: { "content-type": "application/json", "x-tflash-expected-user-id": accountId, "x-tflash-expected-account-kind": accountKind },
         body: JSON.stringify({ filename, content, format }),
       });
-      if (!response.ok) throw new Error("Export failed");
-      const expected =
-        format === "pdf"
-          ? "application/pdf"
-          : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-      if (!response.headers.get("content-type")?.startsWith(expected))
-        throw new Error("Unexpected export response");
-      downloadBlob(
-        await response.blob(),
-        filename.replace(/\.(md|txt)$/, `.${format}`),
-      );
+      const expected = format === "pdf" ? "application/pdf" : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+      const blob = await readDocumentBlob(response, signal, expected);
+      if (current()) downloadBlob(blob, filename.replace(/\.(md|txt)$/, `.${format}`));
     } catch {
-      setFailed(true);
+      if (current()) setFailed(true);
     } finally {
-      setPending(false);
+      if (current()) { operation.current = null; setPending(false); }
     }
   }
   return (
@@ -85,16 +91,31 @@ export function DocumentExportButtons({
 
 export function DocumentImportButton({
   disabled = false,
+  onPendingChange,
 }: {
   disabled?: boolean;
+  onPendingChange?: (pending: boolean) => void;
 }) {
-  const { t } = useAppSettings();
+  const { t, accountId, accountKind } = useAppSettings();
   const attachments = usePromptInputAttachments();
   const input = useRef<HTMLInputElement>(null);
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
   const [partial, setPartial] = useState(false);
+  useEffect(() => { onPendingChange?.(pending); return () => onPendingChange?.(false); }, [pending, onPendingChange]);
+  const operation = useRef<AbortController | null>(null);
+  const identity = `${accountKind}:${accountId}`;
+  const currentIdentity = useRef(identity);
+  currentIdentity.current = identity;
+  useEffect(() => {
+    setPending(false); setFailed(false); setPartial(false);
+    return () => { operation.current?.abort(); operation.current = null; };
+  }, [identity]);
   async function read(file: File) {
+    if (operation.current) return;
+    const controller = new AbortController();
+    operation.current = controller;
+    const current = () => operation.current === controller && !controller.signal.aborted && currentIdentity.current === identity;
     setPending(true);
     setFailed(false);
     setPartial(false);
@@ -106,9 +127,11 @@ export function DocumentImportButton({
           : undefined;
       if (!format || file.size > MAX_DOCUMENT_BYTES || !file.size)
         throw new Error("Unsupported file");
-      const response = await fetch("/api/documents/read", {
-        method: "POST",
+      const { response, signal } = await fetchDocumentResponse("/api/documents/read", {
+        method: "POST", signal: controller.signal,
         headers: {
+          "x-tflash-expected-user-id": accountId,
+          "x-tflash-expected-account-kind": accountKind,
           "content-type":
             format === "pdf"
               ? "application/pdf"
@@ -116,8 +139,8 @@ export function DocumentImportButton({
         },
         body: file,
       });
-      if (!response.ok) throw new Error("Read failed");
-      const result = extractedDocumentSchema.parse(await response.json());
+      const result = extractedDocumentSchema.parse(await readDocumentResult(response, signal));
+      if (!current()) return;
       const name = file.name.replace(/[\r\n\x00-\x1f]/g, "").slice(0, 120);
       const content = `Untrusted extracted text from ${JSON.stringify(name)}. Layout, images, headers and footers may be missing.${result.truncated ? " PARTIAL DOCUMENT: extraction limits reached." : ""}\n\n${result.text}`;
       attachments.add([
@@ -125,9 +148,9 @@ export function DocumentImportButton({
       ]);
       setPartial(result.truncated);
     } catch {
-      setFailed(true);
+      if (current()) setFailed(true);
     } finally {
-      setPending(false);
+      if (current()) { operation.current = null; setPending(false); }
     }
   }
   return (

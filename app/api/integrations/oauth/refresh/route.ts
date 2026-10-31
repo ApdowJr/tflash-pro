@@ -2,6 +2,7 @@ import { currentPrincipal } from "@/lib/identity";
 import { openIntegrationTokenForRefresh, sealIntegrationToken } from "@/lib/integrations/credentials";
 import { getIntegration } from "@/lib/integrations/catalog";
 import { refreshOAuthToken } from "@/lib/integrations/oauth";
+import { readBoundedJson } from "@/lib/bounded-json";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,12 +20,15 @@ export async function POST(request: Request): Promise<Response> {
   const principal = await currentPrincipal();
   if (!principal) return Response.json({ ok: false, message: "Sign in to continue." }, { status: 401 });
   if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) return Response.json({ ok: false, message: "Expected JSON." }, { status: 415 });
-  let body: { token?: unknown };
-  try {
-    body = (await request.json()) as { token?: unknown };
-  } catch {
-    return Response.json({ ok: false, message: "Expected a JSON body." }, { status: 400 });
+  const expectedId = request.headers.get("x-tflash-expected-user-id");
+  const expectedKind = request.headers.get("x-tflash-expected-account-kind");
+  if ((expectedId !== null && expectedId !== principal.id) || (expectedKind !== null && expectedKind !== principal.kind)) {
+    return Response.json({ ok: false, message: "Account changed. Reload to continue." }, { status: 409, headers: { "cache-control": "no-store" } });
   }
+  const input = await readBoundedJson(request, 32 * 1024);
+  if (!input.ok) return Response.json({ ok: false, message: input.error }, { status: input.status, headers: { "cache-control": "no-store" } });
+  if (!input.value || typeof input.value !== "object" || Array.isArray(input.value)) return Response.json({ ok: false, message: "Expected a JSON body." }, { status: 400 });
+  const body = input.value as { token?: unknown };
 
   const record = await openIntegrationTokenForRefresh(
     typeof body.token === "string" ? body.token : undefined,
@@ -52,8 +56,8 @@ export async function POST(request: Request): Promise<Response> {
   });
   if (!tokens) {
     return Response.json(
-      { ok: false, message: "The provider rejected the renewal. Connect again." },
-      { status: 401 },
+      { ok: false, message: "The renewal outcome could not be confirmed. Do not retry automatically." },
+      { status: 503, headers: { "cache-control": "no-store" } },
     );
   }
 

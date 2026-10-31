@@ -1,5 +1,8 @@
 "use client";
 
+import { ChatActionUncertainError } from "@/lib/chat-action-recovery";
+import { beginSyncUncertainty, clearSyncUncertainty, syncUncertaintyMarkers } from "@/lib/sync-uncertainty";
+import { waitWithAbort } from "@/lib/abortable";
 import { clearDispatchReview, clearReviewedDispatches, dispatchReviewKey, dispatchStorage, markDispatchReview, readDispatchReview } from "@/lib/dispatch-review";
 
 import type { UserContent } from "ai";
@@ -30,11 +33,16 @@ import { useAppSettings } from "@/components/settings/app-settings";
 import { SettingsDialog } from "@/components/settings/settings-dialog";
 import { sessionTitle } from "@/lib/chat-history";
 import { OWNER_PROOF_HEADER } from "@/lib/security/chat-ownership-wire";
-import { AgentMessage } from "./agent-message";
+import { AgentMessage, type AgentInputResponse } from "./agent-message";
+import { InputResponseNotice, useInputResponseRecovery } from "./input-response-recovery";
+import { StopRecoveryNotice, useStopRecovery } from "./stop-recovery";
+import { SharedDispatchNotice, useSharedDispatchRecovery } from "./shared-dispatch-recovery";
+import { isStopTurnId } from "@/lib/stop-recovery";
 import { VoiceOutputButton } from "./voice-output";
 import { AgentPlanCard, type AgentRunState } from "./agent-workspace";
 import { PermissionsPanel } from "./permissions-panel";
 import { TrackedTaskPanel } from "./tracked-task-panel";
+import { UsagePanel } from "./usage-panel";
 import { ProjectPicker } from "@/components/settings/workspace-panel";
 import { useWorkspace } from "@/components/settings/workspace-store";
 import { workspaceContext } from "@/lib/workspace";
@@ -48,7 +56,9 @@ import { agentModeContext, agentModeStorageKey, parseAgentMode, type AgentMode }
 const DEFAULT_AGENT_NAME = "Tflash";
 
 type ReadySession = { readonly id: string; readonly resume: boolean; readonly proof?: string };
-type PreparationError = "chatStorageSetupRequired" | "chatStorageUnavailable" | "chatPreparationFailed" | "chatSignInRequired" | "chatOwnershipUnavailable";
+type PreparationError = "chatStorageSetupRequired" | "chatStorageUnavailable" | "chatPreparationFailed" | "chatSignInRequired" | "chatOwnershipUnavailable" | "chatCreationUncertain" | "chatCreationStorageUnavailable";
+type CreatedSession = { readonly id: string; readonly proof?: string; readonly marker: string };
+class CreationNotStartedError extends Error {}
 
 /** Start sessions server-side so every login method receives a bound owner. */
 export function AgentChat({ account, sessionId, sessionless = false }: {
@@ -57,69 +67,127 @@ export function AgentChat({ account, sessionId, sessionless = false }: {
   readonly sessionless?: boolean;
 }) {
   const { hydrated, eveHeaders, settings, registerChatProof, t } = useAppSettings();
-  const [ready, setReady] = useState<ReadySession>();
+  const accountIdentity = JSON.stringify([account.kind, account.id]);
+  const [readyState, setReadyState] = useState<{ source: string | undefined; account: string; value: ReadySession }>();
+  const ready = readyState && readyState.source === sessionId && readyState.account === accountIdentity ? readyState.value : undefined;
   const [preparationError, setPreparationError] = useState<PreparationError>();
+  const [reviewMarkers, setReviewMarkers] = useState<string[]>([]);
   const [attempt, setAttempt] = useState(0);
-  const createRef = useRef<Promise<{ id: string; proof?: string }> | null>(null);
+  const createRef = useRef<Promise<CreatedSession> | null>(null);
+  const sourceIdentity = JSON.stringify([accountIdentity, sessionId ?? null]);
+  const createSource = useRef(sourceIdentity);
+  if (createSource.current !== sourceIdentity) {
+    createSource.current = sourceIdentity;
+    createRef.current = null;
+  }
 
   useEffect(() => {
-    if (!hydrated) return;
+    if (!hydrated || ready) return;
     if (sessionId) {
       const proof = settings.chatProofs[sessionId];
       if (account.kind === "vercel" && !proof) {
         setPreparationError("chatOwnershipUnavailable");
         return;
       }
-      setReady({ id: sessionId, resume: true, ...(proof ? { proof } : {}) });
+      setReadyState({ source: sessionId, account: accountIdentity, value: { id: sessionId, resume: true, ...(proof ? { proof } : {}) } });
       setPreparationError(undefined);
       return;
     }
     let active = true;
     if (!createRef.current) {
+      let marker: string;
+      try {
+        const markers = syncUncertaintyMarkers("chat-create", account.kind, account.id);
+        if (markers.length) {
+          setReviewMarkers(markers);
+          setPreparationError("chatCreationUncertain");
+          return;
+        }
+        marker = beginSyncUncertainty("chat-create", account.kind, account.id);
+      } catch {
+        setPreparationError("chatCreationStorageUnavailable");
+        return;
+      }
       const controller = new AbortController();
       const timeout = window.setTimeout(() => controller.abort(), 65_000);
-      createRef.current = fetch("/api/chats", {
-        method: "POST", headers: { ...eveHeaders(), "content-type": "application/json" }, body: "{}", signal: controller.signal,
-      }).then(async (response) => {
-        const body = await response.json() as { sessionId?: string; ownerProof?: string; code?: string };
-        if (!response.ok || !body.sessionId || (account.kind === "vercel" && !body.ownerProof)) {
-          if (response.status === 401) throw new Error("chatSignInRequired");
-          if (body.code === "CHAT_STORAGE_SETUP_REQUIRED") throw new Error("chatStorageSetupRequired");
-          if (body.code === "CHAT_STORAGE_UNAVAILABLE") throw new Error("chatStorageUnavailable");
-          throw new Error("chatPreparationFailed");
+      createRef.current = (async () => {
+        const pending = fetch("/api/chats", {
+          method: "POST", headers: { ...eveHeaders(), "content-type": "application/json", "x-tflash-expected-user-id": account.id, "x-tflash-expected-account-kind": account.kind }, body: "{}", signal: controller.signal,
+        });
+        void pending.then((response) => {
+          if (controller.signal.aborted && response.body) void response.body.cancel().catch(() => {});
+        }, () => {});
+        const response = await waitWithAbort(pending, controller.signal);
+        const input: unknown = await waitWithAbort(response.json(), controller.signal);
+        const body = input && typeof input === "object" && !Array.isArray(input) ? input as Record<string, unknown> : {};
+        if (!response.ok) {
+          // These responses are emitted before Eve creation; a later storage
+          // failure has the same code but does not carry this assertion.
+          const notStarted = [401, 409, 415, 429].includes(response.status) || body.creationNotStarted === true;
+          if (notStarted) {
+            clearSyncUncertainty([marker]);
+            const code = response.status === 401 ? "chatSignInRequired" : body.code === "CHAT_STORAGE_SETUP_REQUIRED" ? "chatStorageSetupRequired" : body.code === "CHAT_STORAGE_UNAVAILABLE" ? "chatStorageUnavailable" : "chatPreparationFailed";
+            throw new CreationNotStartedError(code);
+          }
+          throw new Error("chatCreationUncertain");
         }
-        return { id: body.sessionId, ...(body.ownerProof ? { proof: body.ownerProof } : {}) };
-      }).finally(() => window.clearTimeout(timeout));
+        const id = body.sessionId, proof = body.ownerProof;
+        if (typeof id !== "string" || !/^[a-zA-Z0-9_-]{1,200}$/.test(id) ||
+          (account.kind === "vercel" && (typeof proof !== "string" || !proof || proof.length > 128))) {
+          throw new Error("chatCreationUncertain");
+        }
+        return { id, marker, ...(typeof proof === "string" && proof.length <= 128 ? { proof } : {}) };
+      })().finally(() => window.clearTimeout(timeout));
     }
-    createRef.current.then(({ id, proof }) => {
+    createRef.current.then(({ id, proof, marker }) => {
       if (!active) return;
-      if (proof) registerChatProof(id, proof);
-      setReady({ id, resume: false, ...(proof ? { proof } : {}) });
-      setPreparationError(undefined);
+      try {
+        if (proof) registerChatProof(id, proof);
+        clearSyncUncertainty([marker]);
+        setReadyState({ source: sessionId, account: accountIdentity, value: { id, resume: false, ...(proof ? { proof } : {}) } });
+        setPreparationError(undefined);
+      } catch {
+        setReviewMarkers([marker]);
+        setPreparationError("chatCreationUncertain");
+      }
     }).catch((error: unknown) => {
       if (!active) return;
       const code = error instanceof Error ? error.message : "";
-      setPreparationError(code === "chatStorageSetupRequired" || code === "chatStorageUnavailable" || code === "chatSignInRequired"
-        ? code : "chatPreparationFailed");
+      if (error instanceof CreationNotStartedError && (code === "chatStorageSetupRequired" || code === "chatStorageUnavailable" || code === "chatSignInRequired" || code === "chatPreparationFailed")) {
+        setPreparationError(code);
+        return;
+      }
+      try { setReviewMarkers(syncUncertaintyMarkers("chat-create", account.kind, account.id)); setPreparationError("chatCreationUncertain"); }
+      catch { setPreparationError("chatCreationStorageUnavailable"); }
     });
     return () => { active = false; };
-  }, [account.kind, sessionId, hydrated, attempt, eveHeaders, registerChatProof, settings.chatProofs]);
+  }, [account.id, account.kind, accountIdentity, sessionId, hydrated, ready, attempt, eveHeaders, registerChatProof, settings.chatProofs]);
 
   const retry = () => {
     createRef.current = null;
     setPreparationError(undefined);
     setAttempt((value) => value + 1);
   };
+  const reviewedRetry = () => {
+    try {
+      // Release only the markers the user actually saw, never newer ones.
+      clearSyncUncertainty(reviewMarkers);
+      const remaining = syncUncertaintyMarkers("chat-create", account.kind, account.id);
+      if (remaining.length) { setReviewMarkers(remaining); return; }
+      retry();
+    } catch { setPreparationError("chatCreationStorageUnavailable"); }
+  };
   return (
     <PromptInputProvider>
-      <ChatSession key={ready?.id ?? "preparing"} account={account} sessionId={ready?.id}
+      <ChatSession key={JSON.stringify([accountIdentity, ready?.id ?? null])} account={account} sessionId={ready?.id}
         resume={ready?.resume ?? false} ownerProof={ready?.proof} sessionless={sessionless}
-        preparationError={preparationError ? t(preparationError) : undefined} canRetry={!sessionId} onRetry={retry} />
+        preparationError={preparationError ? t(preparationError) : undefined} canRetry={!sessionId && preparationError !== "chatCreationUncertain"} onRetry={retry}
+        creationReview={preparationError === "chatCreationUncertain"} onReviewedRetry={reviewedRetry} />
     </PromptInputProvider>
   );
 }
 
-function ChatSession({ account, sessionId, resume, ownerProof, sessionless, preparationError, canRetry, onRetry }: {
+function ChatSession({ account, sessionId, resume, ownerProof, sessionless, preparationError, canRetry, onRetry, creationReview, onReviewedRetry }: {
   readonly account: Account;
   readonly sessionId?: string;
   readonly resume: boolean;
@@ -128,8 +196,11 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   readonly preparationError?: string;
   readonly canRetry: boolean;
   readonly onRetry: () => void;
+  readonly creationReview: boolean;
+  readonly onReviewedRetry: () => void;
 }) {
   const { t, settings, selection, eveHeaders, turnContext, recordChatActivity, oauthJustConnected, oauthError } = useAppSettings();
+  const [creationReviewed, setCreationReviewed] = useState(false);
   const controller = usePromptInputController();
   const workspace = useWorkspace();
   const [cancellationError, setCancellationError] = useState<string>();
@@ -156,11 +227,18 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   const submissionPending = useRef<symbol | undefined>(undefined);
   const dispatchInProgress = useRef(0);
   const dispatchError = useRef(false);
+  // Invalidate any submission currently awaiting history persistence when a
+  // concurrent send becomes uncertain, even before React renders the warning.
+  const dispatchUncertaintyEpoch = useRef(0);
+  const [dispatchStorageUnavailable, setDispatchStorageUnavailable] = useState(false);
   const [unknownDispatch, setUnknownDispatch] = useState(false);
+  const unknownDispatchRef = useRef(false);
   const [dispatchReviewed, setDispatchReviewed] = useState(false);
   const reviewKey = sessionId ? dispatchReviewKey(account.kind, account.id, sessionId) : undefined;
   useEffect(() => {
-    setUnknownDispatch(!!reviewKey && !!readDispatchReview(dispatchStorage(), reviewKey));
+    const pending = !!reviewKey && !!readDispatchReview(dispatchStorage(), reviewKey);
+    unknownDispatchRef.current = pending;
+    setUnknownDispatch(pending);
     setDispatchReviewed(false);
   }, [reviewKey]);
 
@@ -194,6 +272,8 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
     onError() {
       if (dispatchInProgress.current > 0) {
         dispatchError.current = true;
+        dispatchUncertaintyEpoch.current++;
+        unknownDispatchRef.current = true;
         setUnknownDispatch(true);
         setDispatchReviewed(false);
       }
@@ -231,6 +311,8 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
     (stopUnconfirmed && !isBusy && !isResuming);
   const resumeRef = useRef(agent.resume);
   resumeRef.current = agent.resume;
+  const statusRef = useRef(agent.status); statusRef.current = agent.status;
+  const translationRef = useRef(t); translationRef.current = t;
   const reconnect = useCallback((automatic: boolean) => {
     if (reconnectPending.current || cancellationRequestInFlight.current || (automatic && cancellationPending.current)) return;
     reconnectPending.current = true;
@@ -238,14 +320,21 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
     if (automatic) setReconnectAttempts((attempt) => attempt + 1);
     setCancellationError(undefined);
     // resume() only reattaches to the existing stream; it never sends a turn.
-    void resumeRef.current().catch((error: unknown) => setCancellationError(toErrorMessage(error))).finally(() => {
+    // resume() may follow a live stream indefinitely. Bound only the UI wait;
+    // timing out does not abort the stream or start a new turn.
+    const signal = AbortSignal.timeout(15_000);
+    void waitWithAbort(Promise.resolve().then(() => resumeRef.current()), signal).catch((error: unknown) => {
+      if (signal.aborted) {
+        // A healthy attached stream can keep resume() pending for the turn.
+        if (statusRef.current !== "streaming") setCancellationError(translationRef.current("reconnectWaitExpired"));
+      } else setCancellationError(toErrorMessage(error));
+    }).finally(() => {
       reconnectPending.current = false;
       setReconnecting(false);
     });
   }, []);
-  const recoveryTurn = turnOutcome === "active" ? latest?.turnId :
-    turnOutcome === undefined && agent.data.activeTurnId && agent.data.turns?.[agent.data.activeTurnId]?.status === "active"
-      ? agent.data.activeTurnId : stopUnconfirmed ? target : undefined;
+  const projectedActiveTurn = agent.data.activeTurnId && agent.data.turns?.[agent.data.activeTurnId]?.status === "active" ? agent.data.activeTurnId : undefined;
+  const recoveryTurn = projectedActiveTurn ?? (turnOutcome === "active" ? latest?.turnId : stopUnconfirmed ? target : undefined);
   const recoveryTurnRef = useRef<string | undefined>(undefined);
   useEffect(() => {
     // A short-lived reconnection is not a new budget: repeated disconnects in
@@ -262,7 +351,9 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
     const timer = window.setTimeout(() => reconnect(true), retryDelay);
     return () => window.clearTimeout(timer);
   }, [retryDelay, reconnecting, cancelling, reconnect]);
-  const hasOpenInput = Object.values(agent.data.inputs).some((input) => input.status === "open");
+  const openInputs = Object.values(agent.data.inputs).filter((input) => input.status === "open");
+  const openInputsRef = useRef(openInputs); openInputsRef.current = openInputs;
+  const hasOpenInput = openInputs.length > 0;
   const runState: AgentRunState = isResuming ? "resuming" : disconnected ? "interrupted" : errorMessage || agent.status === "error" ? "failed" :
     hasOpenInput ? "waiting" : isBusy ? "working" : turnOutcome === "cancelled" ? "cancelled" : "idle";
 
@@ -276,6 +367,13 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   const hasConversationContent = sessionless || !isEmpty || errorMessage !== undefined;
   const showConversationLayout = isResuming || hasConversationContent;
   const activeSessionId = sessionId ?? agent.session?.sessionId;
+  const sharedDispatch = useSharedDispatchRecovery(account.kind, account.id, activeSessionId);
+  const sharedBlocked = sharedDispatch.unavailable || sharedDispatch.warnings.length > 0;
+  const stopRecovery = useStopRecovery(account.kind, account.id, activeSessionId, agent.events);
+  const stopBlocked = stopRecovery.unavailable || stopRecovery.warnings.length > 0;
+  const inputRecovery = useInputResponseRecovery(account.kind, account.id, activeSessionId, agent.events);
+  const inputBlocked = inputRecovery.preparing || inputRecovery.warnings.length > 0 || (hasOpenInput && inputRecovery.unavailable);
+  const openInputRef = useRef(hasOpenInput); openInputRef.current = hasOpenInput;
   const title = settings.chats.find((chat) => chat.id === activeSessionId)?.title ??
     sessionTitle(agent.data.messages, t("newChat"));
 
@@ -290,8 +388,33 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
     const short = title.length > 72 ? `${title.slice(0, 71)}…` : title;
     document.title = `${short} · ${DEFAULT_AGENT_NAME}`;
   }, [isEmpty, showConversationLayout, title]);
-  const canRespond = (requestId: string) =>
+  const baseCanRespond = (requestId: string) =>
     !isResuming && !disconnected && !cancelling && agent.data.inputs[requestId]?.status === "open";
+  const baseCanRespondRef = useRef(baseCanRespond); baseCanRespondRef.current = baseCanRespond;
+  const responseIdentity = JSON.stringify([account.kind, account.id, activeSessionId ?? null, ownerProof ?? null]);
+  const responseIdentityRef = useRef(responseIdentity); responseIdentityRef.current = responseIdentity;
+  const responseMounted = useRef(true);
+  useEffect(() => { responseMounted.current = true; return () => { responseMounted.current = false; }; }, []);
+  const canRespond = (requestId: string) => baseCanRespond(requestId) && !inputBlocked && !stopBlocked && !sharedBlocked;
+  const respondToInput = async (responses: readonly AgentInputResponse[]) => {
+    if (responses.length !== 1 || !baseCanRespondRef.current(responses[0].requestId) || inputRecovery.checkBlocked(true) || stopRecovery.checkBlocked() || sharedDispatch.checkBlocked()) throw new Error("Response requires review.");
+    const marker = await inputRecovery.begin(responses[0].requestId);
+    if (!responseMounted.current || responseIdentityRef.current !== responseIdentity || !baseCanRespondRef.current(responses[0].requestId) || stopRecovery.checkBlocked() || sharedDispatch.checkBlocked()) {
+      inputRecovery.discard(marker); throw new Error("Conversation changed.");
+    }
+    setCancellationError(undefined);
+    try {
+      // respond() may keep the stream open for the turn's lifetime. Bound our
+      // UI wait without aborting that stream or claiming the remote call stopped.
+      const pending = Promise.resolve().then(() => {
+        if (!responseMounted.current || responseIdentityRef.current !== responseIdentity || !baseCanRespondRef.current(responses[0].requestId) || !inputRecovery.isPresent(marker) || stopRecovery.checkBlocked() || sharedDispatch.checkBlocked()) {
+          inputRecovery.discard(marker); throw new Error("Conversation changed.");
+        }
+        return agent.respond(responses, { clientContext: turnContext() + workspaceContext(workspace.snapshot(), sessionId) + agentModeContext(agentMode, settings.language) });
+      });
+      await waitWithAbort(pending, AbortSignal.timeout(30_000));
+    } finally { inputRecovery.done(marker); }
+  };
   const questionsFor = (callId: string) =>
     Object.values(agent.data.inputs).filter(
       (input) => input.request.kind === "question" && input.request.action.callId === callId,
@@ -363,73 +486,56 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
     window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
   };
 
-  const requestCancellation = () => {
-    if (cancellationPending.current) return;
-    cancellationPending.current = true;
-    cancellationTarget.current = latest?.outcome === "active" ? latest.turnId : agent.data.activeTurnId;
-    cancellationRequestInFlight.current = true;
-    setCancellationRequestActive(true);
+  const requestStop = (requestedTurn?: string) => {
+    if (cancellationPending.current || cancellationRequestInFlight.current) return;
     cancellationEpoch.current++;
-    setCancelling(true);
-    setCancellationError(undefined);
-    void agent.cancel().then(() => {
-      cancellationRequestInFlight.current = false;
-      setCancellationRequestActive(false);
-    }).catch((error: unknown) => {
-      cancellationRequestInFlight.current = false;
-      setCancellationRequestActive(false);
-      cancellationPending.current = false;
-      cancellationTarget.current = undefined;
-      setCancelling(false);
-      setCancellationError(toErrorMessage(error));
+    // Always use the observed exact turn when available. Eve's hook may use
+    // unscoped session.cancel() after steering or resume; a delayed request
+    // must not silently target a later turn.
+    const turnId = activeSessionId && isStopTurnId(requestedTurn) ? requestedTurn : undefined;
+    const marker = stopRecovery.begin(turnId);
+    cancellationPending.current = true;
+    cancellationRequestInFlight.current = true;
+    cancellationTarget.current = turnId;
+    setCancelling(true); setCancellationRequestActive(true); setCancellationError(undefined);
+    const signal = AbortSignal.timeout(15_000);
+    const operation = Promise.resolve().then(() => {
+      if (!responseMounted.current || responseIdentityRef.current !== responseIdentity) throw new Error("Conversation changed.");
+      return turnId && activeSessionId
+      ? new Client({ host: WEB_CHAT_AGENT ? `/eve/${WEB_CHAT_AGENT}` : "", redirect: "error", headers: () => ({ ...eveHeaders(), [HEADER_MAX_STEPS]: String(workspace.snapshot().maxSteps), ...(ownerProof ? { [OWNER_PROOF_HEADER]: ownerProof } : {}) }) })
+          .sessions.attach(activeSessionId).cancel({ turnId, signal })
+      : agent.cancel();
+    });
+    let failed = false;
+    void waitWithAbort(operation, signal).catch((error: unknown) => {
+      failed = true;
+      // Failure or timeout is not proof that the stop was rejected remotely.
+      if (responseMounted.current && responseIdentityRef.current === responseIdentity) setCancellationError(toErrorMessage(error));
+    }).finally(() => {
+      if (!responseMounted.current || responseIdentityRef.current !== responseIdentity) return;
+      cancellationRequestInFlight.current = false; setCancellationRequestActive(false);
+      stopRecovery.done(marker);
+      if (disconnected && !failed) reconnect(false);
     });
   };
-
-  const cancelDisconnectedTurn = () => {
-    if (!sessionId || !recoveryTurn || cancellationPending.current) return;
-    cancellationPending.current = true;
-    cancellationTarget.current = recoveryTurn;
-    cancellationRequestInFlight.current = true;
-    setCancellationRequestActive(true);
-    cancellationEpoch.current++;
-    setCancelling(true);
-    setCancellationError(undefined);
-    // The hook has no active local stream after a disconnect. Use Eve's
-    // documented fixed-session cancellation with the observed turn ID, so a
-    // delayed request cannot cancel a subsequent turn. An accepted response
-    // is only a queued request; reattach to observe the actual boundary.
-    const client = new Client({
-      host: WEB_CHAT_AGENT ? `/eve/${WEB_CHAT_AGENT}` : "",
-      headers: () => ({ ...eveHeaders(), [HEADER_MAX_STEPS]: String(workspace.snapshot().maxSteps), ...(ownerProof ? { [OWNER_PROOF_HEADER]: ownerProof } : {}) }),
-      redirect: "error",
-    });
-    void client.sessions.attach(sessionId).cancel({ turnId: recoveryTurn }).then(() => {
-      cancellationRequestInFlight.current = false;
-      setCancellationRequestActive(false);
-      // Accepted is not a cancellation boundary. Keep follow-ups blocked,
-      // but allow reattachment to confirm what happened to the observed turn.
-      reconnect(false);
-    }).catch((error: unknown) => {
-      cancellationRequestInFlight.current = false;
-      setCancellationRequestActive(false);
-      cancellationPending.current = false;
-      cancellationTarget.current = undefined;
-      setCancelling(false);
-      setCancellationError(toErrorMessage(error));
-    });
-  };
+  const requestCancellation = () => requestStop(
+    projectedActiveTurn ?? (latest?.outcome === "active" ? latest.turnId : undefined),
+  );
+  const cancelDisconnectedTurn = () => { if (recoveryTurn && activeSessionId) requestStop(recoveryTurn); };
 
   const handleSubmit = async (message: PromptInputMessage) => {
     const text = message.text.trim();
     if (text.length === 0 && message.files.length === 0) return;
     // A programmatic form submission must not clear a draft while the session
     // is unavailable, even though the visible Send button is disabled.
-    if (isResuming || disconnected || !sessionId || cancellationPending.current || submissionPending.current || unknownDispatch ||
+    if (isResuming || disconnected || !sessionId || cancellationPending.current || submissionPending.current || unknownDispatchRef.current || inputRecovery.checkBlocked(openInputRef.current) || stopRecovery.checkBlocked() || sharedDispatch.checkBlocked() ||
       (reviewKey && readDispatchReview(dispatchStorage(), reviewKey) && !(isBusy && dispatchInProgress.current > 0))) throw new Error("Conversation is not ready.");
     const preparation = Symbol("submission");
     submissionPending.current = preparation;
+    let inputMarker: string | undefined, inputDispatched = false, inputWait: number | undefined;
     try {
       const sendEpoch = cancellationEpoch.current;
+      const uncertaintyEpoch = dispatchUncertaintyEpoch.current;
       setCancellationError(undefined);
       const firstUser = agent.data.messages.find((entry) => entry.role === "user");
       const firstText = firstUser?.parts.find((part) => part.type === "text");
@@ -438,12 +544,15 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
       try {
         await recordChatActivity(sessionId, title);
       } catch (error) {
-        setCancellationError(t("historySaveFailed"));
+        setCancellationError(t(error instanceof ChatActionUncertainError ? "chatActionUncertain" : "historySaveFailed"));
         throw error; // Keep the draft when history could not be saved.
       }
       // A stop may arrive while the chat-index write is pending. Never schedule
       // the old submission after cancellation, even if the stream has settled.
       if (sendEpoch !== cancellationEpoch.current) throw new Error("Turn was stopped.");
+      // Another in-flight send may have failed while this submission was
+      // awaiting its index update. Do not steer or send after that uncertainty.
+      if (!responseMounted.current || responseIdentityRef.current !== responseIdentity || uncertaintyEpoch !== dispatchUncertaintyEpoch.current || inputRecovery.checkBlocked(openInputRef.current) || stopRecovery.checkBlocked() || sharedDispatch.checkBlocked()) throw new Error("Dispatch outcome requires review.");
       hasSubmittedMessage.current = true;
       replaceSessionRoute(sessionId);
       const options = {
@@ -469,18 +578,30 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
         });
       }
 
+      // A plain message can answer Eve's first open prompt, including an
+      // approval. Protect that path with the same breadcrumb as respond().
+      const firstOpen = openInputsRef.current[0]?.request.requestId;
+      if (firstOpen) {
+        inputMarker = await inputRecovery.begin(firstOpen, "message");
+        if (!responseMounted.current || responseIdentityRef.current !== responseIdentity || cancellationPending.current || sendEpoch !== cancellationEpoch.current ||
+            openInputsRef.current[0]?.request.requestId !== firstOpen || !inputRecovery.isPresent(inputMarker) || stopRecovery.checkBlocked() || sharedDispatch.checkBlocked()) throw new Error("Input response requires review.");
+      } else if (inputRecovery.checkBlocked(false) || stopRecovery.checkBlocked() || sharedDispatch.checkBlocked()) throw new Error("Input response requires review.");
+
       // The marker is a recovery hint for this tab, not an Eve idempotency key.
       // It is written before dispatch so a reload after a lost response does not
       // silently invite a retry. Storage can be unavailable; then the in-memory
       // guard still applies for this tab's lifetime.
       const token = crypto.randomUUID();
-      if (reviewKey) markDispatchReview(dispatchStorage(), reviewKey, token);
+      const sharedMarker = sharedDispatch.begin();
+      if (reviewKey && !markDispatchReview(dispatchStorage(), reviewKey, token)) setDispatchStorageUnavailable(true);
       if (dispatchInProgress.current === 0) dispatchError.current = false;
       dispatchInProgress.current++;
       if (submissionPending.current === preparation) submissionPending.current = undefined;
+      let cleanDispatch = false;
       try {
+        if (inputMarker) { inputDispatched = true; const key = inputMarker; inputWait = window.setTimeout(() => inputRecovery.done(key), 30_000); }
         await agent.send(message.files.length === 0 ? text : parts, options);
-        if (dispatchError.current || sendEpoch !== cancellationEpoch.current) throw new Error("Dispatch outcome requires review.");
+        if (!responseMounted.current || responseIdentityRef.current !== responseIdentity || dispatchError.current || sendEpoch !== cancellationEpoch.current) throw new Error("Dispatch outcome requires review.");
         if (reviewKey) {
           clearDispatchReview(dispatchStorage(), reviewKey, token);
           // Other in-flight sends (for example, an explicit steer) keep their
@@ -488,12 +609,18 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
           const remaining = readDispatchReview(dispatchStorage(), reviewKey);
           if (remaining && remaining.includes(token)) throw new Error("Dispatch review could not be cleared.");
         }
+        cleanDispatch = true;
       } catch (error) {
-        setUnknownDispatch(true);
-        setDispatchReviewed(false);
+        dispatchUncertaintyEpoch.current++;
+        unknownDispatchRef.current = true;
+        if (responseMounted.current && responseIdentityRef.current === responseIdentity) { setUnknownDispatch(true); setDispatchReviewed(false); }
         throw error;
-      } finally { dispatchInProgress.current--; }
-    } finally { if (submissionPending.current === preparation) submissionPending.current = undefined; }
+      } finally { dispatchInProgress.current--; sharedDispatch.finish(sharedMarker, cleanDispatch); }
+    } finally {
+      if (inputWait !== undefined) window.clearTimeout(inputWait);
+      if (inputMarker) { if (inputDispatched) inputRecovery.done(inputMarker); else inputRecovery.discard(inputMarker); }
+      if (submissionPending.current === preparation) submissionPending.current = undefined;
+    }
   };
 
   return (
@@ -530,6 +657,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
           <Button type="button" size="sm" variant="outline" disabled={reconnecting || cancellationRequestActive} onClick={() => reconnect(false)}>{t("reconnect")}</Button>
           {recoveryTurn ? <Button type="button" size="sm" variant="outline" disabled={cancelling} onClick={cancelDisconnectedTurn}>{t(cancelling ? "cancelling" : "stopDisconnectedTurn")}</Button> : null}
         </div> : null}
+        {dispatchStorageUnavailable ? <p role="status" className="mx-auto w-full max-w-2xl px-4 py-2 text-xs text-muted-foreground sm:px-6">{t("dispatchStorageUnavailable")}</p> : null}
         {unknownDispatch ? <section className="mx-auto w-full max-w-2xl space-y-2 px-4 py-2 text-xs text-muted-foreground" role="alert">
           <p>{t("dispatchUnknown")}</p>
           <ol className="list-decimal space-y-1 pl-5"><li>{t("dispatchReconnectStep")}</li><li>{t("dispatchExternalStep")}</li><li>{t("dispatchNoReplayStep")}</li></ol>
@@ -538,11 +666,27 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
           <Button type="button" size="sm" variant="outline" disabled={!dispatchReviewed || disconnected || isBusy || isResuming || reconnecting || cancelling || dispatchInProgress.current > 0} onClick={() => {
             if (dispatchInProgress.current > 0) return;
             if (reviewKey) clearReviewedDispatches(dispatchStorage(), reviewKey);
-            setUnknownDispatch(!!reviewKey && !!readDispatchReview(dispatchStorage(), reviewKey)); setDispatchReviewed(false);
+            const pending = !!reviewKey && !!readDispatchReview(dispatchStorage(), reviewKey);
+            unknownDispatchRef.current = pending;
+            setUnknownDispatch(pending); setDispatchReviewed(false);
           }}>{t("dispatchUnlock")}</Button>
         </section> : null}
+        {sharedDispatch.unavailable ? <p role="alert" className="mx-auto w-full max-w-2xl px-4 py-2 text-xs text-destructive">{t("sharedDispatchReadUnavailable")}</p> : null}
+        {sharedDispatch.writeFailed ? <p role="status" className="mx-auto w-full max-w-2xl px-4 py-2 text-xs text-muted-foreground">{t("sharedDispatchStorageUnavailable")}</p> : null}
+        {sharedDispatch.warnings.length > 0 && !unknownDispatch && !disconnected && stopRecovery.warnings.length === 0 ? <div className="mx-auto w-full max-w-2xl px-3"><Button type="button" size="sm" variant="outline" disabled={isBusy || isResuming || reconnecting || cancellationRequestActive} onClick={() => reconnect(false)}>{t("reconnect")}</Button></div> : null}
+        {sharedDispatch.warnings.map(warning => <SharedDispatchNotice key={warning.key} warning={warning} review={sharedDispatch.review} />)}
+        {stopRecovery.unavailable ? <p role="alert" className="mx-auto w-full max-w-2xl px-4 py-2 text-xs text-destructive">{t("stopRecoveryReadUnavailable")}</p> : null}
+        {stopRecovery.warnings.length > 0 && !disconnected ? <div className="mx-auto w-full max-w-2xl px-3"><Button type="button" size="sm" variant="outline" disabled={isBusy || isResuming || reconnecting || cancellationRequestActive} onClick={() => reconnect(false)}>{t("reconnect")}</Button></div> : null}
+        {stopRecovery.warnings.map(warning => <StopRecoveryNotice key={warning.key} warning={warning} busy={stopRecovery.active.includes(warning.key)} review={(key) => {
+          const reviewed = stopRecovery.review(key);
+          if (reviewed && stopRecovery.active.length === 0) { cancellationPending.current = false; cancellationTarget.current = undefined; setCancelling(false); }
+          return reviewed;
+        }} />)}
+        {hasOpenInput && !inputBlocked && !stopBlocked && !sharedBlocked ? <p role="status" className="mx-auto w-full max-w-2xl px-4 py-2 text-xs text-muted-foreground">{t("inputResponseChatHint")}</p> : null}
+        {inputRecovery.unavailable && hasOpenInput ? <p role="alert" className="mx-auto w-full max-w-2xl px-4 py-2 text-xs text-destructive">{t("inputResponseStorageUnavailable")}</p> : null}
+        {inputRecovery.warnings.map(warning => <InputResponseNotice key={warning.key} warning={warning} busy={inputRecovery.active.includes(warning.key) || inputRecovery.preparing} review={inputRecovery.review} />)}
         {runState === "cancelled" ? <p role="status" className="mx-auto w-full max-w-2xl px-4 py-2 text-xs text-muted-foreground sm:px-6">{t("turnStoppedHint")}</p> : null}
-        {currentPlan ? <div className="shrink-0 px-4 py-2 sm:px-6"><AgentPlanCard compact plan={currentPlan} runState={unknownDispatch ? "interrupted" : runState} onContinue={() => handleSubmit({ text: t("continueTaskPrompt"), files: [] })} /></div> : null}
+        {currentPlan ? <div className="shrink-0 px-4 py-2 sm:px-6"><AgentPlanCard compact plan={currentPlan} runState={unknownDispatch || inputBlocked || stopBlocked || sharedBlocked ? "interrupted" : runState} onContinue={() => handleSubmit({ text: t("continueTaskPrompt"), files: [] })} /></div> : null}
 
         {showConversationLayout ? (
           <Conversation
@@ -567,10 +711,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
                         agent.status === "streaming" && index === agent.data.messages.length - 1
                       }
                       message={message}
-                      onInputResponses={(inputResponses) => {
-                        setCancellationError(undefined);
-                        return agent.respond(inputResponses, { clientContext: turnContext() + workspaceContext(workspace.snapshot(), sessionId) + agentModeContext(agentMode, settings.language) });
-                      }}
+                      onInputResponses={respondToInput}
                       questionsFor={questionsFor}
                     />
                     {message.role === "assistant" ? (
@@ -594,11 +735,15 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
           </div>
         )}
 
-        <div className="tf-safe-bottom shrink-0 px-3 pt-1 sm:px-6">
+        <div className="tf-safe-bottom tf-chat-dock shrink-0 pt-1">
           <div className="mx-auto w-full max-w-2xl">
             {preparationError ? (
               <div className="mb-3 rounded-md border border-destructive/30 px-3 py-2 text-destructive text-sm" role="alert">
                 {preparationError}{canRetry ? <button className="ml-2 min-h-11 rounded px-1 underline focus-visible:outline focus-visible:outline-2" onClick={onRetry} type="button">{t("retry")}</button> : null}
+                {creationReview ? <div className="mt-2 space-y-2 text-foreground">
+                  <label className="flex items-start gap-2"><input type="checkbox" checked={creationReviewed} onChange={(event) => setCreationReviewed(event.target.checked)} />{t("chatCreationReviewLabel")}</label>
+                  <Button disabled={!creationReviewed} onClick={() => { setCreationReviewed(false); onReviewedRetry(); }} type="button" size="sm" variant="outline">{t("chatCreationReviewButton")}</Button>
+                </div> : null}
               </div>
             ) : !sessionId ? <p className="mb-2 text-muted-foreground text-xs" role="status">{t("chatPreparing")}</p> : null}
             <ProjectPicker sessionId={sessionId} disabled={isBusy || isResuming} />
@@ -606,7 +751,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
               mode={agentMode}
               onModeChange={setAgentMode}
               isBusy={isBusy}
-              isResuming={isResuming || disconnected || unknownDispatch || !sessionId}
+              isResuming={isResuming || disconnected || unknownDispatch || inputBlocked || stopBlocked || sharedBlocked || !sessionId}
               cancelling={cancelling}
               onCancel={requestCancellation}
               onSubmit={handleSubmit}
@@ -628,8 +773,9 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
         initialTab={settingsTab}
         initialProvider={settingsProvider}
         conversationControls={sessionId ? <div className="space-y-2" key={sessionId}>
+          <UsagePanel events={agent.events} />
           <PermissionsPanel sessionId={sessionId} ownerProof={ownerProof} />
-          <TrackedTaskPanel sessionId={sessionId} ownerProof={ownerProof} continuationDisabled={isBusy || isResuming || disconnected || cancelling || unknownDispatch} onContinue={(attemptId) => handleSubmit({ text: `${t("continueTaskPrompt")}\n\nTracked continuation attempt: ${attemptId}. This label is not proof of execution or an idempotency key.`, files: [] })} />
+          <TrackedTaskPanel sessionId={sessionId} ownerProof={ownerProof} continuationDisabled={isBusy || isResuming || disconnected || cancelling || unknownDispatch || inputBlocked || stopBlocked || sharedBlocked} onContinue={(attemptId) => handleSubmit({ text: `${t("continueTaskPrompt")}\n\nTracked continuation attempt: ${attemptId}. This label is not proof of execution or an idempotency key.`, files: [] })} />
         </div> : null}
         key={settingsInstance}
         onOpenChange={setSettingsOpen}
@@ -662,24 +808,34 @@ function MessageActions({
 
 function CopyMessageButton({ text }: { readonly text: string }) {
   const { t } = useAppSettings();
-  const [copied, setCopied] = useState(false);
+  const [status, setStatus] = useState<"idle" | "copied" | "failed">("idle");
+  useEffect(() => {
+    if (status === "idle") return;
+    const timer = window.setTimeout(() => setStatus("idle"), 2500);
+    return () => window.clearTimeout(timer);
+  }, [status]);
+  async function copy() {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable");
+      await navigator.clipboard.writeText(text);
+      setStatus("copied");
+    } catch { setStatus("failed"); }
+  }
   return (
-    <Button
-      aria-label={t("copy")}
-      className="tf-touch-target h-6 gap-1 rounded-md px-1.5 text-[10.5px] text-muted-foreground"
-      onClick={() => {
-        void navigator.clipboard.writeText(text).then(() => {
-          setCopied(true);
-          window.setTimeout(() => setCopied(false), 1500);
-        });
-      }}
-      size="sm"
-      type="button"
-      variant="ghost"
-    >
-      {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
-      {copied ? t("copied") : t("copy")}
-    </Button>
+    <>
+      <Button
+        aria-label={t("copy")}
+        className="tf-touch-target h-8 gap-1 rounded-md px-2 text-xs text-muted-foreground"
+        onClick={() => void copy()}
+        size="sm"
+        type="button"
+        variant="ghost"
+      >
+        {status === "copied" ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
+        {t("copy")}
+      </Button>
+      <span className="text-xs text-muted-foreground" role="status">{status === "failed" ? t("copyFailed") : status === "copied" ? t("copied") : ""}</span>
+    </>
   );
 }
 
