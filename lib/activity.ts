@@ -131,10 +131,13 @@ function readUsage(value: unknown): Usage {
   };
 }
 /** Prefer Eve's cumulative checkpoints, then add new own-session steps only.
- * A sum of reported costs is partial if some steps have no cost. Never invent prices.
+ * If a checkpoint or any later step lacks a cost, the total is unknown.
+ * Never present a partial sum as the total or invent prices.
  */
 export function reportedUsage(events: readonly Event[]) {
   let usage: Usage = {};
+  let hasCheckpoint = false;
+  let missingCheckpointUsage = false;
   const steps = new Map<string, Usage>();
   const ids = new Set<string>();
   for (const event of events) {
@@ -142,27 +145,36 @@ export function reportedUsage(events: readonly Event[]) {
       if (ids.has(event.meta.id)) continue;
       ids.add(event.meta.id);
     }
-    if (!event.data || typeof event.data !== "object") continue;
-    const data = event.data as Record<string, unknown>;
+    const data = event.data && typeof event.data === "object" ? event.data as Record<string, unknown> : {};
     if (
       [
         "session.waiting",
         "session.failed",
         "session.completed",
         "turn.waiting",
-      ].includes(event.type) &&
-      data.usage
+      ].includes(event.type)
     ) {
-      usage = readUsage(data.usage);
-      steps.clear();
+      hasCheckpoint = true;
+      if (data.usage) {
+        usage = readUsage(data.usage);
+        missingCheckpointUsage = false;
+        steps.clear();
+      } else {
+        // Keep known tokens, but a checkpoint without usage cannot establish
+        // the cumulative cost even if earlier or later steps report prices.
+        missingCheckpointUsage = true;
+      }
     } else if (event.type === "step.completed") {
       const key = `${data.turnId}:${data.stepIndex}`;
       steps.set(key, readUsage(data.usage));
     }
   }
+  const costUnknown = missingCheckpointUsage || (hasCheckpoint && usage.costUsd === undefined) ||
+    [...steps.values()].some((step) => step.costUsd === undefined);
   for (const step of steps.values())
     for (const key of ["inputTokens", "outputTokens", "costUsd"] as const) {
       if (step[key] !== undefined) usage[key] = (usage[key] ?? 0) + step[key];
     }
+  if (costUnknown) delete usage.costUsd;
   return usage;
 }

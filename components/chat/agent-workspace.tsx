@@ -1,7 +1,7 @@
 "use client";
 
 import { DocumentExportButtons } from "./documents";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CheckIcon, CircleIcon, DownloadIcon, FileTextIcon, Loader2Icon, TriangleAlertIcon } from "lucide-react";
 import { artifactMediaType, type AgentArtifact, type AgentPlan } from "@/lib/agent-workspace";
 import { useAppSettings } from "@/components/settings/app-settings";
@@ -19,7 +19,11 @@ export function AgentPlanCard({ plan, compact = false, runState, onContinue }: {
 }) {
   const { t } = useAppSettings();
   const [continuing, setContinuing] = useState(false);
+  const continuePending = useRef(false);
   const [continueFailed, setContinueFailed] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
+  const [reviewed, setReviewed] = useState(false);
+  useEffect(() => { setReviewing(false); setReviewed(false); }, [runState, plan]);
   const completed = plan.steps.filter((step) => step.status === "completed").length;
   const body = (
     <div className="space-y-3 px-3 pb-3">
@@ -40,12 +44,19 @@ export function AgentPlanCard({ plan, compact = false, runState, onContinue }: {
       </ol>
       {onContinue && (runState === "idle" || runState === "failed" || runState === "cancelled") ? (
         <div className="space-y-2">
-          <Button disabled={continuing} onClick={async () => {
-            setContinuing(true);
-            setContinueFailed(false);
-            try { await onContinue(); } catch { setContinueFailed(true); }
-            finally { setContinuing(false); }
-          }} size="sm" type="button" variant="outline">{t(continuing ? "agentWorking" : completed === plan.steps.length ? "verifyOrContinue" : "continueTask")}</Button>
+          {!reviewing ? <Button onClick={() => { setReviewing(true); setContinueFailed(false); }} size="sm" type="button" variant="outline">{t(completed === plan.steps.length ? "verifyOrContinue" : "continueTask")}</Button> : <div className="space-y-2 rounded-md border p-2">
+            <p className="text-xs text-muted-foreground">{t("continueReviewWarning")}</p>
+            <label className="flex items-start gap-2 text-xs"><input type="checkbox" checked={reviewed} onChange={(event) => setReviewed(event.target.checked)} />{t("continueReviewed")}</label>
+            <div className="flex flex-wrap gap-2"><Button disabled={continuing || !reviewed} onClick={async () => {
+              if (continuePending.current || !reviewed) return;
+              continuePending.current = true;
+              setContinuing(true);
+              setContinueFailed(false);
+              try { await onContinue(); setReviewing(false); setReviewed(false); } catch { setContinueFailed(true); setReviewed(false); }
+              finally { continuePending.current = false; setContinuing(false); }
+            }} size="sm" type="button" variant="outline">{t(continuing ? "agentWorking" : "continueConfirm")}</Button>
+            <Button disabled={continuing} onClick={() => { setReviewing(false); setReviewed(false); }} size="sm" type="button" variant="ghost">{t("continueBack")}</Button></div>
+          </div>}
           {continueFailed ? <p className="text-xs text-destructive" role="alert">{t("continueTaskFailed")}</p> : null}
         </div>
       ) : null}

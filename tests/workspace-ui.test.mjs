@@ -655,12 +655,20 @@ test("unfinished stopped plans can be continued explicitly, but completed or act
   const plan = { title: "Write report", steps: [{ id: "write", title: "Write", status: "pending" }] };
   const rendered = render(app(h(AgentPlanCard, { plan, runState: "idle", onContinue })));
   const user = userEvent.setup();
-  await user.click(await screen.findByRole("button", { name: "Continue task" }));
+  const continueButton = await screen.findByRole("button", { name: "Continue task" });
+  fireEvent.click(continueButton);
+  assert.equal(attempts, 0);
+  assert.equal(screen.getByRole("button", { name: "Start new turn" }).disabled, true);
+  await user.click(screen.getByRole("checkbox", { name: /I reviewed the recent activity/ }));
+  const confirm = screen.getByRole("button", { name: "Start new turn" });
+  fireEvent.click(confirm); fireEvent.click(confirm);
   assert.equal(attempts, 1);
   assert.equal(screen.getByRole("button", { name: "Working" }).disabled, true);
   await React.act(async () => { rejectAttempt(new Error("offline")); try { await pending; } catch {} });
   assert.ok(screen.getByRole("alert"));
-  assert.equal(screen.getByRole("button", { name: "Continue task" }).disabled, false);
+  assert.equal(screen.getByRole("button", { name: "Start new turn" }).disabled, true);
+  await user.click(screen.getByRole("checkbox", { name: /I reviewed the recent activity/ }));
+  assert.equal(screen.getByRole("button", { name: "Start new turn" }).disabled, false);
   rendered.rerender(app(h(AgentPlanCard, { plan, runState: "working", onContinue })));
   assert.equal(screen.queryByRole("button", { name: "Continue task" }), null);
   rendered.rerender(app(h(AgentPlanCard, { plan: { ...plan, steps: [{ ...plan.steps[0], status: "completed" }] }, runState: "idle", onContinue })));
@@ -685,7 +693,7 @@ test("research messages show inert bilingual sources and download the actual exe
   const { AgentMessage } = await import("../components/chat/agent-message.tsx");
   const fetchTool = (await import("../agent/tools/web_fetch.ts")).default;
   const reportTool = (await import("../agent/tools/create_research_report.ts")).default;
-  const context = { session: { id: "ui-research", auth: { current: { principalId: userId, principalType: "user" } } } };
+  const context = { approval: { responder: { principalId: userId } }, session: { id: "ui-research", auth: { current: { principalId: userId, principalType: "user" } } } };
   globalThis.fetch = async () => new Response('<script>window.researchInjected=true</script> Sample size: 42.', { headers: { "content-type": "text/plain" } });
   const fetched = await fetchTool.execute({ url: "https://example.com/study" }, context);
   const result = await reportTool.execute({ filename: "study.md", language: "en", title: "Study", summary: "Small sample", receipts: [fetched.receipt], findings: [{ claim: "Sample size: 42", sources: [1] }], limitations: ["Single source, not independently verified"] }, context);
@@ -806,7 +814,8 @@ test("activity UI uses authoritative results, hides arguments and keeps unreport
   render(app(h(ActivityPanel, { messages: [{ id: "msg", role: "assistant", parts: [
     { type: "dynamic-tool", toolName: "bash", toolCallId: "call", state: "output-denied", input: { token: "DO-NOT-SHOW" }, approval: { id: "approval", approved: false } },
   ] }], events: [{ type: "step.completed", data: { turnId: "t", stepIndex: 0, usage: { inputTokens: 5, outputTokens: 2 } } }] })));
-  await userEvent.setup().click(await screen.findByText("Ficillada iyo isticmaalka · 1"));
+  await userEvent.setup().click(await screen.findByText("Ficillada iyo isticmaalka"));
+  assert.ok(await screen.findByText("Ficillada iyo isticmaalka · 1"));
   assert.ok(screen.getByText("La diiday")); assert.ok(screen.getByText("Lama soo sheegin"));
   assert.ok(!document.body.textContent.includes("DO-NOT-SHOW"));
 });
@@ -1284,4 +1293,342 @@ test("provisional tool output cannot produce a completed artifact card", async (
   const props = { canRespond: () => false, isStreaming: true, onInputResponses() {}, questionsFor: () => [], message: { id: "assistant-partial", role: "assistant", parts: [part] } };
   render(app(h(AgentMessage, props)));
   assert.equal(screen.queryByRole("button", { name: "Download: draft.txt" }), null);
+});
+
+test("permissions panel loads, creates and revokes the limited grant", async () => {
+  const { PermissionsPanel } = await import("../components/chat/permissions-panel.tsx"); seed(); let grants=[];
+  const calls=fakeFetch((path,options)=>{if(!path.endsWith("/permissions"))return;if(options.method==="POST")grants=[{origin:JSON.parse(options.body).origin,expiresAt:"2030-01-01T00:00:00Z",revision:"11111111-1111-4111-8111-111111111111"}];if(options.method==="DELETE")grants=[];return Response.json({grants, epoch:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"});});
+  render(app(h(PermissionsPanel,{sessionId:"chat-a",ownerProof:"proof"})));const user=userEvent.setup();await user.click(screen.getByText("Permissions for this conversation"));await screen.findByText("No active reusable permissions.");await user.type(screen.getByLabelText("HTTPS homepage"),"https://example.com");await user.click(screen.getByRole("button",{name:"Allow homepage for one hour"}));await screen.findByText(/https:\/\/example.com/);assert.ok(calls.some(c=>c.options.method==="POST"&&c.options.headers["x-tflash-owner-proof"]==="proof"));await user.click(screen.getByRole("button",{name:"Revoke"}));await screen.findByText("No active reusable permissions.");
+});
+
+test("tracked task panel distinguishes missing evidence from cancellation", async () => {
+  const {TrackedTaskPanel}=await import("../components/chat/tracked-task-panel.tsx");seed();let task={objective:"My objective",path:"out.txt",sha256:"a".repeat(64),revision:"revision",continuationBudget:0,state:"awaiting_evidence",verifiedAt:null,reason:null};fakeFetch((path,options)=>{if(!path.endsWith("/task"))return;if(options.method==="DELETE")task={...task,state:"cancelled"};return Response.json({task});});render(app(h(TrackedTaskPanel,{sessionId:"chat-a"})));const user=userEvent.setup();await user.click(screen.getByText("Track a file criterion"));await screen.findByText("Awaiting file evidence.");await user.click(screen.getByRole("button",{name:"Cancel tracking"}));await screen.findByText("Tracking cancelled.");assert.equal(screen.queryByText(/File criterion matched/),null);
+});
+
+test("collapsed activity panel does not scan streaming history until opened", async () => {
+  const { ActivityPanel } = await import("../components/chat/activity-panel.tsx");
+  seed(); fakeFetch();
+  let scans = 0;
+  const watch = (array) => new Proxy(array, { get(target, property, receiver) {
+    if (property === Symbol.iterator) scans++;
+    return Reflect.get(target, property, receiver);
+  } });
+  const messages = watch([{ role: "assistant", parts: [{ type: "dynamic-tool", toolName: "bash", toolCallId: "a", state: "output-available", output: { status: "completed", exitCode: 0 } }] }]);
+  const events = watch([]);
+  const rendered = render(app(h(ActivityPanel, { messages, events })));
+  for (let i = 0; i < 20; i++) rendered.rerender(app(h(ActivityPanel, { messages, events })));
+  assert.equal(scans, 0);
+  await userEvent.setup().click(screen.getByText("Activity & usage"));
+  await screen.findByText("Tool returned");
+  assert.ok(scans > 0);
+});
+
+test("permission submissions are single-flight and aborted on unmount", async () => {
+  const { PermissionsPanel } = await import("../components/chat/permissions-panel.tsx");
+  seed(); let release; let posts = 0; let signal;
+  fakeFetch((path, options) => {
+    if (!path.endsWith("/permissions")) return;
+    if (options.method === "GET") return Response.json({ grants: [], epoch: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" });
+    posts++; signal = options.signal;
+    return new Promise((resolve) => { release = resolve; });
+  });
+  const rendered = render(app(h(PermissionsPanel, { sessionId: "chat-a" })));
+  await userEvent.setup().click(screen.getByText("Permissions for this conversation"));
+  await screen.findByText("No active reusable permissions.");
+  const input = screen.getByLabelText("HTTPS homepage");
+  fireEvent.change(input, { target: { value: "https://example.com" } });
+  const form = input.closest("form");
+  fireEvent.submit(form); fireEvent.submit(form);
+  await waitFor(() => assert.equal(posts, 1));
+  rendered.unmount(); assert.equal(signal.aborted, true);
+  release(Response.json({ grants: [], epoch: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }));
+});
+
+test("a task revision conflict keeps the draft and requires refresh before replacement", async () => {
+  const { TrackedTaskPanel } = await import("../components/chat/tracked-task-panel.tsx");
+  seed(); let task = null;
+  fakeFetch((path, options) => {
+    if (!path.endsWith("/task")) return;
+    if (options.method === "PUT") return Response.json({ error: "conflict" }, { status: 409 });
+    return Response.json({ task });
+  });
+  render(app(h(TrackedTaskPanel, { sessionId: "chat-a" })));
+  const user = userEvent.setup();
+  await user.click(screen.getByText("Track a file criterion"));
+  await waitFor(() => assert.equal(screen.getByRole("button", { name: "Save or replace tracked task" }).disabled, false));
+  await user.type(screen.getByLabelText("Objective"), "My draft");
+  await user.type(screen.getByLabelText("Workspace-relative file path"), "result.txt");
+  await user.type(screen.getByLabelText("Expected SHA-256 (64 hexadecimal characters)"), "a".repeat(64));
+  await user.click(screen.getByRole("button", { name: "Save or replace tracked task" }));
+  await screen.findByText(/task changed elsewhere/i);
+  assert.equal(screen.getByLabelText("Objective").value, "My draft");
+  assert.equal(screen.getByRole("button", { name: "Save or replace tracked task" }).disabled, true);
+  await user.click(screen.getByRole("button", { name: "Refresh permissions" }));
+  await waitFor(() => assert.equal(screen.getByRole("button", { name: "Save or replace tracked task" }).disabled, false));
+});
+
+test("permission conflicts preserve the address and require refresh", async () => {
+  const { PermissionsPanel } = await import("../components/chat/permissions-panel.tsx");
+  seed(); let attempts = 0;
+  fakeFetch((path, options) => {
+    if (!path.endsWith("/permissions")) return;
+    if (options.method === "POST") { attempts++; return Response.json({ error: "conflict" }, { status: 409 }); }
+    return Response.json({ grants: [], epoch: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" });
+  });
+  render(app(h(PermissionsPanel, { sessionId: "chat-a" })));
+  const user = userEvent.setup();
+  await user.click(screen.getByText("Permissions for this conversation"));
+  await screen.findByText("No active reusable permissions.");
+  const input = screen.getByLabelText("HTTPS homepage");
+  await user.type(input, "https://example.com");
+  await user.click(screen.getByRole("button", { name: "Allow homepage for one hour" }));
+  await screen.findByText(/permissions changed elsewhere/i);
+  assert.equal(input.value, "https://example.com"); assert.equal(attempts, 1);
+  assert.equal(screen.getByRole("button", { name: "Allow homepage for one hour" }).disabled, true);
+  await user.click(screen.getByRole("button", { name: "Refresh permissions" }));
+  await waitFor(() => assert.equal(screen.getByRole("button", { name: "Allow homepage for one hour" }).disabled, false));
+});
+
+test("switching sessions aborts old panel loads and ignores late results", async () => {
+  const { PermissionsPanel } = await import("../components/chat/permissions-panel.tsx");
+  seed(); let release, oldSignal;
+  fakeFetch((path, options) => {
+    if (!path.endsWith("/permissions")) return;
+    if (path.includes("chat-a")) { oldSignal = options.signal; return new Promise(resolve => { release = resolve; }); }
+    return Response.json({ epoch: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", grants: [{ origin: "https://new.example", expiresAt: "2030-01-01T00:00:00Z", revision: "11111111-1111-4111-8111-111111111111" }] });
+  });
+  const rendered = render(app(h(PermissionsPanel, { sessionId: "chat-a" })));
+  await userEvent.setup().click(screen.getByText("Permissions for this conversation"));
+  await waitFor(() => assert.ok(oldSignal));
+  rendered.rerender(app(h(PermissionsPanel, { sessionId: "chat-b" })));
+  assert.equal(oldSignal.aborted, true);
+  await screen.findByText(/https:\/\/new.example/);
+  await React.act(async () => { release(Response.json({ epoch: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", grants: [{ origin: "https://old.example", expiresAt: "2030-01-01T00:00:00Z", revision: "22222222-2222-4222-8222-222222222222" }] })); });
+  assert.equal(screen.queryByText(/https:\/\/old.example/), null);
+  assert.ok(screen.getByText(/https:\/\/new.example/));
+});
+
+
+test("revoke all remains available when the permission list fails", async () => {
+  const { PermissionsPanel } = await import("../components/chat/permissions-panel.tsx"); seed(); let revocations = 0;
+  fakeFetch((path) => {
+    if (path.endsWith("/permissions/revoke-all")) { revocations++; return Response.json({revoked:true}); }
+    if (path.endsWith("/permissions")) return Response.json({error:"offline"}, {status:503});
+  });
+  render(app(h(PermissionsPanel, {sessionId:"chat-a", ownerProof:"proof"})));
+  const user = userEvent.setup(); await user.click(screen.getByText("Permissions for this conversation"));
+  await screen.findByRole("alert");
+  await user.click(screen.getByRole("button", {name:"Revoke all reusable permissions"}));
+  await screen.findByText(/Reusable permissions revoked/); assert.equal(revocations, 1);
+  assert.equal(screen.getByRole("button", {name:"Allow homepage for one hour"}).disabled, true);
+});
+
+test("emergency revocation interrupts a stuck list request and ignores its late response", async () => {
+  const { PermissionsPanel } = await import("../components/chat/permissions-panel.tsx");
+  seed(); let release, signal, allCalls = 0;
+  fakeFetch((path, options) => {
+    if (path.endsWith("/permissions/revoke-all")) { allCalls++; return Response.json({revoked:true}); }
+    if (path.endsWith("/permissions")) { signal = options.signal; return new Promise(resolve => {release = resolve;}); }
+  });
+  render(app(h(PermissionsPanel, {sessionId:"chat-a"})));
+  const user = userEvent.setup(); await user.click(screen.getByText("Permissions for this conversation"));
+  await waitFor(() => assert.ok(signal));
+  await user.click(screen.getByRole("button", {name:"Revoke all reusable permissions"}));
+  assert.equal(signal.aborted,true); assert.equal(allCalls,1);
+  await screen.findByText(/Reusable permissions revoked/);
+  await React.act(async () => { release(Response.json({epoch:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",grants:[{origin:"https://old.example",expiresAt:"2030-01-01T00:00:00Z",revision:"11111111-1111-4111-8111-111111111111"}]})); });
+  assert.equal(screen.queryByText(/https:\/\/old.example/),null);
+});
+
+test("budgeted continuation reserves and begins once, then requires a recorded human review", async () => {
+  const { TaskContinuation } = await import("../components/chat/task-continuation.tsx"); seed();
+  const calls=[]; let attempt=null, history=[], sends=0;
+  fakeFetch((path, options) => {
+    if (!path.endsWith('/task/continuations')) return;
+    if (options.method==='GET') return Response.json({attempt,history});
+    const input=JSON.parse(options.body); calls.push(input.action);
+    if(input.action==='reserve') attempt={attemptId:input.attemptId,state:'reserved',createdAt:new Date().toISOString(),reviewRevision:crypto.randomUUID(),holdNote:null,holdAt:null};
+    if(input.action==='begin') attempt={...attempt,state:'dispatching',reviewRevision:crypto.randomUUID()};
+    if(input.action==='resolve') {history=[{attemptId:attempt.attemptId,reviewedAt:new Date().toISOString(),note:input.note}]; attempt=null;}
+    return Response.json({ok:true});
+  });
+  const task={objective:'Task',path:'out.txt',sha256:'a'.repeat(64),revision:'r1',continuationBudget:2,state:'awaiting_evidence',verifiedAt:null,reason:null};
+  render(app(h(TaskContinuation,{sessionId:'chat-a',task,disabled:false,onContinue:async()=>{calls.push('send');sends++;},onRefreshTask:()=>{}})));
+  const user=userEvent.setup();
+  const authorize=await screen.findByRole('checkbox',{name:/explicitly authorize one new turn/});
+  assert.equal(screen.getByRole('button',{name:'Start one budgeted turn'}).disabled,true);
+  await user.click(authorize); await user.click(screen.getByRole('button',{name:'Start one budgeted turn'}));
+  await screen.findByText(/Dispatch began but the outcome is unknown/);
+  assert.deepEqual(calls,['reserve','begin','send']); assert.equal(sends,1);
+  assert.equal(screen.queryByRole('button',{name:'Start one budgeted turn'}),null);
+  await user.click(screen.getByRole('checkbox',{name:/I inspected the conversation/}));
+  assert.equal(screen.getByRole('button',{name:'Confirm review and release hold'}).disabled,true);
+  await user.type(screen.getByLabelText(/What did you check/),'Checked service; result remains unknown.');
+  await user.click(screen.getByRole('button',{name:'Confirm review and release hold'}));
+  await screen.findByText('Checked service; result remains unknown.');
+  assert.deepEqual(calls,['reserve','begin','send','resolve']); assert.equal(sends,1);
+});
+
+test("an uncertain begin is never sent or retried automatically and survives a component reload", async () => {
+  const { TaskContinuation } = await import("../components/chat/task-continuation.tsx"); seed();
+  let attempt=null, sends=0, begins=0;
+  fakeFetch((path, options) => {
+    if (!path.endsWith('/task/continuations')) return;
+    if(options.method==='GET') return Response.json({attempt,history:[]});
+    const input=JSON.parse(options.body);
+    if(input.action==='reserve') { attempt={attemptId:input.attemptId,state:'reserved',createdAt:new Date().toISOString(),reviewRevision:crypto.randomUUID(),holdNote:null,holdAt:null}; return Response.json({ok:true}); }
+    if(input.action==='begin') { begins++; attempt={...attempt,state:'dispatching',reviewRevision:crypto.randomUUID()}; return Response.json({error:'response lost'},{status:503}); }
+    throw new Error('unexpected mutation');
+  });
+  const task={objective:'Task',path:'out.txt',sha256:'a'.repeat(64),revision:'r1',continuationBudget:1,state:'awaiting_evidence',verifiedAt:null,reason:null};
+  const props={sessionId:'chat-a',task,disabled:false,onContinue:async()=>{sends++;},onRefreshTask:()=>{}};
+  const rendered=render(app(h(TaskContinuation,props))); const user=userEvent.setup();
+  await user.click(await screen.findByRole('checkbox',{name:/explicitly authorize/}));
+  await user.click(screen.getByRole('button',{name:'Start one budgeted turn'}));
+  await screen.findByText(/Dispatch began but the outcome is unknown/); assert.equal(sends,0); assert.equal(begins,1);
+  rendered.unmount(); render(app(h(TaskContinuation,props)));
+  await screen.findByText(/Dispatch began but the outcome is unknown/); assert.equal(sends,0); assert.equal(begins,1);
+  assert.equal(screen.queryByRole('button',{name:'Start one budgeted turn'}),null);
+});
+
+test("continuation does not send after cancellation while begin response is delayed", async () => {
+  const { TaskContinuation } = await import("../components/chat/task-continuation.tsx"); seed();
+  let attempt=null, release, begins=0, sends=0;
+  const delayed=new Promise(resolve=>{release=resolve;});
+  fakeFetch((path, options) => {
+    if(!path.endsWith('/task/continuations')) return;
+    if(options.method==='GET') return Response.json({attempt,history:[]});
+    const input=JSON.parse(options.body);
+    if(input.action==='reserve') {attempt={attemptId:input.attemptId,state:'reserved',createdAt:new Date().toISOString(),reviewRevision:crypto.randomUUID(),holdNote:null,holdAt:null};return Response.json({ok:true});}
+    if(input.action==='begin') {begins++;attempt={...attempt,state:'dispatching',reviewRevision:crypto.randomUUID()};return delayed;}
+  });
+  const task={objective:'Task',path:'out.txt',sha256:'a'.repeat(64),revision:'r1',continuationBudget:1,state:'awaiting_evidence',verifiedAt:null,reason:null};
+  const props={sessionId:'chat-a',task,disabled:false,onContinue:async()=>{sends++;},onRefreshTask:()=>{}};
+  const view=render(app(h(TaskContinuation,props))); const user=userEvent.setup();
+  await user.click(await screen.findByRole('checkbox',{name:/explicitly authorize/}));
+  await user.click(screen.getByRole('button',{name:'Start one budgeted turn'}));
+  await waitFor(()=>assert.equal(begins,1));
+  // Another part of the UI observes an active/stopped turn before the reply.
+  view.rerender(app(h(TaskContinuation,{...props,disabled:true})));
+  await React.act(async()=>release(Response.json({ok:true})));
+  await screen.findByText(/Dispatch began but the outcome is unknown/); assert.equal(sends,0);
+  assert.equal(screen.getByRole('button',{name:'Confirm review and release hold'}).disabled,true);
+  view.unmount();
+  assert.equal(sends,0); assert.equal(begins,1);
+});
+
+test("unresolved continuation can be held across reloads without releasing its web-approval fence", async () => {
+  const { TaskContinuation } = await import("../components/chat/task-continuation.tsx"); seed();
+  let attempt={attemptId:crypto.randomUUID(),state:'dispatching',createdAt:new Date().toISOString(),reviewRevision:crypto.randomUUID(),holdNote:null,holdAt:null}, history=[], sends=0;
+  const calls=[];
+  fakeFetch((path,options)=>{
+    if(!path.endsWith('/task/continuations')) return;
+    if(options.method==='GET') return Response.json({attempt,history});
+    const data=JSON.parse(options.body); calls.push(data.action);
+    assert.equal(data.expectedRevision,attempt.reviewRevision);
+    if(data.action==='hold') attempt={...attempt,holdNote:data.note,holdAt:new Date().toISOString(),reviewRevision:crypto.randomUUID()};
+    else if(data.action==='resolve') {history=[{attemptId:attempt.attemptId,reviewedAt:new Date().toISOString(),note:data.note}]; attempt=null;}
+    else throw new Error('unexpected action');
+    return Response.json({ok:true});
+  });
+  const task={objective:'Task',path:'out.txt',sha256:'a'.repeat(64),revision:'r1',continuationBudget:1,state:'awaiting_evidence',verifiedAt:null,reason:null};
+  const props={sessionId:'chat-a',task,disabled:false,onContinue:async()=>{sends++;},onRefreshTask:()=>{}};
+  const view=render(app(h(TaskContinuation,props))); const user=userEvent.setup();
+  await screen.findByText(/Dispatch began but the outcome is unknown/);
+  await user.type(screen.getByLabelText(/What did you check/),'Remote service outcome is still uncertain.');
+  await user.click(screen.getByRole('button',{name:'Save note and keep on hold'}));
+  await screen.findByText(/Last unresolved note: Remote service outcome is still uncertain/);
+  assert.equal(screen.queryByRole('button',{name:'Start one budgeted turn'}),null);
+  assert.equal(sends,0); assert.deepEqual(calls,['hold']);
+  view.unmount(); render(app(h(TaskContinuation,props)));
+  await screen.findByText(/Last unresolved note: Remote service outcome is still uncertain/);
+  assert.equal(screen.getByRole('button',{name:'Confirm review and release hold'}).disabled,true);
+  await user.type(screen.getByLabelText(/What did you check/),'Confirmed the prior turn stopped and checked the remote record.');
+  await user.click(screen.getByRole('checkbox',{name:/I inspected the conversation/}));
+  await user.click(screen.getByRole('button',{name:'Confirm review and release hold'}));
+  await screen.findByText(/Confirmed the prior turn stopped/);
+  assert.deepEqual(calls,['hold','resolve']); assert.equal(sends,0);
+});
+
+test("a late initial continuation read cannot overwrite a fresher manual refresh", async () => {
+  const { TaskContinuation } = await import("../components/chat/task-continuation.tsx"); seed();
+  let release, reads=0;
+  const old=new Promise(resolve=>{release=resolve;});
+  const attempt={attemptId:crypto.randomUUID(),state:'dispatching',createdAt:new Date().toISOString(),reviewRevision:crypto.randomUUID(),holdNote:null,holdAt:null};
+  fakeFetch((path,options)=>{
+    if(!path.endsWith('/task/continuations')) return;
+    if(options.method==='GET') return ++reads===1 ? old : Response.json({attempt,history:[]});
+    throw new Error('must not mutate');
+  });
+  const task={objective:'Task',path:'out.txt',sha256:'a'.repeat(64),revision:'r1',continuationBudget:1,state:'awaiting_evidence',verifiedAt:null,reason:null};
+  render(app(h(TaskContinuation,{sessionId:'chat-a',task,disabled:false,onContinue:async()=>{throw new Error('must not send');},onRefreshTask:()=>{}})));
+  const user=userEvent.setup();
+  await user.click(screen.getByRole('button',{name:'Refresh permissions'}));
+  await screen.findByText(/Dispatch began but the outcome is unknown/);
+  await React.act(async()=>release(Response.json({attempt:null,history:[]})));
+  assert.ok(screen.getByText(/Dispatch began but the outcome is unknown/));
+  assert.equal(screen.queryByRole('button',{name:'Start one budgeted turn'}),null);
+});
+
+test("unmount during delayed continuation begin never starts the agent", async () => {
+  const { TaskContinuation } = await import("../components/chat/task-continuation.tsx"); seed();
+  let attempt=null, release, begun=false, sends=0;
+  const blocked=new Promise(resolve=>{release=resolve;});
+  fakeFetch(async(path,options)=>{
+    if(!path.endsWith('/task/continuations')) return;
+    if(options.method==='GET') return Response.json({attempt,history:[]});
+    const input=JSON.parse(options.body);
+    if(input.action==='reserve') {attempt={attemptId:input.attemptId,state:'reserved',createdAt:new Date().toISOString(),reviewRevision:crypto.randomUUID(),holdNote:null,holdAt:null}; return Response.json({ok:true});}
+    if(input.action==='begin') {begun=true; await blocked; return Response.json({ok:true});}
+    throw new Error('unexpected action');
+  });
+  const task={objective:'Task',path:'out.txt',sha256:'a'.repeat(64),revision:'r1',continuationBudget:1,state:'awaiting_evidence',verifiedAt:null,reason:null};
+  const view=render(app(h(TaskContinuation,{sessionId:'chat-a',task,disabled:false,onContinue:async()=>{sends++;},onRefreshTask:()=>{}})));
+  const user=userEvent.setup();
+  await user.click(await screen.findByRole('checkbox',{name:/explicitly authorize one new turn/}));
+  await user.click(screen.getByRole('button',{name:'Start one budgeted turn'}));
+  await waitFor(()=>assert.equal(begun,true)); view.unmount();
+  await React.act(async()=>release()); assert.equal(sends,0);
+});
+
+test("continuation timeout stops waiting for a fetch that ignores its signal", async () => {
+  const { TaskContinuation } = await import("../components/chat/task-continuation.tsx"); seed();
+  const timeout=AbortSignal.timeout, deadline=new AbortController();
+  AbortSignal.timeout=()=>deadline.signal;
+  let release;
+  try {
+    const stalled=new Promise(resolve=>{release=resolve;});
+    fakeFetch((path)=>path.endsWith('/task/continuations') ? stalled : undefined);
+    const task={objective:'Task',path:'out.txt',sha256:'a'.repeat(64),revision:'r1',continuationBudget:1,state:'awaiting_evidence',verifiedAt:null,reason:null};
+    render(app(h(TaskContinuation,{sessionId:'chat-a',task,disabled:false,onContinue:async()=>{},onRefreshTask:()=>{}})));
+    await React.act(async()=>deadline.abort());
+    await screen.findByRole('alert');
+    await React.act(async()=>release(Response.json({attempt:null,history:[]})));
+    assert.ok(screen.getByRole('alert')); assert.equal(screen.queryByRole('button',{name:'Start one budgeted turn'}),null);
+  } finally { AbortSignal.timeout=timeout; }
+});
+
+test("changing continuation sessions clears busy and ignores an old mutation response", async () => {
+  const { TaskContinuation } = await import("../components/chat/task-continuation.tsx"); seed();
+  let release, requested=false;
+  const stalled=new Promise(resolve=>{release=resolve;});
+  const attempt={attemptId:crypto.randomUUID(),state:'dispatching',createdAt:new Date().toISOString(),reviewRevision:crypto.randomUUID(),holdNote:null,holdAt:null};
+  fakeFetch((path,options)=>{
+    if(!path.endsWith('/task/continuations')) return;
+    if(path.includes('/chat-a/') && options.method==='POST') {requested=true; return stalled;}
+    return Response.json({attempt:path.includes('/chat-a/') ? attempt : null,history:[]});
+  });
+  const task={objective:'Task',path:'out.txt',sha256:'a'.repeat(64),revision:'r1',continuationBudget:1,state:'awaiting_evidence',verifiedAt:null,reason:null};
+  const props={task,disabled:false,onContinue:async()=>{throw new Error('must not send');},onRefreshTask:()=>{}};
+  const view=render(app(h(TaskContinuation,{...props,sessionId:'chat-a'}))), user=userEvent.setup();
+  await screen.findByText(/Dispatch began but the outcome is unknown/);
+  await user.type(screen.getByLabelText(/What did you check/),'The remote effect is not yet clear.');
+  await user.click(screen.getByRole('button',{name:'Save note and keep on hold'}));
+  await waitFor(()=>assert.equal(requested,true));
+  view.rerender(app(h(TaskContinuation,{...props,sessionId:'chat-b'})));
+  await screen.findByRole('checkbox',{name:/explicitly authorize one new turn/});
+  assert.equal(screen.getByRole('button',{name:'Refresh permissions'}).disabled,false);
+  await React.act(async()=>release(Response.json({ok:true})));
+  assert.equal(screen.queryByText(/Dispatch began but the outcome is unknown/),null);
+  assert.equal(screen.getByRole('button',{name:'Refresh permissions'}).disabled,false);
 });

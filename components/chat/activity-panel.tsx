@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { EveMessage } from "eve/react";
 import { useAppSettings } from "@/components/settings/app-settings";
 import { activityRows, reportedUsage } from "@/lib/activity";
@@ -24,14 +24,17 @@ export function ActivityPanel({
   events: Parameters<typeof reportedUsage>[0];
 }) {
   const { t } = useAppSettings();
-  const rows = activityRows(messages, events);
-  const usage = reportedUsage(events);
+  const [open, setOpen] = useState(false);
+  // The stream can change many times a second. Avoid scanning its whole
+  // history until the user actually opens the activity panel.
+  const rows = useMemo(() => open ? activityRows(messages, events) : [], [open, messages, events]);
+  const usage = useMemo(() => open ? reportedUsage(events) : {}, [open, events]);
   return (
-    <details className="mx-auto w-full max-w-2xl rounded-lg border bg-card text-xs">
+    <details className="mx-auto w-full max-w-2xl rounded-lg border bg-card text-xs" onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary className="tf-touch-target min-h-11 cursor-pointer rounded-lg px-3 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
-        {t("activityUsage")} · {rows.length}
+        {t("activityUsage")}{open ? ` · ${rows.length}` : ""}
       </summary>
-      <div className="max-h-[40dvh] space-y-3 overflow-auto p-3 pt-0">
+      {open ? <div className="max-h-[40dvh] space-y-3 overflow-auto p-3 pt-0">
         <dl className="grid grid-cols-3 gap-2">
           {(
             [
@@ -87,7 +90,7 @@ export function ActivityPanel({
           <p>{t("noActivity")}</p>
         )}
         <ActivityDownload data={{ version: 1, usage, calls: rows }} />
-      </div>
+      </div> : null}
     </details>
   );
 }

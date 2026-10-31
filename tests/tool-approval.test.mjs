@@ -20,7 +20,7 @@ test("shell commands and external management tools require a fresh human approva
     assert.equal(typeof definition.approval, "function", `${name} must have an approval policy`);
     // A prior approval must not authorize a later call.
     for (const approvedTools of [[], [name]]) {
-      assert.equal(await definition.approval({ approvedTools, toolName: `${name}__action`, toolInput: {} }), "user-approval", name);
+      assert.equal(await definition.approval({ approvedTools, toolName: `${name}__action`, toolInput: {}, abortSignal: new AbortController().signal }), "user-approval", name);
     }
   }
 });

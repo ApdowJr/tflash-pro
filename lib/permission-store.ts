@@ -1,0 +1,84 @@
+import { createClient } from "@supabase/supabase-js";
+import { homepageOrigin } from "@/lib/permission-scope";
+import { waitWithAbort } from "@/lib/abortable";
+export type PermissionOwner = {
+  kind: "supabase" | "vercel";
+  id: string;
+  sessionId: string;
+};
+export type WebGrant = { origin: string; expiresAt: string; revision: string };
+/** Server-only service credential, never exposed to the browser or model. */
+export function permissionDatabase() {
+  const url =
+    process.env.TFLASH_PERMISSIONS_SUPABASE_URL ??
+    process.env.NEXT_PUBLIC_TFLASH_SUPABASE_URL ??
+    process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.TFLASH_PERMISSIONS_SERVICE_ROLE_KEY;
+  if (!url || !key) throw new Error("Permission storage is not configured.");
+  return createClient(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+function ownerArgs(owner: PermissionOwner) {
+  return { p_kind: owner.kind, p_owner: owner.id, p_session: owner.sessionId };
+}
+/** Create/read a session generation before presenting a permission snapshot. */
+export async function permissionEpoch(owner: PermissionOwner): Promise<string> {
+  const { data, error } = await permissionDatabase().rpc("tflash_ensure_permission_epoch", ownerArgs(owner));
+  if (error || typeof data !== "string") throw new Error("Permission storage unavailable.");
+  return data;
+}
+export async function revokeAllWeb(owner: PermissionOwner): Promise<void> {
+  const { data, error } = await permissionDatabase().rpc("tflash_revoke_web_grants", ownerArgs(owner));
+  if (error || data !== true) throw new Error("Permission storage unavailable.");
+}
+/** Includes expired/revoked tombstones so a stale tab cannot recreate a grant. */
+export async function listWebGrants(owner: PermissionOwner): Promise<WebGrant[]> {
+  const { data, error, count } = await permissionDatabase().from("tflash_permission_grants")
+    .select("origin,expires_at,revision", { count: "exact" })
+    .eq("owner_kind", owner.kind).eq("owner_id", owner.id).eq("session_id", owner.sessionId)
+    .order("origin").limit(1000);
+  // Never treat a truncated snapshot as permission to recreate an old grant.
+  if (error || count == null || count > 1000 || (data?.length ?? 0) !== count) throw new Error("Permission storage unavailable or grant limit exceeded.");
+  return (data ?? []).map((r) => ({ origin: r.origin as string, expiresAt: r.expires_at as string, revision: r.revision as string }));
+}
+async function webDecisionRpc(
+  name: "tflash_has_web_grant" | "tflash_issue_web_decision" | "tflash_has_web_decision" | "tflash_consume_web_decision",
+  owner: PermissionOwner, url: unknown, callId?: unknown, abortSignal?: AbortSignal,
+): Promise<boolean> {
+  const origin = homepageOrigin(url);
+  if (!origin || (name !== "tflash_has_web_grant" &&
+    (typeof callId !== "string" || !callId.length || callId.length > 200))) return false;
+  const timeout = AbortSignal.timeout(5_000);
+  const signal = abortSignal ? AbortSignal.any([abortSignal, timeout]) : timeout;
+  signal.throwIfAborted();
+  const query = permissionDatabase().rpc(name, {
+    ...ownerArgs(owner), p_origin: origin,
+    ...(name === "tflash_has_web_grant" ? {} : { p_call: callId }),
+  }).abortSignal(signal);
+  const { data, error } = await waitWithAbort(query, signal);
+  signal.throwIfAborted();
+  if (error || typeof data !== "boolean") throw new Error("Permission storage unavailable.");
+  return data;
+}
+/** Management/status lookup; never sufficient to authorize a tool call. */
+export const hasWebGrant = (owner: PermissionOwner, url: unknown, signal?: AbortSignal) =>
+  webDecisionRpc("tflash_has_web_grant", owner, url, undefined, signal);
+/** Bind the call once at the Eve approval gate. */
+export const issueWebDecision = (owner: PermissionOwner, url: unknown, callId: unknown, signal?: AbortSignal) =>
+  webDecisionRpc("tflash_issue_web_decision", owner, url, callId, signal);
+/** Recheck that same immutable decision immediately before execution. */
+export const hasWebDecision = (owner: PermissionOwner, url: unknown, callId: unknown, signal?: AbortSignal) =>
+  webDecisionRpc("tflash_has_web_decision", owner, url, callId, signal);
+/** Atomically consume before opening the socket; never replay an uncertain call. */
+export const consumeWebDecision = (owner: PermissionOwner, url: unknown, callId: unknown, signal?: AbortSignal) =>
+  webDecisionRpc("tflash_consume_web_decision", owner, url, callId, signal);
+/** Atomically compare the observed session and per-origin revisions. */
+export async function changeWebGrant(owner: PermissionOwner, origin: string, revision: string | null, epoch: string, revoke: boolean): Promise<boolean> {
+  if (homepageOrigin(origin) !== origin || (revoke && !revision)) throw new Error("Invalid scope.");
+  const { data, error } = await permissionDatabase().rpc("tflash_change_web_grant", {
+    ...ownerArgs(owner), p_origin: origin, p_revision: revision, p_epoch: epoch, p_revoke: revoke,
+  });
+  if (error || typeof data !== "boolean") throw new Error("Permission storage unavailable.");
+  return data;
+}

@@ -21,6 +21,7 @@ registerHooks({
 });
 const tool = (await import("../agent/tools/web_fetch.ts")).default;
 const ctx = {
+  approval: { responder: { principalId: "test-user" } },
   session: {
     id: "dns-test",
     auth: { current: { principalType: "user", principalId: "test-user" } },

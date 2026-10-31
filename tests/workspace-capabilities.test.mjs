@@ -74,7 +74,17 @@ test("activity excludes inputs/results/secrets, partial results aren't success a
   assert.equal(reportedUsage([step]).costUsd, undefined);
   const checkpoint = { type: "session.waiting", data: { usage: { inputTokens: 100, outputTokens: 30, costUsd: 0.01 } } };
   const next = { ...step, meta: { id: "next" }, data: { ...step.data, turnId: "t2" } };
-  assert.deepEqual(reportedUsage([step, checkpoint, next]), { inputTokens: 142, outputTokens: 37, costUsd: 0.01 });
+  assert.deepEqual(reportedUsage([step, checkpoint, next]), { inputTokens: 142, outputTokens: 37 });
+  const priced = { ...next, data: { ...next.data, usage: { ...next.data.usage, costUsd: 0.02 } } };
+  assert.equal(reportedUsage([checkpoint, priced]).costUsd, 0.03);
+  assert.equal(reportedUsage([priced, step]).costUsd, undefined);
+  assert.equal(reportedUsage([{ type: "session.waiting", data: { usage: { inputTokens: 100 } } }, priced]).costUsd, undefined);
+  assert.equal(reportedUsage([priced, { type: "step.completed", data: { turnId: "t3", stepIndex: 1 } }]).costUsd, undefined);
+  assert.equal(reportedUsage([step, checkpoint]).costUsd, 0.01);
+  assert.equal(reportedUsage([priced, { type: "session.waiting", data: {} }]).costUsd, undefined);
+  assert.equal(reportedUsage([priced, { type: "step.completed" }]).costUsd, undefined);
+  assert.equal(reportedUsage([priced, { type: "session.waiting" }]).costUsd, undefined);
+  assert.equal(reportedUsage([priced, { type: "session.waiting", data: {} }, checkpoint]).costUsd, 0.01);
   assert.equal(attachedText("https://remote.test/private"), undefined);
   assert.equal(attachedText(`data:text/plain;base64,${Buffer.from("Soomaali — tijaabo").toString("base64")}`), "Soomaali — tijaabo");
 });

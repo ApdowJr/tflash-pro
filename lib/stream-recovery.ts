@@ -13,13 +13,26 @@ export function streamReconnectDelay(error: unknown, attempt: number, random = M
   if (!transient) return undefined;
   const exponential = Math.min(500 * 2 ** attempt, 5_000);
   const base = exponential + Math.floor(Math.max(0, Math.min(0.999, random())) * exponential * 0.2);
-  const headers = value.headers && typeof value.headers === "object" ? value.headers as Record<string, unknown> : undefined;
-  const retryAfter = headers?.["retry-after"];
-  if (retryAfter === undefined) return base;
+  let retryAfter: unknown;
+  try {
+    if (value.headers && typeof value.headers === "object") {
+      const headers = value.headers as Record<string, unknown> & { get?: (name: string) => unknown };
+      if (typeof headers.get === "function") retryAfter = headers.get("retry-after");
+      else {
+        const matches = Object.entries(headers).filter(([name]) => name.toLowerCase() === "retry-after");
+        if (matches.length > 1) return undefined;
+        retryAfter = matches[0]?.[1];
+      }
+    }
+  } catch { return undefined; }
+  if (retryAfter === undefined || retryAfter === null) return base;
   if (typeof retryAfter !== "string" || !retryAfter.trim()) return undefined;
   const text = retryAfter.trim();
   const seconds = /^\d+$/.test(text) ? Number(text) : undefined;
-  const date = seconds === undefined ? Date.parse(text) : undefined;
+  // Accept the canonical IMF-fixdate form only; Date.parse also accepts
+  // numbers and malformed dates that can otherwise become an early retry.
+  const parsedDate = seconds === undefined && /^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(text) ? Date.parse(text) : NaN;
+  const date = Number.isFinite(parsedDate) && new Date(parsedDate).toUTCString() === text ? parsedDate : undefined;
   const wait = seconds !== undefined ? seconds * 1000 : date !== undefined && Number.isFinite(date) ? Math.max(0, date - now) : NaN;
   // Never silently retry earlier than instructed; leave long/invalid waits for a person.
   return Number.isFinite(wait) && wait <= MAX_RETRY_AFTER_MS ? Math.max(base, wait) : undefined;

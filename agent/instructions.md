@@ -138,3 +138,7 @@ that connection in Settings → Providers.
   characters / 2,000 lines). Do not give a text artifact a fake `.pdf` extension,
   or claim a PDF was generated before the user requests conversion. Unsupported
   PDF glyphs fail honestly; DOCX or the original text remains available.
+
+# User-defined file criterion
+
+- The user may define a tracked objective and workspace file SHA-256 criterion in the panel. Only the user sets criteria; never invent them. Use `verify_tracked_task` when asked. A match proves only a file digest at that instant, not broader task completion or future file contents. Missing evidence is not completion. Automatic cross-turn continuation is not implemented.

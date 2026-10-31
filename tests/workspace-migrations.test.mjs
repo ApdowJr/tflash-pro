@@ -38,6 +38,7 @@ test("Supabase migrations apply in order with explicit grants, CAS-compatible RL
     await db.exec(`
       create role anon nologin;
       create role authenticated nologin;
+      create role service_role nologin bypassrls;
       create schema auth;
       create table auth.users (id uuid primary key);
       create function auth.uid() returns uuid
@@ -49,8 +50,52 @@ test("Supabase migrations apply in order with explicit grants, CAS-compatible RL
     `);
 
     for (const name of migrationNames) {
+      if (name === "20261030130000_permission_grant_revisions.sql") {
+        await db.exec(`insert into public.tflash_permission_grants (owner_kind,owner_id,session_id,origin,expires_at) values ('supabase','existing','session','https://existing.example','2030-01-01T00:00:00Z')`);
+      }
       await db.exec(await readFile(new URL(name, migrationDirectory), "utf8"));
     }
+    const backfill = await db.query(`select revision::text, expires_at::text from public.tflash_permission_grants where owner_id='existing'`);
+    assert.match(backfill.rows[0].revision, /^[0-9a-f-]{36}$/);
+    assert.match(backfill.rows[0].expires_at, /^2030-01-01/);
+
+    const internal = await db.query(`select has_table_privilege('anon','public.tflash_permission_grants','select') as anon_grants, has_table_privilege('authenticated','public.tflash_permission_grants','select') as auth_grants, has_table_privilege('authenticated','public.tflash_tracked_tasks','select') as auth_tasks, has_table_privilege('service_role','public.tflash_permission_grants','select') as service_grants, has_table_privilege('service_role','public.tflash_tracked_tasks','update') as service_tasks`);
+    assert.deepEqual(internal.rows[0], {anon_grants:false,auth_grants:false,auth_tasks:false,service_grants:true,service_tasks:true});
+    const protectedTables = await db.query(`select relname,relrowsecurity from pg_class where relname in ('tflash_permission_grants','tflash_tracked_tasks') order by relname`);
+    assert.deepEqual(protectedTables.rows,[{relname:'tflash_permission_grants',relrowsecurity:true},{relname:'tflash_tracked_tasks',relrowsecurity:true}]);
+
+    const privileges2 = await db.query(`select has_table_privilege('authenticated','public.tflash_permission_epochs','select') as auth_select, has_function_privilege('authenticated','public.tflash_revoke_web_grants(text,text,text)','execute') as auth_revoke, has_function_privilege('service_role','public.tflash_revoke_web_grants(text,text,text)','execute') as service_revoke`);
+    assert.deepEqual(privileges2.rows[0], {auth_select:false,auth_revoke:false,service_revoke:true});
+    await db.exec("set role service_role");
+    const epoch = (await db.query(`select public.tflash_ensure_permission_epoch('supabase','race','session') as value`)).rows[0].value;
+    const args = ['supabase','race','session','https://one.example',null,epoch,false];
+    assert.equal((await db.query(`select public.tflash_change_web_grant($1,$2,$3,$4,$5,$6,$7) as value`, args)).rows[0].value, true);
+    assert.equal((await db.query(`select public.tflash_has_web_grant('supabase','race','session','https://one.example') as value`)).rows[0].value, true);
+    assert.equal((await db.query(`select public.tflash_revoke_web_grants('supabase','race','session') as value`)).rows[0].value, true);
+    assert.equal((await db.query(`select public.tflash_has_web_grant('supabase','race','session','https://one.example') as value`)).rows[0].value, false);
+    assert.equal((await db.query(`select public.tflash_change_web_grant($1,$2,$3,$4,$5,$6,$7) as value`, [...args.slice(0,3),'https://two.example',null,epoch,false])).rows[0].value, false);
+    const nextEpoch = (await db.query(`select public.tflash_ensure_permission_epoch('supabase','race','session') as value`)).rows[0].value;
+    assert.notEqual(nextEpoch, epoch);
+    assert.equal((await db.query(`select public.tflash_change_web_grant($1,$2,$3,$4,$5,$6,$7) as value`, [...args.slice(0,3),'https://two.example',null,nextEpoch,false])).rows[0].value, true);
+    await db.exec("reset role");
+
+    const grant = await db.query(`insert into public.tflash_permission_grants (owner_kind,owner_id,session_id,origin,expires_at) values ('supabase','owner','session','https://example.com',now() + interval '1 hour') returning revision`);
+    const grantRevision = grant.rows[0].revision;
+    const revokedRevision = "44444444-4444-4444-8444-444444444444";
+    const grantUpdate = `update public.tflash_permission_grants set revision=$1,expires_at=$2 where owner_kind='supabase' and owner_id='owner' and session_id='session' and origin='https://example.com' and revision=$3 returning revision`;
+    assert.equal((await db.query(grantUpdate, [revokedRevision, "1970-01-01T00:00:00Z", grantRevision])).rows.length, 1);
+    assert.equal((await db.query(grantUpdate, ["55555555-5555-4555-8555-555555555555", "2030-01-01T00:00:00Z", grantRevision])).rows.length, 0);
+    await assert.rejects(() => db.query(`insert into public.tflash_permission_grants (owner_kind,owner_id,session_id,origin,expires_at) values ('supabase','owner','session','https://example.com',now())`), error => error.code === "23505");
+
+    // Exercise the exact key/revision/state predicates on a real isolated SQL
+    // engine, not only the mocked PostgREST lifecycle tests.
+    const taskValues = ["supabase", "owner", "session", "11111111-1111-4111-8111-111111111111", "objective", "file", "a".repeat(64)];
+    await db.query(`insert into public.tflash_tracked_tasks (owner_kind, owner_id, session_id, revision, objective, path, sha256, continuation_budget, state) values ($1,$2,$3,$4,$5,$6,$7,0,'awaiting_evidence')`, taskValues);
+    await assert.rejects(() => db.query(`insert into public.tflash_tracked_tasks (owner_kind, owner_id, session_id, revision, objective, path, sha256, continuation_budget, state) values ($1,$2,$3,$4,$5,$6,$7,0,'awaiting_evidence')`, taskValues), error => error.code === "23505");
+    const revisionUpdate = `update public.tflash_tracked_tasks set revision=$1, state=$2 where owner_kind=$3 and owner_id=$4 and session_id=$5 and revision=$6 and state in ('awaiting_evidence','criterion_matched') returning revision`;
+    const replacementRevision = "22222222-2222-4222-8222-222222222222";
+    assert.equal((await db.query(revisionUpdate, [replacementRevision, "criterion_matched", ...taskValues.slice(0,4)])).rows.length, 1);
+    assert.equal((await db.query(revisionUpdate, ["33333333-3333-4333-8333-333333333333", "cancelled", ...taskValues.slice(0,4)])).rows.length, 0);
 
     const columns = await db.query(`
       select column_name, data_type, is_nullable
@@ -239,6 +284,7 @@ test("the chat migration enforces owner-only reads, writes and deletes with real
     await db.exec(`
       create role anon nologin;
       create role authenticated nologin;
+      create role service_role nologin bypassrls;
       create schema auth;
       create table auth.users (id uuid primary key);
       create function auth.uid() returns uuid language sql stable
