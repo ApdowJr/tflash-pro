@@ -10,57 +10,82 @@ export function bashResultState(output: unknown): string {
   return "outcome-unknown";
 }
 
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
 export function activityRows(
   messages: readonly EveMessage[],
   events: readonly Event[] = [],
 ) {
-  const calls = new Map<
-    string,
-    { id: string; tool: string; state: string; approved?: boolean; at?: string }
-  >();
-  for (const message of messages)
-    if (message.role === "assistant") {
-      for (const part of message.parts)
-        if (part.type === "dynamic-tool") {
-          let state: string = part.state === "output-available" && part.partial ? "running" : part.state;
-          // Eve's bash executor returns an ordinary tool result even when a
-          // process is still running or completed with a nonzero exit code.
-          // Neither is evidence that the command succeeded.
-          if (part.toolName === "bash" && part.state === "output-available" && !part.partial) {
-            state = bashResultState(part.output);
-          }
-          calls.set(part.toolCallId, {
-            id: part.toolCallId,
-            tool: part.toolName.slice(0, 100),
-            state,
-            ...(typeof part.approval?.approved === "boolean"
-              ? { approved: part.approval.approved }
-              : {}),
-          });
-        }
+  const calls = new Map<string, { id: string; tool: string; state: string; approved?: boolean; at?: string }>();
+  for (const message of messages) {
+    if (message.role !== "assistant") continue;
+    for (const part of message.parts) {
+      const value = part as unknown as Record<string, unknown>;
+      if (value.type !== "tool" && value.type !== "dynamic-tool") continue;
+      const id = typeof value.callId === "string" ? value.callId : typeof value.toolCallId === "string" ? value.toolCallId : undefined;
+      const tool = typeof value.name === "string" ? value.name : typeof value.toolName === "string" ? value.toolName : undefined;
+      if (!id || !tool) continue;
+
+      const stateName = typeof value.state === "string" ? value.state : "";
+      const interaction = record(value.interaction);
+      const oldApproval = record(value.approval);
+      const approved = typeof oldApproval?.approved === "boolean"
+        ? oldApproval.approved
+        : interaction?.outcome === "accepted" ? true : interaction?.outcome === "declined" ? false : undefined;
+      let state = value.type === "dynamic-tool" ? stateName :
+        stateName === "streaming" ? "input-streaming" :
+        stateName === "requested" || stateName === "running" ? "input-available" :
+        stateName === "approval" || (stateName === "blocked" && interaction?.status !== "settled") ? "approval-requested" :
+        stateName === "blocked" ? "approval-responded" :
+        stateName === "completed" ? "output-available" :
+        stateName === "rejected" ? "output-denied" :
+        stateName === "cancelled" ? "cancelled" :
+        stateName === "failed" ? "output-error" : "outcome-unknown";
+      const partial = value.partial === true || stateName === "streaming";
+      const output = value.output;
+      // A bash tool can return a process receipt; it is not proof that the
+      // command completed successfully.
+      if (tool === "bash" && state === "output-available" && !partial) state = bashResultState(output);
+      calls.set(id, {
+        id,
+        tool: tool.slice(0, 100),
+        state: state === "output-available" && partial ? "running" : state,
+        ...(typeof approved === "boolean" ? { approved } : {}),
+      });
     }
-  // A task's action.result can be only a receipt. Its unique callId stays
-  // running until task.settled, even when a reconnect replays task.started
-  // after the settlement. Never let an old start undo a terminal outcome.
+  }
+
+  const taskOwners = new Map<string, string>();
   const tasks = new Map<string, { state: string; at?: string }>();
   for (const event of events) {
-    if (!event.data || typeof event.data !== "object") continue;
-    const data = event.data as Record<string, unknown>;
-    const result = data.result && typeof data.result === "object" ? data.result as Record<string, unknown> : undefined;
-    const id = typeof data.callId === "string" ? data.callId : typeof result?.callId === "string" ? result.callId : undefined;
+    const data = record(event.data);
+    if (!data) continue;
+    const result = record(data.result);
+    const taskId = typeof data.taskId === "string" ? data.taskId : event.scope?.taskId;
+    const id = typeof data.callId === "string"
+      ? data.callId
+      : typeof result?.callId === "string"
+        ? result.callId
+        : taskId ? taskOwners.get(taskId) : undefined;
+    if (event.type === "task.started" && taskId && id) taskOwners.set(taskId, id);
     if (!id || !calls.has(id)) continue;
+
     const previous = tasks.get(id);
     const at = event.meta?.at && Number.isFinite(Date.parse(event.meta.at)) ? event.meta.at : undefined;
     const row = calls.get(id)!;
     if (at && (!row.at || Date.parse(at) > Date.parse(row.at))) row.at = at;
     if (event.type === "task.started" && !previous) {
       tasks.set(id, { state: "running", at });
-    } else if (event.type === "task.settled") {
-      const state = data.status === "completed" ? (row.tool === "bash" ? bashResultState(data.output) : "output-available") :
-        data.status === "cancelled" ? "cancelled" : data.status === "failed" ? "output-error" : undefined;
+    } else if (event.type === "task.settled" || event.type === "task.ended") {
+      const outcome = data.status ?? data.outcome;
+      const state = outcome === "completed" ? (row.tool === "bash" ? bashResultState(data.output ?? data.result) : "output-available") :
+        outcome === "cancelled" || outcome === "abandoned" ? "cancelled" :
+          outcome === "failed" ? "output-error" : undefined;
       if (!state) continue;
-      // If inconsistent duplicate terminal events are observed, cancellation
-      // and failure take precedence over success rather than inventing success.
       const priority: Record<string, number> = { running: 0, "output-available": 1, "background-unknown": 2, "outcome-unknown": 2, "output-error": 3, cancelled: 4 };
       if (!previous || priority[state] > priority[previous.state]) tasks.set(id, { state, at });
     }
@@ -77,6 +102,7 @@ type Usage = { inputTokens?: number; outputTokens?: number; costUsd?: number };
 type Event = {
   type: string;
   meta?: { id?: string; at?: string };
+  scope?: { turnId?: string; taskId?: string; callId?: string; runId?: string };
   data?: unknown;
 };
 
@@ -90,15 +116,22 @@ export function latestTurn(events: readonly Event[]): { turnId: string; outcome:
   const turns = new Map<string, { sequence?: number; index: number; outcome: TurnOutcome }>();
   const ranks = { active: 0, completed: 1, failed: 2, cancelled: 3 } as const;
   events.forEach((event, index) => {
-    const outcome = event.type === "turn.started" || event.type === "message.received" ? "active" :
-      event.type === "turn.completed" ? "completed" : event.type === "turn.cancelled" ? "cancelled" :
-        event.type === "turn.failed" ? "failed" : undefined;
-    if (!outcome || !event.data || typeof event.data !== "object") return;
-    const data = event.data as Record<string, unknown>;
-    if (typeof data.turnId !== "string") return;
-    const sequence = typeof data.sequence === "number" && Number.isSafeInteger(data.sequence) && data.sequence >= 0 ? data.sequence : undefined;
-    const previous = turns.get(data.turnId);
-    if (!previous) turns.set(data.turnId, { sequence, index, outcome });
+    const data = record(event.data);
+    const turnId = typeof data?.turnId === "string" ? data.turnId : event.scope?.turnId;
+    if (!turnId) return;
+    const outcome = event.type === "turn.started" || event.type === "turn.paused" || event.type === "message.received"
+      ? "active"
+      : event.type === "turn.completed" || (event.type === "turn.settled" && data?.outcome === "completed")
+        ? "completed"
+        : event.type === "turn.cancelled" || (event.type === "turn.settled" && data?.outcome === "cancelled")
+          ? "cancelled"
+          : event.type === "turn.failed" || (event.type === "turn.settled" && data?.outcome === "failed")
+            ? "failed"
+            : undefined;
+    if (!outcome) return;
+    const sequence = typeof data?.sequence === "number" && Number.isSafeInteger(data.sequence) && data.sequence >= 0 ? data.sequence : undefined;
+    const previous = turns.get(turnId);
+    if (!previous) turns.set(turnId, { sequence, index, outcome });
     else {
       previous.index = Math.max(previous.index, index);
       if (previous.sequence === undefined) previous.sequence = sequence;
@@ -157,6 +190,24 @@ export function reportedUsage(events: readonly Event[]) {
       checkpoint = readUsage(data.usage);
       pending.clear();
       ambiguous.clear();
+    } else if (event.type === "usage.recorded") {
+      const owner = record(data.owner);
+      const ownerId = typeof owner?.runId === "string" ? owner.runId :
+        typeof owner?.callId === "string" ? owner.callId :
+          typeof owner?.changeId === "string" ? owner.changeId : event.meta?.id;
+      if (!ownerId) {
+        keys.forEach((key) => ambiguous.add(key));
+        continue;
+      }
+      const key = JSON.stringify(["usage", ownerId]);
+      const usage = readUsage(data.usage);
+      const previous = seenSteps.get(key);
+      if (previous) {
+        for (const metric of keys) if (previous[metric] !== usage[metric]) ambiguous.add(metric);
+        continue;
+      }
+      seenSteps.set(key, usage);
+      pending.set(key, usage);
     } else if (event.type === "step.completed") {
       if (typeof data.turnId !== "string" || !data.turnId ||
           typeof data.stepIndex !== "number" || !Number.isSafeInteger(data.stepIndex) || data.stepIndex < 0) {

@@ -5,8 +5,8 @@ import { beginSyncUncertainty, clearSyncUncertainty, syncUncertaintyMarkers } fr
 import { waitWithAbort } from "@/lib/abortable";
 import { clearDispatchReview, clearReviewedDispatches, dispatchReviewKey, dispatchStorage, markDispatchReview, readDispatchReview } from "@/lib/dispatch-review";
 
-import type { UserContent } from "ai";
-import { Client } from "eve/client";
+import { Client, type MessageContent } from "eve/client";
+import { activeTurn, interactions, turn } from "eve/events";
 import { useEveAgent } from "eve/react";
 import { AlertCircleIcon, CheckIcon, CopyIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -285,29 +285,25 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   // Eve replaces the messages/events arrays when their contents change.
   // Reuse projections across unrelated UI updates without retaining a stale
   // review when a new transcript or turn event arrives.
-  const currentPlan = useMemo(() => latestAgentPlan(agent.data.messages), [agent.data.messages]);
-  const isBusy = agent.status === "submitted" || agent.status === "streaming";
+  const currentPlan = useMemo(() => latestAgentPlan(agent.messages), [agent.messages]);
+  const isBusy = agent.status === "busy";
   const isResuming = agent.status === "resuming";
-  const isEmpty = agent.data.messages.length === 0;
-  const lastMessage = agent.data.messages.at(-1);
+  const isEmpty = agent.messages.length === 0;
+  const lastMessage = agent.messages.at(-1);
   const isPendingAssistantShell =
-    lastMessage?.role === "assistant" &&
-    lastMessage.parts.every((part) => part.type === "step-start");
+    lastMessage?.role === "assistant" && lastMessage.parts.length === 0;
   const showPendingThinking =
-    isBusy &&
-    (agent.status === "submitted" || lastMessage?.role !== "assistant" || isPendingAssistantShell);
+    isBusy && (lastMessage?.role !== "assistant" || isPendingAssistantShell);
   const latest = useMemo(() => latestTurn(agent.events), [agent.events]);
   const turnFailure = isBusy || isResuming || latest?.outcome !== "failed" ? undefined : getLatestTurnFailure(agent.events, latest.turnId);
   const errorMessage = cancellationError ?? agent.error?.message ?? turnFailure;
   const turnOutcome = latest?.outcome;
   const target = cancellationTarget.current;
-  const targetStatus = target ? agent.data.turns?.[target]?.status : undefined;
-  const targetSettled = !!target && (targetStatus === "completed" || targetStatus === "failed" || targetStatus === "cancelled" ||
-    agent.events.some((event) => ["turn.completed", "turn.failed", "turn.cancelled"].includes(event.type) &&
-      event.data && typeof event.data === "object" && "turnId" in event.data && event.data.turnId === target));
+  const activeTurnObservation = activeTurn(agent.view);
+  const targetSettled = !!target && turn(agent.view, target)?.status === "settled";
   const stopUnconfirmed = cancellationPending.current && !!target && !targetSettled;
-  const disconnected = (agent.status === "error" && !(target && targetSettled && latest?.turnId === target) && (turnOutcome === "active" ||
-    (turnOutcome === undefined && !!agent.data.activeTurnId && agent.data.turns?.[agent.data.activeTurnId]?.status === "active"))) ||
+  const disconnected = (agent.error !== undefined && !(target && targetSettled && latest?.turnId === target) &&
+    (turnOutcome === "active" || activeTurnObservation !== undefined)) ||
     (stopUnconfirmed && !isBusy && !isResuming);
   const resumeRef = useRef(agent.resume);
   resumeRef.current = agent.resume;
@@ -326,14 +322,14 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
     void waitWithAbort(Promise.resolve().then(() => resumeRef.current()), signal).catch((error: unknown) => {
       if (signal.aborted) {
         // A healthy attached stream can keep resume() pending for the turn.
-        if (statusRef.current !== "streaming") setCancellationError(translationRef.current("reconnectWaitExpired"));
+        if (statusRef.current !== "busy") setCancellationError(translationRef.current("reconnectWaitExpired"));
       } else setCancellationError(toErrorMessage(error));
     }).finally(() => {
       reconnectPending.current = false;
       setReconnecting(false);
     });
   }, []);
-  const projectedActiveTurn = agent.data.activeTurnId && agent.data.turns?.[agent.data.activeTurnId]?.status === "active" ? agent.data.activeTurnId : undefined;
+  const projectedActiveTurn = activeTurnObservation?.turnId;
   const recoveryTurn = projectedActiveTurn ?? (turnOutcome === "active" ? latest?.turnId : stopUnconfirmed ? target : undefined);
   const recoveryTurnRef = useRef<string | undefined>(undefined);
   useEffect(() => {
@@ -351,10 +347,11 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
     const timer = window.setTimeout(() => reconnect(true), retryDelay);
     return () => window.clearTimeout(timer);
   }, [retryDelay, reconnecting, cancelling, reconnect]);
-  const openInputs = Object.values(agent.data.inputs).filter((input) => input.status === "open");
+  const sessionInteractions = interactions(agent.view);
+  const openInputs = sessionInteractions.filter((input) => input.status === "open" && input.request.kind !== "sign-in");
   const openInputsRef = useRef(openInputs); openInputsRef.current = openInputs;
-  const hasOpenInput = openInputs.length > 0;
-  const runState: AgentRunState = isResuming ? "resuming" : disconnected ? "interrupted" : errorMessage || agent.status === "error" ? "failed" :
+  const hasOpenInput = sessionInteractions.some((input) => input.status === "open");
+  const runState: AgentRunState = isResuming ? "resuming" : disconnected ? "interrupted" : errorMessage || agent.error ? "failed" :
     hasOpenInput ? "waiting" : isBusy ? "working" : turnOutcome === "cancelled" ? "cancelled" : "idle";
 
   useEffect(() => {
@@ -375,7 +372,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   const inputBlocked = inputRecovery.preparing || inputRecovery.warnings.length > 0 || (hasOpenInput && inputRecovery.unavailable);
   const openInputRef = useRef(hasOpenInput); openInputRef.current = hasOpenInput;
   const title = settings.chats.find((chat) => chat.id === activeSessionId)?.title ??
-    sessionTitle(agent.data.messages, t("newChat"));
+    sessionTitle(agent.messages, t("newChat"));
 
   // A browser tab in a long session should say which conversation it holds.
   // The title is user/provider text, so it is truncated and never interpreted.
@@ -388,18 +385,19 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
     const short = title.length > 72 ? `${title.slice(0, 71)}…` : title;
     document.title = `${short} · ${DEFAULT_AGENT_NAME}`;
   }, [isEmpty, showConversationLayout, title]);
-  const baseCanRespond = (requestId: string) =>
-    !isResuming && !disconnected && !cancelling && agent.data.inputs[requestId]?.status === "open";
+  const baseCanRespond = (interactionId: string) =>
+    !isResuming && !disconnected && !cancelling &&
+    openInputsRef.current.some((input) => input.interactionId === interactionId);
   const baseCanRespondRef = useRef(baseCanRespond); baseCanRespondRef.current = baseCanRespond;
   const responseIdentity = JSON.stringify([account.kind, account.id, activeSessionId ?? null, ownerProof ?? null]);
   const responseIdentityRef = useRef(responseIdentity); responseIdentityRef.current = responseIdentity;
   const responseMounted = useRef(true);
   useEffect(() => { responseMounted.current = true; return () => { responseMounted.current = false; }; }, []);
-  const canRespond = (requestId: string) => baseCanRespond(requestId) && !inputBlocked && !stopBlocked && !sharedBlocked;
+  const canRespond = (interactionId: string) => baseCanRespond(interactionId) && !inputBlocked && !stopBlocked && !sharedBlocked;
   const respondToInput = async (responses: readonly AgentInputResponse[]) => {
-    if (responses.length !== 1 || !baseCanRespondRef.current(responses[0].requestId) || inputRecovery.checkBlocked(true) || stopRecovery.checkBlocked() || sharedDispatch.checkBlocked()) throw new Error("Response requires review.");
-    const marker = await inputRecovery.begin(responses[0].requestId);
-    if (!responseMounted.current || responseIdentityRef.current !== responseIdentity || !baseCanRespondRef.current(responses[0].requestId) || stopRecovery.checkBlocked() || sharedDispatch.checkBlocked()) {
+    if (responses.length !== 1 || !baseCanRespondRef.current(responses[0].interactionId) || inputRecovery.checkBlocked(true) || stopRecovery.checkBlocked() || sharedDispatch.checkBlocked()) throw new Error("Response requires review.");
+    const marker = await inputRecovery.begin(responses[0].interactionId);
+    if (!responseMounted.current || responseIdentityRef.current !== responseIdentity || !baseCanRespondRef.current(responses[0].interactionId) || stopRecovery.checkBlocked() || sharedDispatch.checkBlocked()) {
       inputRecovery.discard(marker); throw new Error("Conversation changed.");
     }
     setCancellationError(undefined);
@@ -407,7 +405,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
       // respond() may keep the stream open for the turn's lifetime. Bound our
       // UI wait without aborting that stream or claiming the remote call stopped.
       const pending = Promise.resolve().then(() => {
-        if (!responseMounted.current || responseIdentityRef.current !== responseIdentity || !baseCanRespondRef.current(responses[0].requestId) || !inputRecovery.isPresent(marker) || stopRecovery.checkBlocked() || sharedDispatch.checkBlocked()) {
+        if (!responseMounted.current || responseIdentityRef.current !== responseIdentity || !baseCanRespondRef.current(responses[0].interactionId) || !inputRecovery.isPresent(marker) || stopRecovery.checkBlocked() || sharedDispatch.checkBlocked()) {
           inputRecovery.discard(marker); throw new Error("Conversation changed.");
         }
         return agent.respond(responses, { clientContext: turnContext() + workspaceContext(workspace.snapshot(), sessionId) + agentModeContext(agentMode, settings.language) });
@@ -415,11 +413,6 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
       await waitWithAbort(pending, AbortSignal.timeout(30_000));
     } finally { inputRecovery.done(marker); }
   };
-  const questionsFor = (callId: string) =>
-    Object.values(agent.data.inputs).filter(
-      (input) => input.request.kind === "question" && input.request.action.callId === callId,
-    );
-
   const startNewChat = () => window.location.assign("/");
 
   const openSettings = useCallback(
@@ -468,7 +461,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
       `# ${DEFAULT_AGENT_NAME}`,
       `> ${new Date().toISOString()} · ${selection.providerId}/${selection.modelId}`,
       "",
-      ...agent.data.messages.map((message) => {
+      ...agent.messages.map((message) => {
         const content = message.parts
           .filter((part) => part.type === "text")
           .map((part) => (part.type === "text" ? part.text : ""))
@@ -502,7 +495,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
     const operation = Promise.resolve().then(() => {
       if (!responseMounted.current || responseIdentityRef.current !== responseIdentity) throw new Error("Conversation changed.");
       return turnId && activeSessionId
-      ? new Client({ host: WEB_CHAT_AGENT ? `/eve/${WEB_CHAT_AGENT}` : "", redirect: "error", headers: () => ({ ...eveHeaders(), [HEADER_MAX_STEPS]: String(workspace.snapshot().maxSteps), ...(ownerProof ? { [OWNER_PROOF_HEADER]: ownerProof } : {}) }) })
+      ? new Client({ baseUrl: new URL(`/eve/${WEB_CHAT_AGENT}/v1`, window.location.origin).toString(), redirect: "error", headers: () => ({ ...eveHeaders(), [HEADER_MAX_STEPS]: String(workspace.snapshot().maxSteps), ...(ownerProof ? { [OWNER_PROOF_HEADER]: ownerProof } : {}) }) })
           .sessions.attach(activeSessionId).cancel({ turnId, signal })
       : agent.cancel();
     });
@@ -537,7 +530,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
       const sendEpoch = cancellationEpoch.current;
       const uncertaintyEpoch = dispatchUncertaintyEpoch.current;
       setCancellationError(undefined);
-      const firstUser = agent.data.messages.find((entry) => entry.role === "user");
+      const firstUser = agent.messages.find((entry) => entry.role === "user");
       const firstText = firstUser?.parts.find((part) => part.type === "text");
       const title = settings.chats.find((chat) => chat.id === sessionId)?.title ||
         (firstText?.type === "text" ? firstText.text : "") || text || t("attach");
@@ -560,7 +553,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
         ...(isBusy ? { turnPolicy: "steer" as const } : {}),
       };
 
-      const parts: UserContent = [];
+      const parts: Array<{ type: "text"; text: string } | { type: "file"; data: string; filename?: string; mediaType: string }> = [];
       if (text.length > 0) {
         parts.push({ text, type: "text" });
       }
@@ -580,11 +573,11 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
 
       // A plain message can answer Eve's first open prompt, including an
       // approval. Protect that path with the same breadcrumb as respond().
-      const firstOpen = openInputsRef.current[0]?.request.requestId;
+      const firstOpen = openInputsRef.current[0]?.interactionId;
       if (firstOpen) {
         inputMarker = await inputRecovery.begin(firstOpen, "message");
         if (!responseMounted.current || responseIdentityRef.current !== responseIdentity || cancellationPending.current || sendEpoch !== cancellationEpoch.current ||
-            openInputsRef.current[0]?.request.requestId !== firstOpen || !inputRecovery.isPresent(inputMarker) || stopRecovery.checkBlocked() || sharedDispatch.checkBlocked()) throw new Error("Input response requires review.");
+            openInputsRef.current[0]?.interactionId !== firstOpen || !inputRecovery.isPresent(inputMarker) || stopRecovery.checkBlocked() || sharedDispatch.checkBlocked()) throw new Error("Input response requires review.");
       } else if (inputRecovery.checkBlocked(false) || stopRecovery.checkBlocked() || sharedDispatch.checkBlocked()) throw new Error("Input response requires review.");
 
       // The marker is a recovery hint for this tab, not an Eve idempotency key.
@@ -700,7 +693,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
             }
           >
             <ConversationContent className="tflash-scroll mx-auto w-full max-w-2xl gap-6 px-4 pt-4 pb-8 sm:gap-7 sm:px-6">
-              {agent.data.messages.map((message, index) =>
+              {agent.messages.map((message, index) =>
                 showPendingThinking &&
                 isPendingAssistantShell &&
                 message.id === lastMessage.id ? null : (
@@ -708,22 +701,21 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
                     <AgentMessage
                       canRespond={canRespond}
                       isStreaming={
-                        agent.status === "streaming" && index === agent.data.messages.length - 1
+                        agent.status === "busy" && index === agent.messages.length - 1
                       }
                       message={message}
                       onInputResponses={respondToInput}
-                      questionsFor={questionsFor}
                     />
                     {message.role === "assistant" ? (
                       <MessageActions
-                        isStreaming={isBusy && index === agent.data.messages.length - 1}
+                        isStreaming={isBusy && index === agent.messages.length - 1}
                         message={message}
                       />
                     ) : null}
                   </div>
                 ),
               )}
-              {isResuming && agent.data.messages.length === 0 ? <ResumingState /> : null}
+              {isResuming && agent.messages.length === 0 ? <ResumingState /> : null}
               {showPendingThinking ? <PendingThinking /> : null}
               {errorMessage ? <ErrorMessage message={errorMessage} /> : null}
             </ConversationContent>
@@ -893,18 +885,14 @@ function getLatestTurnFailure(
 ): string | undefined {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index];
-
-    if (event.type === "turn.failed" && event.data.turnId === turnId) {
-      if (event.data.code === "MODEL_CALL_FAILED") {
-        const detail = (event.data as { details?: { message?: string } }).details?.message;
-        return detail
-          ? `The model call failed — check Settings → Providers. ${detail}`
-          : "The model call failed. Check your provider connection in Settings → Providers.";
-      }
-      return event.data.message;
+    if (event.type !== "turn.settled" || event.data.turnId !== turnId || event.data.outcome !== "failed") continue;
+    const error = event.data.error;
+    if (error?.code.toLowerCase().includes("model")) {
+      return error.message
+        ? `The model call failed — check Settings → Providers. ${error.message}`
+        : "The model call failed. Check your provider connection in Settings → Providers.";
     }
-
+    return error?.message ?? "The turn failed.";
   }
-
   return undefined;
 }

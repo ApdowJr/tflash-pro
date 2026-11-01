@@ -28,7 +28,7 @@ export default defineTool({
       signal.throwIfAborted();
       const read = sandbox.readFile({
         path: `/workspace/${task.path}`,
-        abortSignal: signal,
+        signal,
       });
       let stream;
       try {

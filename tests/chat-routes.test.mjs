@@ -105,8 +105,8 @@ test("creation, history, isolation, forgery checks, and best-effort deletion", a
       assert.equal(headers.has("x-untrusted-header"), false);
       return Response.json({ sessionId: "session-a" });
     }
-    assert.equal(String(url), "https://eve.example.test/eve/v1/session/session-a/reset");
-    // Revocation must continue even if Eve cannot reset an active workflow.
+    assert.equal(String(url), "https://eve.example.test/eve/v1/session/session-a/end");
+    // Revocation must continue even if Eve cannot end an active workflow.
     throw new Error("simulated Eve outage");
   };
   try {
@@ -328,7 +328,7 @@ test("Vercel account mutations use owner proof and commit tombstone before reset
     assert.deepEqual(JSON.parse(calls[0].options.body),{p_owner:'alice',p_session:'s1',p_title:'stale',p_activity:true});
     const deleted=await chatRoute.DELETE(jsonRequest('https://app.test/api/chats/s1','DELETE',{[OWNER_PROOF_HEADER]:proof}),detail('s1'));
     assert.equal(deleted.status,200);
-    assert.match(calls[1].url,/tflash_vercel_history_remove/); assert.match(calls[2].url,/reset/);
+    assert.match(calls[1].url,/tflash_vercel_history_remove/); assert.match(calls[2].url,/\/end/);
   } finally { delete process.env.TFLASH_VERCEL_HISTORY_SYNC; delete process.env.TFLASH_VERCEL_HISTORY_SUPABASE_URL; delete process.env.TFLASH_VERCEL_HISTORY_SERVICE_ROLE_KEY; }
 });
 

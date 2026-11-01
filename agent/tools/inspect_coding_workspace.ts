@@ -16,7 +16,7 @@ export default defineTool({
     const env = { GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" };
     const run = async (command: string) => {
       signal.throwIfAborted();
-      const result = await waitWithAbort(sandbox.run({ command, env, abortSignal: signal }), signal);
+      const result = await waitWithAbort(sandbox.run({ command, env, signal }), signal);
       signal.throwIfAborted();
       return result;
     };

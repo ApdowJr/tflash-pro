@@ -66,7 +66,7 @@ test("Eve checks ownership for turns, controls, streams and forged index rows", 
     ["/eve/v1/session/session-a", "POST"],
     ["/eve/v1/session/session-a/stream", "GET"],
     ["/eve/v1/session/session-a/cancel", "POST"],
-    ["/eve/v1/session/session-a/reset", "POST"],
+    ["/eve/v1/session/session-a/end", "POST"],
     ["/eve/v1/session/session-a/subagent/example/stream", "GET"],
   ]) {
     assert.equal((await authorize(eveRequest(path, method))).principalId, "user-a");
@@ -87,7 +87,7 @@ test("Vercel users need their own signed proof for every session route", async (
   const create = new Request("https://app.example.test/eve/v1/session", { method: "POST", headers: { cookie: "vercel=alice", [CREATE_PROOF_HEADER]: signChatCreation("vercel:alice") } });
   assert.equal((await authorizeVercel(create)).principalId, "vercel:alice");
   const proof = signChatOwnership("vercel:alice", "v-session");
-  for (const [path, method] of [["/eve/v1/session/v-session", "POST"], ["/eve/v1/session/v-session/stream", "GET"], ["/eve/v1/session/v-session/reset", "POST"]]) {
+  for (const [path, method] of [["/eve/v1/session/v-session", "POST"], ["/eve/v1/session/v-session/stream", "GET"], ["/eve/v1/session/v-session/end", "POST"]]) {
     assert.equal((await authorizeVercel(request(path, method, "alice", proof))).principalId, "vercel:alice");
     await assert.rejects(authorizeVercel(request(path, method, "alice")), /Conversation not available/);
     await assert.rejects(authorizeVercel(request(path, method, "bob", proof)), /Conversation not available/);
