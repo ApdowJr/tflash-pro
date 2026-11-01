@@ -24,7 +24,7 @@ export default defineTool({
       for await (const snapshot of execution) result = snapshot;
     } else result = execution;
     if (!result) throw new Error("The page returned no result.");
-    // Eve 0.83.2 reports non-2xx responses using this prefix, not a status field.
+    // Eve's web_fetch reports non-2xx responses using this prefix, not a status field.
     // Fail closed rather than certifying an HTTP error page as retrieved evidence.
     if (/^Request failed with status code:/i.test(result.content)) throw new Error("The page could not be read. Do not cite it as evidence.");
     const contentType = result.contentType.split(";")[0].trim().toLowerCase();
