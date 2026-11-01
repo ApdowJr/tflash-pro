@@ -314,8 +314,26 @@ test("read aloud explains missing browser support and playback failures", async 
 
 test("the real chat offers playback for completed assistant text only, not tool or reasoning data", async () => {
   const { registerHooks } = await import("node:module");
+  const mockModule = (source) => ({ url: `data:text/javascript,${encodeURIComponent(source)}`, shortCircuit: true });
+  const eveReactMock = `export function useEveAgent() {
+    const agent = globalThis.__voiceAgent;
+    const data = agent?.data ?? {};
+    return {
+      ...agent,
+      messages: agent?.messages ?? data.messages ?? [],
+      events: agent?.events ?? [],
+      view: agent?.view ?? {},
+      error: agent?.error,
+      status: ["streaming", "submitted", "busy"].includes(agent?.status) ? "busy" : agent?.status === "resuming" ? "resuming" : "idle",
+    };
+  }`;
+  const eveEventsMock = `export function activeTurn() { return undefined; }
+    export function turn() { return undefined; }
+    export function interactions() { return []; }
+    export function signInEnding(outcome) { return outcome === "accepted" ? "connected" : "failed"; }`;
   const hook = registerHooks({ resolve(specifier, context, nextResolve) {
-    if (specifier === "eve/react") return { url: "data:text/javascript,export function useEveAgent() { return globalThis.__voiceAgent; }", shortCircuit: true };
+    if (specifier === "eve/react") return mockModule(eveReactMock);
+    if (specifier === "eve/events") return mockModule(eveEventsMock);
     return nextResolve(specifier, context);
   } });
   try {
@@ -347,7 +365,7 @@ test("the real chat offers playback for completed assistant text only, not tool 
     assert.equal(output.spoken[0].text, "First public answer.\n\nSecond public answer.");
     assert.doesNotMatch(output.spoken[0].text, /User question|Private reasoning|tool input|tool output/);
     await user.click(within(dialog).getByRole("button", { name: "Done" }));
-    globalThis.__voiceAgent.status = "streaming";
+    globalThis.__voiceAgent.status = "busy";
     view.rerender(app(h(AgentChat, { account, sessionId: "owned-chat" })));
     assert.equal(screen.getByRole("button", { name: "Listen" }).disabled, true);
   } finally {

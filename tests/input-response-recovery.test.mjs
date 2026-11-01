@@ -15,9 +15,12 @@ test('human-input markers are scoped, secret-minimized and conservative when cor
   clearInputResponse(key);assert.equal(inputResponseWarnings('vercel','alice','session-a').length,0);
 });
 
-test('only terminal input.resolved records identify a settled response',()=>{
+test('only terminal v1 or legacy resolution events identify settled interactions',()=>{
   const events=[{type:'client.input.responded',data:{resolutions:[{requestId:'a',kind:'tool-approval',outcome:'approved'}]}},
     {type:'input.resolved',data:{resolutions:[{requestId:'b',kind:'tool-approval',outcome:'approved'},{requestId:'c',kind:'question',outcome:'answered'},
-      {requestId:'d',kind:'question',outcome:'pending'},null,{requestId:'e',kind:'unknown',outcome:'approved'}]}}];
-  assert.deepEqual(resolvedInputRequestIds(events),['b','c']);
+      {requestId:'d',kind:'question',outcome:'pending'},null,{requestId:'e',kind:'unknown',outcome:'approved'}]}},
+    {type:'response.submitted',data:{interactionId:'unsettled'}},
+    {type:'interaction.settled',data:{interactionId:'v1-accepted',outcome:'accepted'}},
+    {type:'interaction.settled',data:{interactionId:'',outcome:'accepted'}}];
+  assert.deepEqual(resolvedInputRequestIds(events),['v1-accepted','b','c']);
 });

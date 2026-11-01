@@ -5,7 +5,8 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-const chunk = "dist/src/compiled/_chunks/client/core-CspsxXR-.js";
+const packageVersion = "1.0.0-rc.1";
+const chunk = "dist/src/compiled/_chunks/client/core-BsvaaMUJ.js";
 const helper = "dist/src/compiled/_chunks/client/tflash-zod-size-guard.js";
 const commit = "a0ebf970f2d752e5f58527cd2942ff48be4f46bd";
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -20,7 +21,7 @@ export async function verifyBackport(root, bundledVersion) {
   const pkg = JSON.parse(await readFile(new URL("package.json", root), "utf8"));
   if (
     pkg.name !== "eve" ||
-    pkg.version !== "0.83.2" ||
+    pkg.version !== packageVersion ||
     record.package !== pkg.name ||
     record.version !== pkg.version ||
     bundledVersion !== "4.5.4" ||

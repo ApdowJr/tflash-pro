@@ -1,4 +1,5 @@
 import { waitWithAbort } from "@/lib/abortable";
+import { transcriptOf } from "eve/client";
 import type { ChatSearchResult, SearchSnippet } from "./chat-search";
 
 // A single event can contain tool output or attachments, so bound both the
@@ -49,7 +50,7 @@ class TextSearch {
     this.matcher = new RegExp(query.normalize("NFC").replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "iu");
   }
 
-  private match(text: string) { return snippetFor(text, this.matcher); }
+  match(text: string) { return snippetFor(text, this.matcher); }
   private validateAppend(data: Record<string, unknown>, deltaName: string, snapshotName: string, offsetName: string) {
     const delta = data[deltaName];
     if (typeof delta !== "string") throw new Error("Invalid append delta");
@@ -176,7 +177,7 @@ export async function searchEveStream(response: Response, query: string, signal:
   // client's supported stream versions when upgrading the dependency.
   const version = response.headers.get("x-eve-stream-version");
   const rawTail = response.headers.get("x-eve-stream-tail-index");
-  if (!response.ok || !response.body || !version || !["21", "22", "23", "24", "25", "26"].includes(version) ||
+  if (!response.ok || !response.body || !version || !["21", "22", "23", "24", "25", "26", "27"].includes(version) ||
       !rawTail || !/^-?\d+$/.test(rawTail)) return unavailable;
   const tail = Number(rawTail);
   if (!Number.isSafeInteger(tail) || tail < -1 || signal.aborted) return unavailable;
@@ -192,6 +193,7 @@ export async function searchEveStream(response: Response, query: string, signal:
   let bytes = 0;
   let events = 0;
   let done = false;
+  const protocolV1Events: unknown[] = [];
   const abort = () => { void reader.cancel().catch(() => {}); };
   signal.addEventListener("abort", abort, { once: true });
   const consume = (line: string): ChatSearchResult | undefined => {
@@ -199,6 +201,27 @@ export async function searchEveStream(response: Response, query: string, signal:
     if (line.length > MAX_SEARCH_LINE_CHARS) throw new Error("Event too large");
     const event: unknown = JSON.parse(line);
     events++;
+    if (version === "27") {
+      const envelope = object(event);
+      if (!envelope || typeof envelope.type !== "string" || !object(envelope.data)) throw new Error("Invalid protocol v1 event");
+      protocolV1Events.push(envelope);
+      if (events !== tail + 1) {
+        if (events >= MAX_SEARCH_EVENTS) throw new Error("Too many events");
+        return;
+      }
+      const transcript = transcriptOf(protocolV1Events as Parameters<typeof transcriptOf>[0]);
+      for (const message of transcript.messages) {
+        const snippet = search.match(message.text);
+        if (snippet) return { status: "matched", snippet };
+      }
+      const lastTurnEvent = [...protocolV1Events].reverse().find((item) => {
+        const value = object(item);
+        return value && typeof value.type === "string" && value.type.startsWith("turn.");
+      });
+      const lastTurnType = object(lastTurnEvent)?.type;
+      return lastTurnType === "turn.started" || lastTurnType === "turn.paused" ? unavailable : { status: "no-match" };
+    }
+
     const snippet = search.event(event);
     if (snippet) return { status: "matched", snippet };
     if (events === tail + 1) {

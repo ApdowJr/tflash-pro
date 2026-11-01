@@ -1,4 +1,4 @@
-// Maintainer-only generator for `pnpm patch eve@0.83.2 --edit-dir <dir>`.
+// Maintainer-only generator for `pnpm patch eve@1.0.0-rc.1 --edit-dir <dir>`.
 // Not a postinstall hook. pnpm applies the committed, lockfile-hashed patch.
 import { readFile, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -9,16 +9,17 @@ if (!directory)
   throw new Error(
     "Usage: node scripts/build-eve-zod-backport.mjs <pnpm-patch-directory>",
   );
-const chunk = "dist/src/compiled/_chunks/client/core-CspsxXR-.js";
+const packageVersion = "1.0.0-rc.1";
+const chunk = "dist/src/compiled/_chunks/client/core-BsvaaMUJ.js";
 const helper = "dist/src/compiled/_chunks/client/tflash-zod-size-guard.js";
 const hash = (text) => createHash("sha256").update(text).digest("hex");
 const originalSha256 =
-  "bba2c7e5f1207a8540a34191d17304caea14d886e12acad706899437aa495acd";
+  "4940e7a6ca0ca3a2e6295a76fe9d742f8c94ceb27f9356f471711196520c7145";
 const pkg = JSON.parse(
   await readFile(path.join(directory, "package.json"), "utf8"),
 );
 let source = await readFile(path.join(directory, chunk), "utf8");
-if (pkg.version !== "0.83.2" || hash(source) !== originalSha256)
+if (pkg.version !== packageVersion || hash(source) !== originalSha256)
   throw new Error(
     "Unexpected Eve version/chunk: review the new runtime rather than guessing patch offsets",
   );
@@ -66,7 +67,7 @@ await writeFile(
   JSON.stringify(
     {
       package: "eve",
-      version: "0.83.2",
+      version: packageVersion,
       bundledZod: "4.5.4",
       advisory: "GHSA-mrhx-c7xc-m3w5",
       upstreamCommit: "a0ebf970f2d752e5f58527cd2942ff48be4f46bd",

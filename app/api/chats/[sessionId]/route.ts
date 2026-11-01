@@ -66,7 +66,7 @@ export async function DELETE(request: Request, context: RouteContext): Promise<R
   if (!owned) return Response.json({ error: "Conversation not available." }, { status: 404 });
   if (mismatchedAccount(request, owned)) return Response.json({ error: "Account changed. Reload to continue." }, { status: 409 });
 
-  // Persist a non-revivable index tombstone before attempting Eve reset.
+  // Persist a non-revivable index tombstone before attempting to end the Eve session.
   if (owned.kind === "vercel" && vercelHistoryEnabled()) {
     try { if (!await removeVercelHistory(owned.userId, sessionId)) return Response.json({ error: "Conversation not available." }, { status: 404 }); }
     catch { return Response.json({ error: "Could not remove conversation." }, { status: 503 }); }
@@ -76,7 +76,7 @@ export async function DELETE(request: Request, context: RouteContext): Promise<R
     const headers = internalEveHeaders({ cookie: request.headers.get("cookie") ?? "", "content-type": "application/json" });
     if (owned.kind === "vercel") headers.set(OWNER_PROOF_HEADER, owned.proof);
     const signal = AbortSignal.timeout(5000);
-    const pending = fetch(`${internalOrigin()}/eve/v1/session/${encodeURIComponent(sessionId)}/reset`, {
+    const pending = fetch(`${internalOrigin()}/eve/v1/session/${encodeURIComponent(sessionId)}/end`, {
       method: "POST", headers, body: "{}", cache: "no-store", redirect: "error", signal,
     });
     void pending.then((response) => {
