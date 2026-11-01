@@ -5,11 +5,15 @@ import { useEffect, useState } from "react";
 import {
   ArrowRightIcon,
   BadgeCheckIcon,
+  BotIcon,
   CheckIcon,
+  Code2Icon,
+  FileSearchIcon,
   FileTextIcon,
   KeyRoundIcon,
   LanguagesIcon,
   ListChecksIcon,
+  MessageSquareTextIcon,
   MicIcon,
   PlugZapIcon,
   SearchCheckIcon,
@@ -46,7 +50,13 @@ const FEATURE_ICONS = [
   SearchCheckIcon,
   FileTextIcon,
   MicIcon,
-  ShieldCheckIcon, // Market agent out-approve feature
+  ShieldCheckIcon,
+] as const;
+
+const MODE_TILES = [
+  { title: "Chat", icon: MessageSquareTextIcon, body: "Quick answers, context, and follow-up conversations" },
+  { title: "Research", icon: FileSearchIcon, body: "Traceable sources, citations, and executive summaries" },
+  { title: "Coder", icon: Code2Icon, body: "Repo work, patches, tests, and build verification" },
 ] as const;
 
 const copy = {
@@ -59,125 +69,125 @@ const copy = {
     signIn: "Sign in",
     getStarted: "Get started",
     language: "Language",
-    badge: "Somali + English · one calm workspace",
-    heroA: "An AI workspace that",
-    heroEm: "speaks your language.",
+    badge: "AI workspace · chat, research & coder",
+    heroA: "Built for",
+    heroEm: "the actual work.",
     heroBody:
-      "Talk to the model you choose, connect the tools you already use, and turn the answer into something you can send. Tflash keeps Somali and English side by side, without the clutter.",
-    ctaPrimary: "Start a conversation",
+      "A premium workspace for real assistant work: chat with a model, research with receipts, or code with verification. Tflash keeps work focused, bilingual, and production-ready.",
+    ctaPrimary: "Launch workspace",
     ctaSecondary: "See how it works",
-    trust: "Email or Vercel sign-in · Your provider keys stay yours",
-    previewTitle: "New chat",
-    previewStatus: "Approval required",
-    previewUser: "Start a 7-day plan about learning Python, and make the result beautiful.",
-    previewReply: "Good. Here is the plan, organized in 7 days:",
-    previewSteps: ["Day 1–2 · Syntax and variables", "Day 3–4 · Functions and files", "Day 5–7 · One small project"],
-    previewTool: "web_fetch · docs.python.org",
-    previewToolNote: "Reading a public page · waiting for your approval",
+    trust: "Made for desktop, tablet and mobile · approval-first workflows",
+    previewTitle: "New task",
+    previewStatus: "Needs approval",
+    previewUser: "Find the likely bug in the payments flow and patch it with a targeted test.",
+    previewReply: "I’ll inspect the failure path, isolate the root cause, and prepare a reviewed fix.",
+    previewSteps: ["Trace the failing request", "Patch the root cause", "Run a focused verification"],
+    previewTool: "coder · app/payments",
+    previewToolNote: "Reviewing a local change · waiting for your approval",
     previewApprove: "Approve",
     previewReview: "Review",
     overviewKicker: "Why Tflash",
-    overviewTitle: "Less switching. More finishing.",
+    overviewTitle: "One calm place for the whole loop.",
     overviewBody:
-      "A single, quiet surface for the whole loop: ask, research, approve, produce, and keep the result. No tab hopping between a chat box, a notes app and a document converter.",
-    featureKicker: "Features",
-    featureTitle: "Built for real work, in two languages.",
+      "Turn a rough idea into a finished result without bouncing between tabs, documents, and tool UIs. Tflash connects research, code, approvals, and delivery in a single work surface.",
+    featureKicker: "Work modes",
+    featureTitle: "Chat, research, or code without changing tools.",
     features: [
       {
-        title: "Somali and English, together",
-        body: "The interface is bilingual and the assistant replies in the language you write in. Technical terms stay intact.",
+        title: "Bilingual agent chat",
+        body: "The interface and assistant stay fluent in Somali and English, while the work itself stays focused and readable.",
       },
       {
-        title: "Every model, one selector",
-        body: "Switch between 15 providers — from AI Gateway and OpenRouter to local Ollama — per conversation, per turn.",
+        title: "Model switching, made simple",
+        body: "Move between providers and models without breaking the flow. Pick the right model for the right task in seconds.",
       },
       {
-        title: "Your tools, connected",
-        body: "Ten approval-gated connections: GitHub, Notion, Linear, Supabase, Neon, Sentry, Stripe, Vercel, PostHog and Resend.",
+        title: "Approval-first execution",
+        body: "Every external action is gated, inspectable, and explicit. You approve the action before it happens.",
       },
       {
-        title: "Research with receipts",
-        body: "Read public pages, keep the requested URL, retrieval time and excerpt, then cite what actually supports the claim.",
+        title: "Research with traceable sources",
+        body: "Capture where a claim came from, what was read, and which evidence actually supports it.",
       },
       {
-        title: "Answers become files",
-        body: "Preview and download Markdown, text, CSV or JSON — or convert plain text to a real PDF or DOCX on demand.",
+        title: "Deliverables you can use",
+        body: "Turn the result into Markdown, CSV, JSON, DOCX, or PDF without leaving the workspace.",
       },
       {
-        title: "Your voice, your pace",
-        body: "Dictate in Somali or English, and have a finished reply read back. Speech support depends on your browser and device.",
+        title: "Voice and conversation flow",
+        body: "Use speech input and listen back to responses when you need to move faster on mobile or in the field.",
       },
       {
-        title: "Market agent out-approve workflow",
-        body: "Deploy agent tasks to the market with an out-approve flag. If the out-approve state is active, the system requests the user’s explicit permission before sending the job.",
+        title: "Built for real agent work",
+        body: "The product is designed around live task flow: ask, inspect, approve, complete, and export with confidence.",
       },
     ],
     stepsKicker: "How it works",
     stepsTitle: "Three moves, from question to result.",
     steps: [
       {
-        title: "Pick a model",
-        body: "Use the project gateway or add your own key in Settings → Providers. Test the connection before you rely on it.",
+        title: "Choose the right mode",
+        body: "Switch between Chat, Research, and Coder to match the task. Each mode keeps the right context and controls visible.",
       },
       {
-        title: "Ask, attach, or delegate",
-        body: "Start a chat, import a PDF or DOCX, or ask for research. Shell commands and connected tools wait for your approval.",
+        title: "Work with context and approvals",
+        body: "Add files, ask for research, or run repo tasks. Every external step waits for your clear approval.",
       },
       {
-        title: "Take the work with you",
-        body: "Download the document or report, copy the answer, or come back later — your conversations stay tied to your account.",
+        title: "Finish and export",
+        body: "Keep the result in the conversation, download the output, or continue building the next step without friction.",
       },
     ],
     providersKicker: "Providers",
     providersTitle: "Bring the model you already trust.",
     providersBody:
-      "One interface, many backends. Operator keys are optional; browser keys are encrypted on the server and bound to your signed-in account.",
+      "One premium interface, many backends. Use your own keys or the gateway you already rely on, without changing your workflow.",
     providersNote: "Ollama, LM Studio and custom endpoints are reached from the server and must be explicitly allowed in production.",
     securityKicker: "Privacy",
-    securityTitle: "Approval is the default, not a setting.",
+    securityTitle: "Approval is the default, not a feature.",
     securityPoints: [
       {
-        title: "Keys never come back in the clear",
-        body: "Browser-supplied provider keys are encrypted with AES-GCM and represented by an opaque, account-bound token that expires after seven days.",
+        title: "Keys stay account-scoped",
+        body: "Provider credentials are protected and associated to the signed-in account, so they do not leak across users or sessions.",
       },
       {
-        title: "Every external call asks first",
-        body: "Shell commands and each MCP tool call require a fresh in-chat approval. A plan never grants permission to execute a step.",
+        title: "External calls ask first",
+        body: "Shell commands, tool calls, and research steps require a fresh approval before they run.",
       },
       {
         title: "Conversations stay owned",
-        body: "Supabase history uses row-level security and signed ownership proofs. There are no public share links to leak by accident.",
+        body: "Workspace history remains tied to account ownership. The product keeps the work in your control.",
       },
     ],
     securityNote:
-      "No product can promise perfect security. The README documents the real limits, including storage retention, known costs and the boundaries of approvals.",
+      "No product can promise perfect security. The project documents real limits, known costs, and approval boundaries clearly in its own README and operational guidance.",
     faqKicker: "Questions",
     faqTitle: "The short answers.",
     faqs: [
       {
         q: "Is Tflash free?",
-        a: "Using your own provider key means you pay that provider directly. Tflash itself has no subscription; some gateway models are free, and availability is set by the provider.",
+        a: "Using your own provider key means you pay that provider directly. Tflash itself has no subscription; some gateway models are free and availability depends on the provider.",
       },
       {
         q: "Do I need an account?",
-        a: "Yes — sign in with email and password, or continue with Vercel. The two are separate accounts, even with the same email, and do not share history.",
+        a: "Yes — sign in with email and password, or continue with Vercel. The two are separate accounts and do not share history.",
       },
       {
         q: "Does Somali work everywhere?",
-        a: "The interface and the assistant do. Speech recognition and installed voices are provided by your browser or device, and Somali support is not guaranteed — review dictated text before sending.",
+        a: "The interface and assistant do. Speech recognition and available voices are provided by your browser or device, and support may vary by platform.",
       },
       {
         q: "Where does my data live?",
-        a: "Transcripts live in Eve workflow storage; chat titles and index data live in Supabase, or in this browser for Vercel sign-in. Projects and notes are browser-local. Never store secrets in notes.",
+        a: "Transcripts live in the workflow storage; index data and chat metadata live in Supabase or browser storage depending on your selected sign-in method.",
       },
       {
         q: "Can I use it offline?",
-        a: "No. Tflash needs a connection to reach your chosen provider. The offline banner only reports the browser's link state, not server health.",
+        a: "No. Tflash needs a network connection to reach the selected provider and work with connected tools.",
       },
     ],
     finalKicker: "Ready when you are",
-    finalTitle: "Start with a question. Finish with a file.",
-    finalBody: "Sign in, choose a model, and see what a calmer workspace feels like.",
+    finalTitle: "Start with a question. Finish with a result.",
+    finalBody: "Sign in, choose a model, and experience a calmer AI workspace built for real work.",
     finalCta: "Open Tflash",
     footerTagline: "A bilingual AI workspace for chat, research and finished work.",
     footerSignIn: "Sign in",
@@ -196,125 +206,125 @@ const copy = {
     signIn: "Soo gal",
     getStarted: "Bilow",
     language: "Luqadda",
-    badge: "Soomaali + English · hal goob oo deggan",
-    heroA: "Goob AI ah oo ku hadasha",
-    heroEm: "luqaddaada.",
+    badge: "Goob AI · wada hadal, baaritaan & coder",
+    heroA: "Loo dhisay",
+    heroEm: "shaqulka dhabta ah.",
     heroBody:
-      "La hadal modelka aad dooratay, ku xir qalabka aad horey u isticmaashay, oo jawaabta u beddel wax aad dirto. Tflash waxay Soomaali iyo English isla haysaa, iyada oo aan buuq la'aan.",
-    ctaPrimary: "Bilow wada hadal",
+      "Goob AI oo ku hadasha, baarista leh caddayn, ama koodhka leh verification. Tflash waxay haystaa shaqada mid deggan, laba luqadood, oo diyaar u ah wax soo saar.",
+    ctaPrimary: "Fur workspace",
     ctaSecondary: "Arag sida loo shaqeeyo",
-    trust: "Email ama Vercel · Furahaaga bixiyaha adigaa iska leh",
-    previewTitle: "Wada hadal cusub",
+    trust: "Loogu talagalay desktop, tablet iyo mobile · hawlo fasax leh",
+    previewTitle: "Hawl cusub",
     previewStatus: "Fasax ayaa loo baahan yahay",
-    previewUser: "Bilow qorshe 7 maalin ah oo ku saabsan barashada Python, oo ku samee quruxda natiijada.",
-    previewReply: "Waa hagaag. Waa kan qorshaha, oo la habeeyay 7 maalin:",
-    previewSteps: ["Maalin 1–2 · Syntax iyo variables", "Maalin 3–4 · Functions iyo files", "Maalin 5–7 · Hal mashruuc yar"],
-    previewTool: "web_fetch · docs.python.org",
-    previewToolNote: "Bog dadweyne ayaa la akhrinayaa · fasaxaaga ayaa la sugayaa",
+    previewUser: "Hel xanuunka suurtagalka ah ee socodka lacag-bixinta oo samee hagaajinta leh testga tooska ah.",
+    previewReply: "Waxaan baari doonaa waddo xannibaadda, waxaan go’aamin doonaa sababta asaasiga ah, oo waxaan diyaarin doonaa hagaajinta la eegay.",
+    previewSteps: ["Raadi xannibaadda", "Hagaajinta asaasiga ah", "Run verification la doortay"],
+    previewTool: "coder · app/payments",
+    previewToolNote: "Wuxuu eegayaa isbeddel maxalli ah · fasax ayuu sugayaa",
     previewApprove: "Oggolow",
-    previewReview: "Eeg",
+    previewReview: "Baadh",
     overviewKicker: "Maxaa Tflash",
-    overviewTitle: "Yaraan beddelaad. Badnaan dhammaystir.",
+    overviewTitle: "Hal goob oo deggan oo shaqada oo dhan qabta.",
     overviewBody:
-      "Hal goob oo deggan oo hawsha oo dhan qabta: weydii, baadh, oggolow, soo saar, oo natiijada hayso. Ma u baahnid inaad u dhex wareegto chat, notes iyo converter.",
-    featureKicker: "Astaamaha",
-    featureTitle: "Loo dhisay shaqo dhab ah, laba luqadood.",
+      "U beddel fikradda bilow ilaa natiijo dhammeystiran iyada oo aan tabyo, dukumentiyo, iyo software UIyo aan u wareegin. Tflash waxay ku xidhaataa baarista, koodhka, ogolaanshaha, iyo soo saarista hal dusha sare.",
+    featureKicker: "Hababka shaqada",
+    featureTitle: "Wada hadal, baaritaan, ama koodh, aan beddelin qalabka.",
     features: [
       {
-        title: "Soomaali iyo English, wada jir",
-        body: "Interface-ka waa laba luqadood, kaaliyuhuna wuxuu ku jawaabaa luqadda aad ku qorto. Erayada farsamada waxay ahaanayaan sidoodii.",
+        title: "Wada hadal agent laba luqadood",
+        body: "Interface-ka iyo kaaliyuhu waxay ku hadlaan Soomaali iyo English, iyadoo shaqadu ay weli feker leh tahay.",
       },
       {
-        title: "Model kasta, hal selector",
-        body: "U dhex beddel 15 bixiye — AI Gateway iyo OpenRouter ilaa Ollama maxalli ah — wada hadal kasta, mar kasta.",
+        title: "Bedel modelka si fudud",
+        body: "U beddel bixiyayaasha iyo moodulada adigoon socodka jabin. Doorashada saxda ah waxay qaadan kartaa daqiiqado.",
       },
       {
-        title: "Qalabkaaga, oo xiran",
-        body: "Toban xiriir oo fasax lagu xakameeyo: GitHub, Notion, Linear, Supabase, Neon, Sentry, Stripe, Vercel, PostHog iyo Resend.",
+        title: "Fulinta fasaxka hore",
+        body: "Hawl kasta oo dibadda ah ayaa la xakameeyaa, la baaro, oo si cad loogu ogolaado kahor fulinta.",
       },
       {
         title: "Baaritaan leh caddayn",
-        body: "Akhri boggaga dadweynaha, hayso URL-ka la codsaday, waqtiga iyo qaybta, kadibna tirso waxa dhabta ah oo sheegtay taageeraya.",
+        body: "Hayso meesha xukunka ka yimid, maxaa la akhriyay, iyo caddaynta runta ah ee taageertay.",
       },
       {
-        title: "Jawaabtu waxay noqotaa fayl",
-        body: "Eeg oo soo deg Markdown, text, CSV ama JSON — ama u beddel qoraal cad PDF ama DOCX dhab ah markaad codsato.",
+        title: "Natiijooyin aad isticmaali karto",
+        body: "U beddel natiijada Markdown, CSV, JSON, DOCX, ama PDF adigoon workspace-ka ka baxin.",
       },
       {
-        title: "Codkaaga, xawaarahaaga",
-        body: "Ku qor Soomaali ama English, oo jawaabta dhammaystiran dib u maqal. Taageerada codku waxay ku xiran tahay browser-kaaga iyo qalabkaaga.",
+        title: "Cod iyo socodka wada hadalka",
+        body: "Isticmaal gudbinta codka oo dib u maqal jawaabaha markaad wax si degdeg ah u qabanayso mobile ama meelaha dabaaldegga.",
       },
       {
-        title: "Shaqo-dirka agent ee suuqa (out-approve)",
-        body: "Dir shaqooyinka agent-ka suuqa iyada oo leh astaanta out-approve. Haddii astaanta out-approve ay jirto, nidaamku wuxuu codsadaa ogolaanshaha isticmaalaha kahor inta aan shaqada la dirin.",
+        title: "Loo sameeyay shaqo dhab ah",
+        body: "Productku wuxuu ku dhisan yahay socodka hawsha tooska ah: waydii, baadh, oggolow, dhammeystir, oo keen natiijo amni leh.",
       },
     ],
     stepsKicker: "Sida loo shaqeeyo",
-    stepsTitle: "Saddex tallaabo, su'aal ilaa natiijo.",
+    stepsTitle: "Saddex tallaabo, su’aal ilaa natiijo.",
     steps: [
       {
-        title: "Dooro model",
-        body: "Isticmaal gateway-ga mashruuca ama ku dar furahaaga gaar ah Settings → Providers. Tijaabi xiriirka ka hor intaadan ku tiirsanaan.",
+        title: "Dooro habka saxda ah",
+        body: "U beddel Chat, Research, iyo Coder si aad u waafajiso shaqada. Habka kasta wuxuu hayaa macnaha iyo qalabka saxda ah.",
       },
       {
-        title: "Weydii, lifaaq, ama u dir",
-        body: "Bilow wada hadal, soo geli PDF ama DOCX, ama codso baaritaan. Amarrada shell iyo qalabka xiran waxay sugayaan fasaxaaga.",
+        title: "Shaqayso macno iyo ogolaansho",
+        body: "Ku dar faylasha, waydii baaritaan, ama socodka repo. Tallaabo kasta oo dibadda ah waxay sugaysaa ogolaanshahaaga.",
       },
       {
-        title: "Qaado shaqada",
-        body: "Soo deg dukumentiga ama warbixinta, koobi jawaabta, ama dib u soo noqo — wada hadalladaadu waxay ku xiran yihiin akoonkaaga.",
+        title: "Dhammeystir oo soo saar",
+        body: "Haysashada natiijada wada hadalka, soo dejinta natiijada, ama sii wad dardargelinta tallaabada xigta adoon dhib lahayn.",
       },
     ],
     providersKicker: "Bixiyeyaasha",
     providersTitle: "Keen modelka aad horey u aaminsanayd.",
     providersBody:
-      "Hal interface, bixiyeyaal badan. Furaha operator-ka waa ikhtiyaar; furaha browser-ka waxaa lagu sireeyaa server-ka oo lagu xiraa akoonkaaga.",
-    providersNote: "Ollama, LM Studio iyo endpoints gaar ah waxaa laga gaaraa server-ka, producton-ka waa in si cad loo oggolaadaa.",
+      "Hal interface oo heer sare ah, backends badan. Isticmaal furahaaga ama gateway-ga aad horey u isticmaashid, adoon beddelin socodkaaga.",
+    providersNote: "Ollama, LM Studio iyo endpoints gaar ah waxaa laga gaaraa server-ka, oo waa in si cad loo oggolaadaa production-ka.",
     securityKicker: "Asturnaanta",
-    securityTitle: "Fasax waa default-ka, ma aha setting.",
+    securityTitle: "Fasaxgu waa default-ka, ma aha muuqaal.",
     securityPoints: [
       {
-        title: "Furahaaga lama soo celiyo si cad",
-        body: "Furaha bixiyaha ee browser-ku bixiyo waxaa lagu sireeyaa AES-GCM, waxaana matala token qarsoon oo akoonkaaga ku xiran oo toddoba maalmood kadib dhacaya.",
+        title: "Furayaasha waxay ku xiran yihiin akoonka",
+        body: "Furaha bixiye waxaa la ilaaliyaa oo lala xiriiraa akoonka soo galay, si aanay u daadin isticmaaleyaasha ama sessions-ka.",
       },
       {
-        title: "Wicitaan kasta oo dibadda ah waxay marka hore weydiistaa",
-        body: "Amarrada shell iyo qalab kasta oo MCP waxay u baahan yihiin fasax cusub oo ku jira wada hadalka. Qorshe waligeed ma bixiso ogolaansho fulin.",
+        title: "Wicitaannada dibadda waxay weydiistaan fasax",
+        body: "Amarrada shell, qalabka, iyo baarista waxay u baahan yihiin fasax cusub kahor inta aan la fulin.",
       },
       {
         title: "Wada hadallada leh milkiilayaal",
-        body: "Taariikhda Supabase waxay isticmaashaa row-level security iyo caddayn milkiile la saxeexay. Ma jiraan xiriir dadweyne oo si lama filaan ah u bixin kara.",
+        body: "Taarikhda hawsha waxay la socotaa milkiileka akoonka. Badeecadku wuxuu hayaa shaqada gacantaada.",
       },
     ],
     securityNote:
-      "Ma jiro badeecad dammaanad qaadi karta amni qumman. README-gu wuxuu qeexayaa xaddidaadaha dhabta ah, oo ay ku jiraan kaydinta, kharashka la yaqaan iyo xadka fasaxyada.",
-    faqKicker: "Su'aalo",
+      "Ma jiraa badeecad dammaanad qaadi karta amni qumman. Mashruucu wuxuu qeexayaa xaddidaadaha, kharashka la yaqaan, iyo xadka ogolaanshaha si cad README-ka iyo hagidda shaqada.",
+    faqKicker: "Su’aalo",
     faqTitle: "Jawaabaha gaaban.",
     faqs: [
       {
         q: "Tflash ma bilaash baa?",
-        a: "Haddii aad isticmaasho furahaaga bixiyaha, waxaad si toos ah u bixisaa bixiyahaas. Tflash laftiisu ma leh subscription; modelada gateway qaar waa bilaash, helitaankana waxaa go'aamiya bixiyaha.",
+        a: "Haddii aad isticmaasho furahaaga bixiyaha, waxaad si toos ah u bixisaa bixiyahaas. Tflash laftiisu ma laha subscription; qaar ka mid ah modelada gateway waa bilaash, helitaankuna wuxuu ku xiran yahay bixiyaha.",
       },
       {
         q: "Akoon ma u baahanahay?",
-        a: "Haa — ku soo gal email iyo furaha, ama ku sii wad Vercel. Labaduba waa akoono gooni ah, xitaa isla email, waxbana ma wadaagaan taariikh.",
+        a: "Haa — ku soo gal email iyo furaha, ama ku sii wad Vercel. Labaduba waa akoonto gooni ah oo ma wadaagaan taariikhda.",
       },
       {
-        q: "Soomaali ma ka shaqaysaa meel kasta?",
-        a: "Interface-ka iyo kaaliyuhu haa. Aqoonsiga codka iyo codadka la rakibay waxaa bixiya browser-kaaga ama qalabkaaga, taageerada Soomaaligana lama dammaanad qaadin — dib u eeg qoraalka codka ka hor intaadan dirin.",
+        q: "Soomaali ma shaqaysaa meel kasta?",
+        a: "Interface-ka iyo kaaliyuhu haa. Aqoonsiga codka iyo codadka la rakibay waxay ku xiran yihiin browser-kaaga ama qalabkaaga, taageeraduna way kala duwanaan kartaa.",
       },
       {
         q: "Xogtaydu xaggee ku nooshahay?",
-        a: "Transcript-yada waxay ku jiraan Eve workflow storage; cinwaannada iyo index-ka waxay ku jiraan Supabase, ama browser-kan haddii Vercel lagu soo galo. Projects iyo notes waa browser-local. Waligaa ha kaydiyo sir ku jira notes.",
+        a: "Transcripts-yada waxay ku jiraan workflow storage; index data iyo metadata-yada wada hadalka waxay ku jiraan Supabase ama browser storage iyadoo ku xiran habka soo galkaaga.",
       },
       {
         q: "Offline ma isticmaali karaa?",
-        a: "Maya. Tflash waxay u baahan tahay xiriir si ay u gaarto bixiyaha aad dooratay. Banner-ka offline wuxuu sheegayaa xaaladda browser-ka oo keliya, ma aha caafimaadka server-ka.",
+        a: "Maya. Tflash wuxuu u baahan yahay xidhiidh internet ah si uu u gaadho bixiyaha la doortay iyo qalabka xiran.",
       },
     ],
     finalKicker: "Diyaar markaad tahay",
-    finalTitle: "Ku bilow su'aal. Ku dhammee fayl.",
-    finalBody: "Soo gal, dooro model, oo arag sida goob deggan ay u tahay.",
+    finalTitle: "Ku bilow su’aal. Ku dhammee natiijo.",
+    finalBody: "Soo gal, dooro model, oo la soco goob AI deggan oo loo dhisay shaqo dhabta ah.",
     finalCta: "Fur Tflash",
     footerTagline: "Goob AI laba luqadood ah oo loogu talagalay wada hadal, baaritaan iyo shaqo dhammaystiran.",
     footerSignIn: "Soo gal",
@@ -333,7 +343,7 @@ function useLanguage() {
     try {
       if (localStorage.getItem("tflash:language") === "so") setLanguage("so");
     } catch {
-      /* Storage may be disabled. */
+      // Storage may be disabled.
     }
   }, []);
 
@@ -346,7 +356,7 @@ function useLanguage() {
     try {
       localStorage.setItem("tflash:language", next);
     } catch {
-      /* private browsing */
+      // private browsing
     }
   };
 
@@ -409,6 +419,20 @@ function ChatPreview({ text }: { readonly text: (typeof copy)[Language] }) {
   );
 }
 
+function ModeGrid() {
+  return (
+    <div className="lp-mode-grid" aria-label="Product modes">
+      {MODE_TILES.map(({ title, icon: Icon, body }) => (
+        <article className="lp-mode-card" key={title}>
+          <span className="lp-mode-icon"><Icon size={18} /></span>
+          <h3>{title}</h3>
+          <p>{body}</p>
+        </article>
+      ))}
+    </div>
+  );
+}
+
 export function LandingPage() {
   const { language, changeLanguage, text } = useLanguage();
 
@@ -450,6 +474,7 @@ export function LandingPage() {
               <a className="lp-button lp-button-ghost" href="#how">{text.ctaSecondary}</a>
             </div>
             <p className="lp-trust"><CheckIcon size={13} />{text.trust}</p>
+            <ModeGrid />
           </div>
           <ChatPreview text={text} />
         </div>
@@ -593,3 +618,4 @@ export function LandingPage() {
     </main>
   );
 }
+
