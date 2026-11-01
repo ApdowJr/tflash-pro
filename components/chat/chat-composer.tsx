@@ -68,6 +68,25 @@ export function ChatComposer({
         </div>
       ))}
       <AgentModePicker mode={mode} onChange={onModeChange} language={settings.language} disabled={isBusy || isResuming} />
+      {mode === "coder" ? (
+        <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-border/70 px-3 py-2 text-xs text-muted-foreground">
+          <span>{settings.language === "so" ? "Qeex repo-ga iyo branch-ka; hubi gelitaanka iyo tijaabooyinka ka hor inta aan la sheegin in hawshu dhammaatay." : "Specify the repository and branch; verify access and tests before treating work as complete."}</span>
+          <button
+            className="min-h-11 shrink-0 rounded-md font-medium text-foreground underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => {
+              const template = settings.language === "so"
+                ? "Hawl coding:\nRepository: [magaca ama URL]\nBranch: [branch-ka]\nWaxa la qabanayo: [sharax hawsha]\nTijaabooyinka ama shuruudaha: [ikhtiyaari]"
+                : "Coding task:\nRepository: [name or URL]\nBranch: [branch]\nTask: [describe the work]\nTests or acceptance criteria: [optional]";
+              const current = controller.textInput.value;
+              controller.textInput.setInput(current ? `${current}\n\n${template}` : template);
+            }}
+            type="button"
+          >
+            {settings.language === "so" ? "Ku dar qaab hawleed" : "Insert task template"}
+          </button>
+          <span>{settings.language === "so" ? "Tani ma xirayso repo mana dirayso fariin. Ha gelin sir ama token." : "Does not connect a repository or send a message. Do not include secrets or tokens."}</span>
+        </div>
+      ) : null}
       <PromptInput
         className="tflash-composer overflow-visible rounded-[1.35rem] border-border/80 bg-card dark:bg-card focus-within:border-foreground/25! focus-within:ring-1 focus-within:ring-foreground/10"
         onSubmit={onSubmit}

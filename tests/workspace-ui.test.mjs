@@ -3085,3 +3085,35 @@ test('an oversized continuation ledger is not treated as empty',async()=>{
   render(app(h(TaskContinuation,{sessionId:'chat-a',task,disabled:false,onContinue:async()=>{},onRefreshTask(){}})));
   await screen.findByRole('alert');assert.equal(screen.queryByRole('button',{name:'Start one budgeted turn'}),null);
 });
+
+test("Coder task template preserves the draft and does not submit or connect", async () => {
+  seed();
+  const calls = fakeFetch();
+  let sends = 0;
+  render(app(h(TooltipProvider, null, h(PromptInputProvider, null,
+    h(ChatComposer, { mode: "coder", isBusy: false, isResuming: false, onCancel() {}, onSubmit: async () => { sends++; } }),
+  ))));
+  const user = userEvent.setup();
+  const textarea = screen.getByPlaceholderText("Ask Tflash anything…");
+  await user.type(textarea, "Existing draft");
+  await user.click(screen.getByRole("button", { name: "Insert task template" }));
+  assert.match(textarea.value, /^Existing draft\n\nCoding task:/);
+  assert.match(textarea.value, /Repository: \[name or URL\]/);
+  assert.match(textarea.value, /Branch: \[branch\]/);
+  assert.equal(sends, 0);
+  assert.equal(calls.filter(({ path }) => path.includes("github")).length, 0);
+  assert.ok(screen.getByText(/Does not connect a repository or send a message/));
+});
+
+test("Coder template is localized and absent in Chat mode", async () => {
+  seed({ language: "so" });
+  fakeFetch();
+  const tree = (mode) => app(h(TooltipProvider, null, h(PromptInputProvider, null,
+    h(ChatComposer, { mode, isBusy: false, isResuming: false, onCancel() {}, onSubmit: async () => {} }),
+  )));
+  const view = render(tree("chat"));
+  assert.equal(screen.queryByRole("button", { name: "Ku dar qaab hawleed" }), null);
+  view.rerender(tree("coder"));
+  await userEvent.setup().click(screen.getByRole("button", { name: "Ku dar qaab hawleed" }));
+  assert.match(screen.getByRole("textbox", { name: /farriin/i }).value, /Hawl coding:/);
+});
