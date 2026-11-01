@@ -1,7 +1,6 @@
 # Agent reliability: confirmed behavior and remaining work
 
-This assessment applies to the Eve 0.83.2 implementation in this repository;
-local tests use mocks and do not establish live provider or sandbox behavior.
+Historical snapshot: this assessment describes the Eve 0.83.2 implementation before the v1 migration. It has not been revalidated against Eve 1.0.0-rc.1. Local tests use mocks and do not establish live provider or sandbox behavior.
 
 ## Confirmed causes and boundaries
 

@@ -1,6 +1,5 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { defaultMessageReducer } from "eve/client";
 import { registerHooks } from "node:module";
 registerHooks({ resolve(specifier, context, next) {
   if (specifier.startsWith("@/")) return next(new URL(`../${specifier.slice(2)}.ts`, import.meta.url).href, context);
@@ -13,6 +12,11 @@ const event = (type, data = {}) => ({ type, data });
 const received = (text) => event("message.received", { turnId: "t", message: text, parts: [{ type: "text", text }] });
 const complete = (text, turnId = "t", stepIndex = 0) => event("message.completed", { turnId, stepIndex, message: text });
 const appended = (text, turnId = "t", stepIndex = 0) => event("message.appended", { turnId, stepIndex, messageDelta: text });
+const v1Event = (type, data, scope, line) => ({ type, data, ...(scope ? { scope } : {}), meta: { position: { line, index: 0 }, at: "2026-11-01T00:00:00.000Z" } });
+const v1Start = (line = 0) => v1Event("turn.started", { turnId: "t", cause: { deliveryId: "d" }, follows: null }, { turnId: "t" }, line);
+const v1Consumed = (text, line = 1) => v1Event("delivery.consumed", { deliveryId: "d", turnId: "t", parts: [{ kind: "text", text }] }, { turnId: "t" }, line);
+const v1Reply = (text, line = 2, phase = "reply") => v1Event("content.completed", { partId: `p${line}`, runId: `r${line}`, kind: "text", value: text, phase }, { turnId: "t", runId: `r${line}` }, line);
+const v1Settle = (line = 3) => v1Event("turn.settled", { turnId: "t", outcome: "completed" }, { turnId: "t" }, line);
 const headers = (tail, version = "26") => ({ "x-eve-stream-tail-index": String(tail), "x-eve-stream-version": version });
 function stream(events, { tail = events.length - 1, version = "26", chunk = 7 } = {}) {
   const bytes = encode("\n" + events.map((item) => JSON.stringify(item)).join("\n") + (events.length ? "\n" : ""));
@@ -66,7 +70,7 @@ test("streaming text is joined across deltas, but completed text replaces the te
 test("short, malformed and unsupported streams never claim a definitive no-match", async () => {
   assert.equal((await search(stream([]))).status, "no-match");
   assert.equal((await search(stream([received("nothing")], { tail: 1 }))).status, "unavailable");
-  assert.equal((await search(stream([received("nothing")], { version: "27" }))).status, "unavailable");
+  assert.equal((await search(stream([v1Start(), v1Settle(1)], { version: "27" }))).status, "no-match");
   assert.equal((await search(stream([event("message.appended", { turnId: "t", stepIndex: 0, messageDelta: "needle", messageSoFar: "needle" })], { version: "24" }))).status, "matched");
   assert.equal((await search(stream([appended("needle")], { version: "24" }))).status, "unavailable");
   assert.equal((await search(stream([event("message.appended", { turnId: "t", stepIndex: 0, messageDelta: "nothing", messageSoFar: "invalid" })], { version: "26" }))).status, "unavailable");
@@ -97,21 +101,14 @@ test("limits and cancellation report partial results and release the reader", as
 });
 
 
-test("text projection agrees with Eve's actual default message reducer for resets and partial runs", async () => {
-  const scenarios = [
-    [received("needle before clearing"), event("context.cleared", { turnId: "t", sequence: 4 })],
-    [appended("needle but replaced"), complete("different answer")],
-    [appended("nee"), appended("dle partial"), event("turn.cancelled", { turnId: "t", sequence: 3 })],
-    [appended("needle closed"), event("step.completed", { turnId: "t", stepIndex: 0, sequence: 3 }), complete("different answer")],
-  ];
-  for (const events of scenarios) {
-    const stamped = events.map((item, i) => ({ ...item, meta: { id: `event-${i}`, at: "2026-10-29T00:00:00Z" } }));
-    const reducer = defaultMessageReducer();
-    const state = stamped.reduce((current, item) => reducer.reduce(current, item), reducer.initial());
-    const visible = state.messages.flatMap((message) => message.parts.filter((part) => part.type === "text").map((part) => part.text)).join("\n");
-    const result = await search(stream(stamped));
-    assert.equal(result.status, visible.toLowerCase().includes("needle") ? "matched" : "no-match");
-  }
+test("protocol v1 search follows Eve's durable transcript and excludes narration and unfinished text", async () => {
+  const userMatch = await search(stream([v1Start(), v1Consumed("Qorshe: SOOMAALI waa qurux"), v1Settle(2)], { version: "27" }), "soomaali");
+  assert.deepEqual(userMatch, { status: "matched", snippet: { before: "Qorshe: ", match: "SOOMAALI", after: " waa qurux" } });
+
+  const assistantMatch = await search(stream([v1Start(), v1Reply("A completed needle reply"), v1Settle(2)], { version: "27" }));
+  assert.equal(assistantMatch.status, "matched");
+  assert.equal((await search(stream([v1Start(), v1Reply("needle in narration", 1, "narration"), v1Settle(2)], { version: "27" }))).status, "no-match");
+  assert.equal((await search(stream([v1Start(), v1Event("content.delta", { partId: "p", kind: "text", delta: "needle" }, { turnId: "t", runId: "r" }, 1)], { version: "27" }))).status, "unavailable");
 });
 
 test("aborted search stops waiting even when a stream reader ignores cancellation", async () => {

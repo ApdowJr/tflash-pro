@@ -1,34 +1,25 @@
 import { defineHook } from "eve/hooks";
-import { defineState } from "eve/context";
+import { runs } from "eve/events";
 import { createLogger } from "@/lib/observability/logger";
-import {
-  ATTR_MAX_STEPS,
-  countModelStep,
-  modelStepLimit,
-} from "@/lib/usage-limits";
+import { ATTR_MAX_STEPS, modelStepLimit } from "@/lib/usage-limits";
 
 const log = createLogger("agent:usage-limit");
-const counter = defineState("tflash.model-step-budget.v1", () => ({
-  turnId: "",
-  steps: [] as readonly number[],
-}));
+
 export default defineHook({
   events: {
-    "step.started"(event, ctx) {
+    "model.requested"(event, ctx) {
+      const turnId = event.scope?.turnId;
+      if (!turnId) return;
+
       const auth = ctx.session.auth.current ?? ctx.session.auth.initiator;
-      const transition = countModelStep(
-        counter.get(),
-        ctx.session.turn.id,
-        event.data.stepIndex,
-        modelStepLimit(auth?.attributes?.[ATTR_MAX_STEPS]),
-      );
-      counter.update(() => transition.state);
-      // Eve cancels before this model call starts, not merely in the browser.
-      if (transition.cancel) {
-        // Only coordinates and limits, never model input, tool arguments or credentials.
-        log.warn("model step limit reached", { turnId: ctx.session.turn.id, stepIndex: event.data.stepIndex, limit: modelStepLimit(auth?.attributes?.[ATTR_MAX_STEPS]) });
-        ctx.cancel();
-      }
+      const limit = modelStepLimit(auth?.attributes?.[ATTR_MAX_STEPS]);
+      const runCount = runs(ctx.view, { turnId }).length;
+      if (runCount <= limit) return;
+
+      // The durable view already includes this requested run, so cancel before
+      // the model call starts instead of tracking duplicate client-side steps.
+      log.warn("model call limit reached", { turnId, runCount, limit });
+      ctx.cancel();
     },
   },
 });

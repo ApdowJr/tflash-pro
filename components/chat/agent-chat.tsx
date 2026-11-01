@@ -5,7 +5,7 @@ import { beginSyncUncertainty, clearSyncUncertainty, syncUncertaintyMarkers } fr
 import { waitWithAbort } from "@/lib/abortable";
 import { clearDispatchReview, clearReviewedDispatches, dispatchReviewKey, dispatchStorage, markDispatchReview, readDispatchReview } from "@/lib/dispatch-review";
 
-import { Client, type MessageContent } from "eve/client";
+import { Client } from "eve/client";
 import { activeTurn, interactions, turn } from "eve/events";
 import { useEveAgent } from "eve/react";
 import { AlertCircleIcon, CheckIcon, CopyIcon } from "lucide-react";
@@ -37,7 +37,7 @@ import { AgentMessage, type AgentInputResponse } from "./agent-message";
 import { InputResponseNotice, useInputResponseRecovery } from "./input-response-recovery";
 import { StopRecoveryNotice, useStopRecovery } from "./stop-recovery";
 import { SharedDispatchNotice, useSharedDispatchRecovery } from "./shared-dispatch-recovery";
-import { isStopTurnId } from "@/lib/stop-recovery";
+import { cancelledStopTurns, isStopTurnId } from "@/lib/stop-recovery";
 import { VoiceOutputButton } from "./voice-output";
 import { AgentPlanCard, type AgentRunState } from "./agent-workspace";
 import { PermissionsPanel } from "./permissions-panel";
@@ -300,10 +300,14 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   const turnOutcome = latest?.outcome;
   const target = cancellationTarget.current;
   const activeTurnObservation = activeTurn(agent.view);
-  const targetSettled = !!target && turn(agent.view, target)?.status === "settled";
+  const targetSettled = !!target && (
+    turn(agent.view, target)?.status === "settled" ||
+    (latest?.turnId === target && (latest.outcome === "completed" || latest.outcome === "failed")) ||
+    cancelledStopTurns(agent.events).has(target)
+  );
   const stopUnconfirmed = cancellationPending.current && !!target && !targetSettled;
-  const disconnected = (agent.error !== undefined && !(target && targetSettled && latest?.turnId === target) &&
-    (turnOutcome === "active" || activeTurnObservation !== undefined)) ||
+  const observedActiveTurn = turnOutcome === "active" || (turnOutcome === undefined && activeTurnObservation !== undefined);
+  const disconnected = (agent.error !== undefined && !(target && targetSettled && latest?.turnId === target) && observedActiveTurn) ||
     (stopUnconfirmed && !isBusy && !isResuming);
   const resumeRef = useRef(agent.resume);
   resumeRef.current = agent.resume;
@@ -350,6 +354,9 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   const sessionInteractions = interactions(agent.view);
   const openInputs = sessionInteractions.filter((input) => input.status === "open" && input.request.kind !== "sign-in");
   const openInputsRef = useRef(openInputs); openInputsRef.current = openInputs;
+  const questionsFor = (callId: string) => sessionInteractions.filter((input) =>
+    (input.request.kind === "question" || input.request.kind === "budget") && input.call?.callId === callId,
+  );
   const hasOpenInput = sessionInteractions.some((input) => input.status === "open");
   const runState: AgentRunState = isResuming ? "resuming" : disconnected ? "interrupted" : errorMessage || agent.error ? "failed" :
     hasOpenInput ? "waiting" : isBusy ? "working" : turnOutcome === "cancelled" ? "cancelled" : "idle";
@@ -495,7 +502,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
     const operation = Promise.resolve().then(() => {
       if (!responseMounted.current || responseIdentityRef.current !== responseIdentity) throw new Error("Conversation changed.");
       return turnId && activeSessionId
-      ? new Client({ baseUrl: new URL(`/eve/${WEB_CHAT_AGENT}/v1`, window.location.origin).toString(), redirect: "error", headers: () => ({ ...eveHeaders(), [HEADER_MAX_STEPS]: String(workspace.snapshot().maxSteps), ...(ownerProof ? { [OWNER_PROOF_HEADER]: ownerProof } : {}) }) })
+      ? new Client({ baseUrl: new URL(WEB_CHAT_AGENT ? `/eve/${WEB_CHAT_AGENT}/v1` : "/", window.location.origin).toString(), redirect: "error", headers: () => ({ ...eveHeaders(), [HEADER_MAX_STEPS]: String(workspace.snapshot().maxSteps), ...(ownerProof ? { [OWNER_PROOF_HEADER]: ownerProof } : {}) }) })
           .sessions.attach(activeSessionId).cancel({ turnId, signal })
       : agent.cancel();
     });
@@ -704,8 +711,9 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
                         agent.status === "busy" && index === agent.messages.length - 1
                       }
                       message={message}
-                      onInputResponses={respondToInput}
-                    />
+  onInputResponses={respondToInput}
+  questionsFor={questionsFor}
+  />
                     {message.role === "assistant" ? (
                       <MessageActions
                         isStreaming={isBusy && index === agent.messages.length - 1}
@@ -884,15 +892,23 @@ function getLatestTurnFailure(
   turnId: string,
 ): string | undefined {
   for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index];
-    if (event.type !== "turn.settled" || event.data.turnId !== turnId || event.data.outcome !== "failed") continue;
-    const error = event.data.error;
-    if (error?.code.toLowerCase().includes("model")) {
-      return error.message
-        ? `The model call failed — check Settings → Providers. ${error.message}`
+    const event = events[index] as unknown as { type: string; data?: Record<string, unknown> };
+    const data = event.data;
+    if (!data || data.turnId !== turnId) continue;
+    const isV1Failure = event.type === "turn.settled" && data.outcome === "failed";
+    const isLegacyFailure = event.type === "turn.failed";
+    if (!isV1Failure && !isLegacyFailure) continue;
+    const error = data.error && typeof data.error === "object" ? data.error as { code?: unknown; message?: unknown } : undefined;
+    const code = typeof error?.code === "string" ? error.code : typeof data.code === "string" ? data.code : "";
+    const detail = typeof error?.message === "string" ? error.message
+      : typeof data.message === "string" ? data.message
+        : typeof (data.details as { message?: unknown } | undefined)?.message === "string" ? (data.details as { message: string }).message : undefined;
+    if (code.toLowerCase().includes("model")) {
+      return detail
+        ? `The model call failed — check Settings → Providers. ${detail}`
         : "The model call failed. Check your provider connection in Settings → Providers.";
     }
-    return error?.message ?? "The turn failed.";
+    return detail ?? "The turn failed.";
   }
   return undefined;
 }

@@ -25,20 +25,25 @@ export function beginStop(kind: string, userId: string, sessionId: string, turnI
   return beginSyncUncertainty("stop-request", kind, userId, JSON.stringify({ sessionId, turnId: turnId ?? null }));
 }
 export function clearStop(key: string) { clearSyncUncertainty([key]); }
-/** A cancellation boundary is complete only after the following session.waiting.
- * Projection state and a bare turn.cancelled are not a settled stream tail. */
-export function cancelledStopTurns(events: readonly { type: string; data?: unknown }[]): Set<string> {
+/** A v1 turn.settled cancellation is authoritative; legacy turn.cancelled needs session.waiting. */
+export function cancelledStopTurns(events: readonly { type: string; scope?: { turnId?: string }; data?: unknown }[]): Set<string> {
   const result = new Set<string>();
-  const pending = new Set<string>();
+  const pendingLegacy = new Set<string>();
   for (const event of events) {
+    if (event.type === "turn.settled" && event.data && typeof event.data === "object") {
+      const data = event.data as { turnId?: unknown; outcome?: unknown };
+      const id = typeof data.turnId === "string" ? data.turnId : event.scope?.turnId;
+      if (data.outcome === "cancelled" && typeof id === "string" && validId(id)) result.add(id);
+      continue;
+    }
     if (event.type === "session.waiting") {
-      for (const id of pending) result.add(id);
-      pending.clear();
+      for (const id of pendingLegacy) result.add(id);
+      pendingLegacy.clear();
       continue;
     }
     if (event.type !== "turn.cancelled" || !event.data || typeof event.data !== "object") continue;
     const id = (event.data as { turnId?: unknown }).turnId;
-    if (typeof id === "string" && validId(id)) pending.add(id);
+    if (typeof id === "string" && validId(id)) pendingLegacy.add(id);
   }
   return result;
 }

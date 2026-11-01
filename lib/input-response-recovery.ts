@@ -31,16 +31,23 @@ export function clearInputResponse(key: string) { clearSyncUncertainty([key]); }
 export function resolvedInputRequestIds(events: readonly { type: string; data?: unknown }[]): string[] {
   const ids: string[] = [];
   for (let i = events.length - 1; i >= 0 && ids.length < 2000; i--) {
-    const e = events[i];
-    if (e.type !== "input.resolved" || !e.data || typeof e.data !== "object") continue;
-    const values = (e.data as { resolutions?: unknown }).resolutions;
+    const event = events[i];
+    if (!event.data || typeof event.data !== "object") continue;
+    const data = event.data as Record<string, unknown>;
+    if (event.type === "interaction.settled") {
+      const interactionId = data.interactionId;
+      if (typeof interactionId === "string" && interactionId.length > 0 && interactionId.length <= 1024) ids.push(interactionId);
+      continue;
+    }
+    if (event.type !== "input.resolved") continue;
+    const values = data.resolutions;
     if (!Array.isArray(values) || values.length > 2000) continue;
     for (const value of values) {
       if (!value || typeof value !== "object" || Array.isArray(value)) continue;
-      const v = value as Record<string, unknown>;
-      if (typeof v.requestId === "string" && v.requestId.length > 0 && v.requestId.length <= 1024 &&
-        (v.kind === "tool-approval" || v.kind === "question" || v.kind === "session-limit") &&
-        typeof v.outcome === "string" && ["answered", "approved", "cancelled", "denied", "ignored", "invalid"].includes(v.outcome)) ids.push(v.requestId);
+      const resolution = value as Record<string, unknown>;
+      if (typeof resolution.requestId === "string" && resolution.requestId.length > 0 && resolution.requestId.length <= 1024 &&
+        (resolution.kind === "tool-approval" || resolution.kind === "question" || resolution.kind === "session-limit") &&
+        typeof resolution.outcome === "string" && ["answered", "approved", "cancelled", "denied", "ignored", "invalid"].includes(resolution.outcome)) ids.push(resolution.requestId);
       if (ids.length >= 2000) break;
     }
   }

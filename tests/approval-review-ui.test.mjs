@@ -16,11 +16,16 @@ const { InputRequestActions } = await import("../components/chat/agent-message.t
 const h = React.createElement;
 
 function part(id, command, extra = {}) {
+  const outcome = extra.approval?.approved === true ? "accepted" : extra.approval?.approved === false ? "declined" : undefined;
   return {
-    type: "dynamic-tool", toolName: "bash", toolCallId: id, state: "approval-requested",
+    type: "tool", toolName: "bash", toolCallId: id, state: "approval-requested",
     input: { command }, ...extra,
-    toolMetadata: { eve: { inputRequest: { requestId: id, kind: "tool-approval", prompt: "Run shell command?",
-      options: [{ id: "approve", label: "Approve" }, { id: "cancel", label: "Cancel" }] }, ...extra.eve } },
+    toolMetadata: { eve: { inputRequest: {
+      interactionId: id,
+      request: { kind: "approval", prompt: "Run shell command?", options: [{ id: "approve", label: "Approve" }, { id: "deny", label: "Deny" }] },
+      status: outcome ? "settled" : "open",
+      ...(outcome ? { outcome } : {}),
+    } } },
   };
 }
 function ui(children) {
@@ -41,7 +46,7 @@ test("review presents the complete action and a single-call decision", async () 
   assert.equal(summary.parentElement.open, true);
   assert.equal(JSON.parse(summary.parentElement.querySelector("code").textContent).command, command);
   fireEvent.click(screen.getByRole("button", { name: "Approve once" }));
-  await waitFor(() => assert.deepEqual(responses, [[{ requestId: "one", optionId: "approve" }]]));
+  await waitFor(() => assert.deepEqual(responses, [[{ interactionId: "one", optionId: "approve" }]]));
   assert.equal(screen.queryByRole("button", { name: /always approve|full permissions/i }), null);
 });
 
@@ -50,7 +55,7 @@ test("concurrent prompts stay independent and closed prompts cannot be answered"
   render(ui(h("div", null, ["a", "b", "closed"].map((id) => h("section", { key: id, "aria-label": id },
     h(InputRequestActions, { part: part(id, `echo ${id}`), canRespond: () => id !== "closed", onInputResponses: (r) => responses.push(r) }))))));
   fireEvent.click(within(screen.getByLabelText("b")).getByRole("button", { name: "Deny" }));
-  await waitFor(() => assert.deepEqual(responses, [[{ requestId: "b", optionId: "cancel" }]]));
+  await waitFor(() => assert.deepEqual(responses, [[{ interactionId: "b", optionId: "deny" }]]));
   assert.equal(within(screen.getByLabelText("closed")).getByRole("button", { name: "Approve once" }).disabled, true);
 });
 

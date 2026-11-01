@@ -69,6 +69,12 @@ test("activity excludes inputs/results/secrets, partial results aren't success a
   const taskEvents = [{ type: "task.started", data: { callId: "a" } }];
   assert.equal(activityRows([{ role: "assistant", parts: [part] }], taskEvents)[0].state, "running");
   assert.equal(activityRows([{ role: "assistant", parts: [part] }], [...taskEvents, { type: "task.settled", data: { callId: "a", status: "cancelled" } }])[0].state, "cancelled");
+  const v1Part = { type: "tool", name: "bash", callId: "v1-call", state: "completed", output: { status: "completed", exitCode: 0 } };
+  const v1Tasks = [
+    { type: "task.started", scope: { taskId: "v1-task" }, data: { taskId: "v1-task", callId: "v1-call", name: "bash", kind: "sandbox" } },
+    { type: "task.ended", scope: { taskId: "v1-task" }, data: { taskId: "v1-task", outcome: "cancelled" } },
+  ];
+  assert.equal(activityRows([{ role: "assistant", parts: [v1Part] }], v1Tasks)[0].state, "cancelled");
   const step = { type: "step.completed", meta: { id: "s" }, data: { turnId: "t", stepIndex: 0, usage: { inputTokens: 42, outputTokens: 7 } } };
   assert.deepEqual(reportedUsage([step, step]), { inputTokens: 42, outputTokens: 7 });
   assert.equal(reportedUsage([step]).costUsd, undefined);
@@ -85,6 +91,10 @@ test("activity excludes inputs/results/secrets, partial results aren't success a
   assert.equal(reportedUsage([priced, { type: "step.completed" }]).costUsd, undefined);
   assert.equal(reportedUsage([priced, { type: "session.waiting" }]).costUsd, undefined);
   assert.equal(reportedUsage([priced, { type: "session.waiting", data: {} }, checkpoint]).costUsd, 0.01);
+  const usageEvent = { type: "usage.recorded", meta: { position: { line: 7, index: 0 }, at: "2026-11-01T00:00:00Z" }, data: { owner: { runId: "run-v1" }, kind: "model", usage: { inputTokens: 42, outputTokens: 7, costUsd: 0.02 } } };
+  assert.deepEqual(reportedUsage([usageEvent, usageEvent]), { inputTokens: 42, outputTokens: 7, costUsd: 0.02 });
+  const unownedUsage = { ...usageEvent, meta: { position: { line: 8, index: 0 }, at: "2026-11-01T00:00:01Z" }, data: { kind: "model", usage: { inputTokens: 3, outputTokens: 4, costUsd: 0.01 } } };
+  assert.deepEqual(reportedUsage([usageEvent, unownedUsage]), { inputTokens: 45, outputTokens: 11, costUsd: 0.03 });
   assert.equal(attachedText("https://remote.test/private"), undefined);
   assert.equal(attachedText(`data:text/plain;base64,${Buffer.from("Soomaali — tijaabo").toString("base64")}`), "Soomaali — tijaabo");
 });
@@ -109,6 +119,10 @@ test("turn status uses turn sequence and never infers task completion from a fin
   assert.equal(latestTurnOutcome([e("turn.started", "a", 1), cancelled, e("turn.completed", "a", 1)]), "cancelled");
   assert.equal(latestTurnOutcome([e("turn.started", "b", 2), cancelled]), "active");
   assert.equal(latestTurnOutcome([cancelled, e("turn.completed", "b", 2), cancelled]), "completed");
+  assert.equal(latestTurnOutcome([
+    { type: "turn.started", scope: { turnId: "v1" }, data: { turnId: "v1", cause: { deliveryId: "d" }, follows: null } },
+    { type: "turn.settled", scope: { turnId: "v1" }, data: { turnId: "v1", outcome: "cancelled" } },
+  ]), "cancelled");
   assert.equal(latestTurnOutcome([{ type: "task.settled", data: { callId: "a", status: "completed" } }]), undefined);
 });
 

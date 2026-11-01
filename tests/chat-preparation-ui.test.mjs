@@ -25,10 +25,47 @@ dom.window.HTMLElement.prototype.setPointerCapture = () => {};
 dom.window.HTMLElement.prototype.releasePointerCapture = () => {};
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 register();
-registerHooks({ resolve(specifier, context, nextResolve) {
-  if (specifier === "eve/react") {
-    return { url: "data:text/javascript,export function useEveAgent(options) { globalThis.__prepareOptions = options; return globalThis.__prepareAgent; }", shortCircuit: true };
+const testModule = (source) => ({ url: `data:text/javascript,${encodeURIComponent(source)}`, shortCircuit: true });
+const eveReactMock = `export function useEveAgent(options) {
+  globalThis.__prepareOptions = options;
+  const agent = globalThis.__prepareAgent;
+  const data = agent?.data ?? {};
+  return {
+    ...agent,
+    messages: agent?.messages ?? data.messages ?? [],
+    events: agent?.events ?? [],
+    error: agent?.error ?? (agent?.status === "error" ? new Error("Connection lost") : undefined),
+    view: agent?.view ?? { __legacy: data },
+    status: ["streaming", "submitted", "busy"].includes(agent?.status) ? "busy" : agent?.status === "resuming" ? "resuming" : "idle",
+  };
+}`;
+const eveEventsMock = `
+  const active = (status) => status === "active" || status === "running" || status === "paused";
+  export function activeTurn(view) {
+    const data = view?.__legacy;
+    const turnId = data?.activeTurnId;
+    return turnId && active(data.turns?.[turnId]?.status) ? { turnId, status: "running" } : undefined;
   }
+  export function turn(view, turnId) {
+    const status = view?.__legacy?.turns?.[turnId]?.status;
+    return status ? { turnId, status: active(status) ? "running" : "settled" } : undefined;
+  }
+  export function interactions(view) {
+    return Object.entries(view?.__legacy?.inputs ?? {}).map(([key, value]) => {
+      const request = value?.request ?? {};
+      const interactionId = request.interactionId ?? request.requestId ?? key;
+      const kind = request.kind === "tool-approval" ? "approval" : request.kind === "session-limit" ? "budget" : request.kind ?? "question";
+      const response = value?.response;
+      const callId = request.action?.callId; return { interactionId, request: { ...request, kind }, call: typeof callId === "string" ? { callId, name: "tool" } : undefined, status: value?.status === "open" ? "open" : "settled", answer: response, outcome: response ? response.optionId === "approve" ? "accepted" : "declined" : undefined };
+    });
+  }
+  export function signInEnding(outcome) {
+    return outcome === "accepted" || outcome === "authorized" ? "connected" : outcome === "declined" ? "declined" : outcome === "expired" || outcome === "timed-out" ? "timed out" : outcome === "cancelled" ? "cancelled" : "failed";
+  }
+`;
+registerHooks({ resolve(specifier, context, nextResolve) {
+  if (specifier === "eve/react") return testModule(eveReactMock);
+  if (specifier === "eve/events") return testModule(eveEventsMock);
   return nextResolve(specifier, context);
 } });
 
@@ -439,7 +476,7 @@ test("intermittent streaming does not reset the automatic retry budget for the s
   fakeFetch(() => undefined);
   const rendered = render(app({ sessionId: "owned-chat" }));
   await waitFor(() => assert.equal(resumes, 1), { timeout: 2500 });
-  globalThis.__prepareAgent.status = "streaming";
+  globalThis.__prepareAgent.status = "busy";
   rendered.rerender(app({ sessionId: "owned-chat" }));
   globalThis.__prepareAgent.status = "error";
   rendered.rerender(app({ sessionId: "owned-chat" }));
@@ -470,7 +507,7 @@ test("a disconnected stop targets only the observed turn and reattaches to confi
   await waitFor(() => assert.equal(calls, 1)); assert.equal(body.turnId, "turn-old"); assert.equal(proof, "proof-value");
   assert.equal(screen.getByRole("button", { name: "Stopping…" }).disabled, true);
   assert.equal(sends.length, 0); assert.equal(resumes, 0);
-  await React.act(async () => { pending.resolve(Response.json({ ok: true, status: "accepted", sessionId: "owned-chat" }, { status: 202 })); await pending.promise; });
+  await React.act(async () => { pending.resolve(Response.json({ ok: true, status: "accepted", sessionId: "owned-chat", deliveryId: "cancelled-delivery" }, { status: 202 })); await pending.promise; });
   await waitFor(() => assert.equal(resumes, 1));
   assert.ok(screen.getByText(/stream disconnected while a turn was active/));
   assert.equal(sends.length, 0);
@@ -522,9 +559,9 @@ test("a pending stop blocks scheduled reconnect and follow-ups until the turn se
   // Simulate a callback already queued when clearTimeout runs.
   await React.act(async () => scheduledRetry());
   assert.equal(resumes, 0, "the previously scheduled automatic retry must not race the stop request");
-  await React.act(async () => { pending.resolve(Response.json({ ok: true, status: "accepted", sessionId: "owned-chat" }, { status: 202 })); await pending.promise; });
+  await React.act(async () => { pending.resolve(Response.json({ ok: true, status: "accepted", sessionId: "owned-chat", deliveryId: "cancelled-delivery" }, { status: 202 })); await pending.promise; });
   await waitFor(() => assert.equal(resumes, 1));
-  globalThis.__prepareAgent.status = "streaming";
+  globalThis.__prepareAgent.status = "busy";
   rendered.rerender(app({ sessionId: "owned-chat" }));
   await React.act(async () => { attached.resolve(); await attached.promise; });
   assert.equal(screen.getByRole("button", { name: "Send" }).disabled, true);
@@ -547,7 +584,7 @@ test("accepted stop with a lost turn projection remains blocked but allows manua
   globalThis.__prepareAgent.data.turns = { "turn-old": { status: "active" } };
   let resumes = 0;
   globalThis.__prepareAgent.resume = async () => { resumes++; throw new Error("offline"); };
-  fakeFetch((path) => path.endsWith("/eve/v1/session/owned-chat/cancel") ? Response.json({ ok: true, status: "accepted", sessionId: "owned-chat" }, { status: 202 }) : undefined);
+  fakeFetch((path) => path.endsWith("/eve/v1/session/owned-chat/cancel") ? Response.json({ ok: true, status: "accepted", sessionId: "owned-chat", deliveryId: "cancelled-delivery" }, { status: 202 }) : undefined);
   const rendered = render(app({ sessionId: "owned-chat" }));
   const user = userEvent.setup();
   const input = screen.getByPlaceholderText("Ask Tflash anything…");
@@ -581,7 +618,7 @@ test("a stop response arriving after the terminal turn releases the composer", a
   globalThis.__prepareAgent.events = [{ type: "turn.cancelled", data: { turnId: "turn-old", sequence: 1 } }, { type: "session.waiting", data: {} }];
   rendered.rerender(app({ sessionId: "owned-chat" }));
   assert.equal(screen.getByRole("button", { name: "Send" }).disabled, true);
-  await React.act(async () => { pending.resolve(Response.json({ ok: true, status: "accepted", sessionId: "owned-chat" }, { status: 202 })); await pending.promise; });
+  await React.act(async () => { pending.resolve(Response.json({ ok: true, status: "accepted", sessionId: "owned-chat", deliveryId: "cancelled-delivery" }, { status: 202 })); await pending.promise; });
   await waitFor(() => assert.equal(screen.getByRole("button", { name: "Send" }).disabled, false));
   assert.equal(sends.length, 0);
 });
@@ -667,7 +704,7 @@ test("an active turn can still be explicitly steered without erasing its dispatc
   await user.type(input,"First message");
   await user.keyboard("{Enter}");
   await waitFor(() => assert.equal(sent.length,1));
-  globalThis.__prepareAgent.status = "streaming";
+  globalThis.__prepareAgent.status = "busy";
   view.rerender(app({sessionId:"owned-chat"}));
   await user.clear(input);
   await user.type(input,"Steer it");
@@ -798,7 +835,7 @@ for (const failure of ["callback", "rejection"]) {
     await user.type(input, "First request");
     await user.keyboard("{Enter}");
     await waitFor(() => assert.equal(sends.length, 1));
-    globalThis.__prepareAgent.status = "streaming";
+    globalThis.__prepareAgent.status = "busy";
     view.rerender(app({ sessionId: "owned-chat" }));
     await user.clear(input);
     await user.type(input, "Do not send after failure");
@@ -1191,7 +1228,7 @@ test('connected Stop uses the exact observed turn even after streaming, and only
   globalThis.__prepareAgent.cancel = async () => { hookCancels++; };
   globalThis.__prepareAgent.data.activeTurnId = 'turn-old';
   globalThis.__prepareAgent.data.turns = { 'turn-old': { status: 'active' } };
-  fakeFetch((path, options) => { if (path.endsWith('/eve/v1/session/owned-chat/cancel')) { calls++; body = JSON.parse(options.body); assert.ok(options.signal); return Response.json({ ok: true, status: 'accepted', sessionId: 'owned-chat' }, { status: 202 }); } });
+  fakeFetch((path, options) => { if (path.endsWith('/eve/v1/session/owned-chat/cancel')) { calls++; body = JSON.parse(options.body); assert.ok(options.signal); return Response.json({ ok: true, status: 'accepted', sessionId: 'owned-chat', deliveryId: 'cancelled-delivery' }, { status: 202 }); } });
   const view = render(app({ sessionId: 'owned-chat' })); const user = userEvent.setup();
   await user.click(await screen.findByRole('button', { name: 'Stop' }));
   await waitFor(() => assert.equal(calls, 1)); assert.equal(body.turnId, 'turn-old'); assert.equal(hookCancels, 0);
@@ -1301,7 +1338,7 @@ test('a stop that settles after unmount does not reconnect the old conversation'
   const view = render(app({ sessionId: 'owned-chat' })); const user = userEvent.setup();
   await user.click(await screen.findByRole('button', { name: 'Request stop for this turn' }));
   assert.equal(Object.keys(window.localStorage).filter(k => k.includes(':stop-request:')).length, 1);
-  view.unmount(); await React.act(async () => { pending.resolve(Response.json({ ok: true, status: 'accepted', sessionId: 'owned-chat' }, { status: 202 })); await pending.promise; });
+  view.unmount(); await React.act(async () => { pending.resolve(Response.json({ ok: true, status: 'accepted', sessionId: 'owned-chat', deliveryId: 'cancelled-delivery' }, { status: 202 })); await pending.promise; });
   assert.equal(resumes, 0); assert.equal(Object.keys(window.localStorage).filter(k => k.includes(':stop-request:')).length, 1);
 });
 
@@ -1333,7 +1370,7 @@ test('scoped stop timeout aborts only the transport wait and retains the exact-t
     const keys = Object.keys(window.localStorage).filter(k => k.includes(':stop-request:'));
     assert.equal(JSON.parse(window.localStorage.getItem(keys[0])).turnId, 'turn-new');
     globalThis.__prepareAgent.status = 'ready'; globalThis.__prepareAgent.events = [{ type: 'turn.cancelled', data: { turnId: 'turn-older' } }]; view.rerender(app({ sessionId: 'owned-chat' }));
-    await React.act(async () => { pending.resolve(Response.json({ ok: true, status: 'accepted', sessionId: 'owned-chat' }, { status: 202 })); await pending.promise; });
+    await React.act(async () => { pending.resolve(Response.json({ ok: true, status: 'accepted', sessionId: 'owned-chat', deliveryId: 'cancelled-delivery' }, { status: 202 })); await pending.promise; });
     assert.ok(screen.getByText(/A stop request may have been accepted/)); assert.equal(calls, 1); assert.equal(sends.length, 0);
   } finally { AbortSignal.timeout = original; }
 });

@@ -1,5 +1,5 @@
 import type { NextConfig } from "next";
-import { withEve } from "eve/vercel";
+import { withEve } from "eve/next";
 
 /**
  * Security headers.

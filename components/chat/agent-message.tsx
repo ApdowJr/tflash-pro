@@ -76,11 +76,13 @@ export function AgentMessage({
   isStreaming,
   message,
   onInputResponses,
+  questionsFor,
 }: {
   readonly canRespond: (interactionId: string) => boolean;
   readonly isStreaming: boolean;
   readonly message: EveMessage;
   readonly onInputResponses: (responses: readonly AgentInputResponse[]) => void | Promise<void>;
+  readonly questionsFor: (callId: string) => readonly EveInteraction[];
 }) {
   const lastTextIndex = message.parts.reduce(
     (last, part, index) => (part.type === "text" ? index : last),
@@ -103,6 +105,7 @@ export function AgentMessage({
               key={partKey(part, index)}
               onInputResponses={onInputResponses}
               part={part}
+              questionsFor={questionsFor}
               showCaret={isStreaming && message.role === "assistant" && index === lastTextIndex}
             />
           ),
@@ -116,11 +119,13 @@ function AgentMessagePart({
   canRespond,
   onInputResponses,
   part,
+  questionsFor,
   showCaret,
 }: {
   readonly canRespond: (interactionId: string) => boolean;
   readonly onInputResponses: (responses: readonly AgentInputResponse[]) => void | Promise<void>;
   readonly part: EveMessagePart;
+  readonly questionsFor: (callId: string) => readonly EveInteraction[];
   readonly showCaret: boolean;
 }) {
   const { t } = useAppSettings();
@@ -154,13 +159,20 @@ function AgentMessagePart({
       const toolPart = toToolPresentationPart(part);
       const interaction = part.interaction;
       const isQuestion = interaction?.request.kind === "question" || interaction?.request.kind === "budget";
-      if (isQuestion && interaction.status === "open") {
+      const relatedQuestions = isQuestion ? [interaction] : [...questionsFor(part.callId)];
+      const openQuestions = relatedQuestions.filter((question) => question.status === "open");
+      if (openQuestions.length > 0) {
         return (
-          <QuestionRequest
-            canRespond={canRespond(interaction.interactionId)}
-            interaction={interaction}
-            onInputResponses={onInputResponses}
-          />
+          <div className="space-y-4">
+            {openQuestions.map((question) => (
+              <QuestionRequest
+                canRespond={canRespond(question.interactionId)}
+                interaction={question}
+                key={question.interactionId}
+                onInputResponses={onInputResponses}
+              />
+            ))}
+          </div>
         );
       }
       if (toolPart.state === "output-available" && !toolPart.partial) {
@@ -216,18 +228,33 @@ function AgentMessagePart({
               )}
             </ToolContent>
           </Tool>
-          {isQuestion && interaction ? (
-            <QuestionRequest canRespond={canRespond(interaction.interactionId)} interaction={interaction} onInputResponses={onInputResponses} />
+          {relatedQuestions.length > 0 ? (
+            <div className="space-y-4">
+              {relatedQuestions.map((question) => (
+                <QuestionRequest
+                  canRespond={canRespond(question.interactionId)}
+                  interaction={question}
+                  key={question.interactionId}
+                  onInputResponses={onInputResponses}
+                />
+              ))}
+            </div>
           ) : (
             <InputRequestActions canRespond={canRespond} part={toolPart} onInputResponses={onInputResponses} />
           )}
         </>
       );
     }
+    default: {
+      const legacyPart = legacyToolPartFromMessagePart(part);
+      return legacyPart ? (
+        <AgentMessagePart canRespond={canRespond} onInputResponses={onInputResponses} part={legacyPart} questionsFor={questionsFor} showCaret={showCaret} />
+      ) : null;
+    }
   }
 }
 
-function QuestionRequest({
+function QuestionRequest({ 
   canRespond,
   interaction,
   onInputResponses,
@@ -393,6 +420,66 @@ function AuthorizationPrompt({ part }: { readonly part: Extract<EveMessagePart, 
   );
 }
 
+function legacyToolPartFromMessagePart(part: EveMessagePart): EveToolPart | undefined {
+  const value = part as unknown as Record<string, unknown>;
+  if (value.type !== "dynamic-tool") return;
+  const metadata = record(value.toolMetadata);
+  const eve = record(metadata?.eve);
+  const rawRequest = record(eve?.inputRequest);
+  const rawResponse = record(eve?.inputResponse);
+  const approval = record(value.approval);
+  const interactionId = typeof rawRequest?.interactionId === "string"
+    ? rawRequest.interactionId
+    : typeof rawRequest?.requestId === "string" ? rawRequest.requestId : undefined;
+  const kind = rawRequest?.kind === "tool-approval" ? "approval"
+    : rawRequest?.kind === "session-limit" ? "budget"
+      : typeof rawRequest?.kind === "string" ? rawRequest.kind : undefined;
+  const interaction = interactionId && rawRequest && kind ? {
+    interactionId,
+    request: {
+      kind,
+      prompt: typeof rawRequest.prompt === "string" ? rawRequest.prompt : "Input requested.",
+      title: typeof rawRequest.title === "string" ? rawRequest.title : undefined,
+      options: Array.isArray(rawRequest.options) ? rawRequest.options : [],
+      allowFreeform: rawRequest.allowFreeform === true,
+    },
+    status: value.state === "approval-responded" || rawResponse || approval ? "settled" : "open",
+    outcome: approval?.approved === true ? "accepted" : approval?.approved === false ? "declined" : undefined,
+    answer: rawResponse ? { optionId: rawResponse.optionId, text: rawResponse.text } : undefined,
+  } as unknown as NonNullable<EveToolPart["interaction"]> : undefined;
+  const oldState = typeof value.state === "string" ? value.state : "";
+  const state = oldState === "approval-requested" ? "approval"
+    : oldState === "approval-responded" ? "blocked"
+      : oldState === "input-streaming" ? "streaming"
+        : oldState === "input-available" ? "running"
+          : oldState === "output-available" ? "completed"
+            : oldState === "output-denied" ? "rejected"
+              : oldState === "output-error" ? "failed"
+                : oldState;
+  const callId = typeof value.toolCallId === "string" ? value.toolCallId : typeof value.callId === "string" ? value.callId : undefined;
+  const name = typeof value.toolName === "string" ? value.toolName : typeof value.name === "string" ? value.name : undefined;
+  if (!callId || !name) return;
+  return {
+    type: "tool",
+    callId,
+    name,
+    state,
+    input: value.input,
+    inputText: typeof value.inputText === "string" ? value.inputText : undefined,
+    output: value.output,
+    error: typeof value.errorText === "string" ? { message: value.errorText } : undefined,
+    label: typeof eve?.label === "string" ? eve.label : undefined,
+    partial: value.partial === true,
+    interaction,
+  } as unknown as EveToolPart;
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
 function toToolPresentationPart(part: EveToolPart): ToolPresentationPart {
   const interaction = part.interaction;
   const state: ToolPresentationState = part.state === "streaming"
@@ -421,7 +508,7 @@ function toToolPresentationPart(part: EveToolPart): ToolPresentationPart {
     errorText: part.state === "failed" ? part.error?.message : undefined,
     input: part.state === "streaming" ? part.inputText : part.input,
     output: part.state === "completed" ? part.output : undefined,
-    partial: part.state === "streaming",
+    partial: part.state === "streaming" || (part as unknown as { partial?: unknown }).partial === true,
     state,
     toolCallId: part.callId,
     toolMetadata: interaction ? { eve: { inputRequest: interaction, inputResponse, label: part.label } } : { eve: { label: part.label } },
@@ -521,5 +608,9 @@ function partKey(part: EveMessagePart, index: number): string {
       return `${part.type}:${part.id ?? index}`;
     case "file":
       return `file:${part.stepIndex ?? index}:${part.filename ?? "attachment"}`;
+    default: {
+      const legacy = part as unknown as Record<string, unknown>;
+      return typeof legacy.toolCallId === "string" ? legacy.toolCallId : `${String(legacy.type)}:${index}`;
+    }
   }
 }

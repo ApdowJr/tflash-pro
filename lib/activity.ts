@@ -101,7 +101,7 @@ export function activityRows(
 type Usage = { inputTokens?: number; outputTokens?: number; costUsd?: number };
 type Event = {
   type: string;
-  meta?: { id?: string; at?: string };
+  meta?: { id?: string; at?: string; position?: { line: number; index: number } };
   scope?: { turnId?: string; taskId?: string; callId?: string; runId?: string };
   data?: unknown;
 };
@@ -165,10 +165,9 @@ function readUsage(value: unknown): Usage {
     costUsd: number(v.costUsd),
   };
 }
-/** Prefer cumulative checkpoints and add only subsequent identifiable steps.
+/** Prefer cumulative checkpoints and sum only identifiable usage facts.
  * A missing value makes that metric unknown, rather than presenting a partial
- * token or cost sum as a total. Replayed steps must not be counted twice.
- * Checkpoints are provider-reported and may themselves omit unpriced calls.
+ * token or cost sum as a total. Replayed runs must not be counted twice.
  */
 export function reportedUsage(events: readonly Event[]) {
   const keys = ["inputTokens", "outputTokens", "costUsd"] as const;
@@ -180,9 +179,11 @@ export function reportedUsage(events: readonly Event[]) {
   const ambiguous = new Set<Metric>();
   const ids = new Set<string>();
   for (const event of events) {
-    if (event.meta?.id) {
-      if (ids.has(event.meta.id)) continue;
-      ids.add(event.meta.id);
+    const position = event.meta?.position;
+    const eventId = event.meta?.id ?? (position ? JSON.stringify([position.line, position.index]) : undefined);
+    if (eventId) {
+      if (ids.has(eventId)) continue;
+      ids.add(eventId);
     }
     const data = event.data && typeof event.data === "object" ? event.data as Record<string, unknown> : {};
     if (["session.waiting", "session.failed", "session.completed", "turn.waiting"].includes(event.type)) {
@@ -192,9 +193,10 @@ export function reportedUsage(events: readonly Event[]) {
       ambiguous.clear();
     } else if (event.type === "usage.recorded") {
       const owner = record(data.owner);
-      const ownerId = typeof owner?.runId === "string" ? owner.runId :
-        typeof owner?.callId === "string" ? owner.callId :
-          typeof owner?.changeId === "string" ? owner.changeId : event.meta?.id;
+      const ownerId = typeof owner?.runId === "string" ? `run:${owner.runId}` :
+        typeof owner?.callId === "string" ? `call:${owner.callId}` :
+          typeof owner?.changeId === "string" ? `change:${owner.changeId}` :
+            event.meta?.id ? `event:${event.meta.id}` : position ? `position:${position.line}:${position.index}` : undefined;
       if (!ownerId) {
         keys.forEach((key) => ambiguous.add(key));
         continue;

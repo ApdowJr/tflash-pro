@@ -1,4 +1,4 @@
-// Maintainer-only generator for `pnpm patch eve@0.83.2 --edit-dir <dir>`.
+// Maintainer-only generator for `pnpm patch eve@1.0.0-rc.1 --edit-dir <dir>`.
 // Not a postinstall hook. pnpm applies the committed, lockfile-hashed patch.
 import { readFile, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
