@@ -109,6 +109,8 @@ Finished Markdown, text, CSV and JSON deliverables appear as preview/download ca
 
 Select **Coder** for repository work. Its optional **Insert task template** button adds editable repository, branch, task and test fields to your draft without sending it or connecting anything. Do not put credentials in the draft. The agent is instructed to inspect the target repository and its project instructions, preserve existing changes, implement focused changes and report actual checks and blockers. It should reconcile conflicting revisions and review uncertain writes before retrying, rather than overwrite work or assume an action succeeded. Plans and these instructions guide the model; they do not enforce a development workflow or guarantee correctness.
 
+The approval-gated `inspect_coding_workspace` tool can observe the sandbox workspace root's Git HEAD, branch and tracked-change flags. It does not inspect untracked files, prove the remote identity or synchronization, run tests or establish completion; observations are sequential and can become stale. Git commands can be influenced by untrusted repository data, so inspect the approval before allowing them.
+
 A GitHub connection does not mount a repository into the shell sandbox. Shell tests only verify the files actually present there; they do not prove a remote repository was tested unless the files and revision are known to match. GitHub tools, shell commands and other external calls still require approval. Available tools, permissions, provider limits and the per-turn allowance constrain what the agent can complete; there is no unlimited or automatic background execution. Live GitHub and sandbox connectivity must be configured and verified separately.
 
 ## Research with traceable sources
