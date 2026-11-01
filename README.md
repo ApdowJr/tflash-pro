@@ -105,6 +105,12 @@ A conversation can also track a user-specified file SHA-256 criterion. A match i
 
 Finished Markdown, text, CSV and JSON deliverables appear as preview/download cards. Content stays in the owned conversation's workflow data, not a public bucket. Downloads are text-only and bounded to 100,000 characters; original downloads never execute code. Markdown/plain-text cards also offer explicit user-click PDF/DOCX conversion (50,000 characters / 2,000 lines). Review generated content before using it. See [the phased agent roadmap](docs/agent-roadmap.md) for implementation details and storage/usage limitations.
 
+## Coder mode
+
+Select **Coder** for repository work. Its optional **Insert task template** button adds editable repository, branch, task and test fields to your draft without sending it or connecting anything. Do not put credentials in the draft. The agent is instructed to inspect the target repository and its project instructions, preserve existing changes, implement focused changes and report actual checks and blockers. It should reconcile conflicting revisions and review uncertain writes before retrying, rather than overwrite work or assume an action succeeded. Plans and these instructions guide the model; they do not enforce a development workflow or guarantee correctness.
+
+A GitHub connection does not mount a repository into the shell sandbox. Shell tests only verify the files actually present there; they do not prove a remote repository was tested unless the files and revision are known to match. GitHub tools, shell commands and other external calls still require approval. Available tools, permissions, provider limits and the per-turn allowance constrain what the agent can complete; there is no unlimited or automatic background execution. Live GitHub and sandbox connectivity must be configured and verified separately.
+
 ## Research with traceable sources
 
 Ask Tflash to research a topic and create a downloadable report. It uses Eve's existing provider-managed search where supported, reads public HTTPS pages with per-call approval unless an active exact-homepage grant applies, and shows requested source URLs, retrieval times and excerpts. A Markdown report accepts only app-issued source receipts from the same account/chat and requires citations and limitations. Retrieved evidence and AI synthesis are labelled separately; retrieval does not independently verify the claims.

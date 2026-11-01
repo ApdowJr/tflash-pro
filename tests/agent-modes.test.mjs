@@ -32,3 +32,14 @@ test("Coder and Research instructions preserve approval boundaries and truthful 
   assert.match(research, /Somali/);
   assert.match(agentModeContext("chat", "en"), /general assistance/);
 });
+test("Coder workflow distinguishes sandbox evidence, remote writes and interrupted work", () => {
+  const coder = agentModeContext("coder", "en");
+  assert.match(coder, /not automatically mounted/);
+  assert.match(coder, /tested files and revision are shown to match/);
+  assert.match(coder, /do not overwrite a newer remote revision/);
+  assert.match(coder, /Re-read and reconcile conflicts/);
+  assert.match(coder, /regression tests/);
+  assert.match(coder, /never blindly repeat an uncertain external write/);
+  assert.match(coder, /report skipped or unavailable checks/);
+  assert.match(coder, /do not promise unlimited or background execution/);
+});
