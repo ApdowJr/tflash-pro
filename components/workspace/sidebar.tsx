@@ -7,6 +7,7 @@ import {
   PencilIcon,
   SearchIcon,
   Settings2Icon,
+  SparklesIcon,
   Trash2Icon,
   XIcon,
 } from "lucide-react";
@@ -151,23 +152,22 @@ export function Sidebar({
       <aside
         id="conversation-sidebar"
         className={cn(
-          "tf-safe-x fixed inset-y-0 left-0 z-50 flex w-[min(17.5rem,86vw)] flex-col bg-sidebar transition-transform duration-200 ease-out lg:static lg:z-auto lg:w-[17.5rem] lg:translate-x-0",
-          "tflash-hairline",
-          open ? "visible translate-x-0 shadow-xl lg:shadow-none" : "invisible -translate-x-full lg:visible",
+          "tf-safe-x fixed inset-y-0 left-0 z-50 flex w-[min(17.5rem,86vw)] flex-col border-r border-border/70 bg-[linear-gradient(180deg,rgba(26,24,23,0.96),rgba(18,17,16,0.97))] text-foreground transition-transform duration-200 ease-out lg:static lg:z-auto lg:w-[17.5rem] lg:translate-x-0",
+          open ? "visible translate-x-0 shadow-2xl lg:shadow-none" : "invisible -translate-x-full lg:visible",
         )}
       >
-        <div className="flex h-14 shrink-0 items-center justify-between gap-2 px-3.5">
+        <div className="flex h-16 shrink-0 items-center justify-between gap-2 border-b border-white/8 px-3.5">
           <button
-            className="flex items-center gap-2 rounded-md text-left transition-opacity hover:opacity-75"
+            className="flex items-center gap-2 rounded-lg px-1.5 py-1 text-left transition-opacity hover:opacity-80"
             onClick={onNewChat}
             type="button"
           >
-            <FlashLockup />
+            <FlashLockup className="text-white" markClassName="size-6" wordmarkClassName="text-[14px]" />
           </button>
           <button
             ref={closeButtonRef}
             aria-label={t("closeMenu")}
-            className="-mr-1 flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground lg:hidden"
+            className="-mr-1 flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground lg:hidden"
             onClick={onClose}
             type="button"
           >
@@ -175,15 +175,15 @@ export function Sidebar({
           </button>
         </div>
 
-        <div className="px-3 pb-2">
+        <div className="px-3 pb-2 pt-3">
           <button
-            className="flex h-10 w-full items-center gap-2 rounded-lg border border-border/80 bg-card px-2.5 text-[13px] font-medium text-foreground shadow-xs transition-colors hover:bg-accent lg:h-9"
+            className="flex h-11 w-full items-center gap-2 rounded-xl border border-[#f3bd56]/40 bg-[linear-gradient(135deg,#f3bd56,#f4c97f)] px-2.5 text-[13px] font-semibold text-[#1d1a17] shadow-[0_12px_24px_-18px_rgba(243,189,86,0.9)] transition-transform hover:-translate-y-0.5 lg:h-10"
             onClick={onNewChat}
             type="button"
           >
-            <MessageSquarePlusIcon className="size-4 text-muted-foreground" />
+            <MessageSquarePlusIcon className="size-4" />
             {t("newChat")}
-            <kbd className="ml-auto hidden rounded border border-border/70 bg-muted px-1 py-0.5 font-sans text-[10px] text-muted-foreground sm:block">
+            <kbd className="ml-auto hidden rounded border border-[#1d1a17]/15 bg-[#fff2d1] px-1 py-0.5 font-sans text-[10px] text-[#3f352b] sm:block">
               ⌘⇧O
             </kbd>
           </button>
@@ -195,7 +195,7 @@ export function Sidebar({
             <input
               ref={searchInputRef}
               aria-label={t("searchChats")}
-              className="h-10 w-full rounded-md bg-transparent pr-11 pl-8 text-[13px] text-foreground placeholder:text-muted-foreground/80 focus:bg-card focus:ring-1 focus:ring-border focus:outline-none lg:h-8"
+              className="h-10 w-full rounded-xl border border-white/8 bg-white/4 pr-11 pl-8 text-[13px] text-foreground placeholder:text-muted-foreground/80 transition-colors focus:border-[#f3bd56]/55 focus:bg-white/5 focus:outline-none focus:ring-2 focus:ring-[#f3bd56]/20"
               onChange={(event) => setQuery(event.target.value)}
               maxLength={MAX_MESSAGE_QUERY_LENGTH}
               placeholder={t("searchChats")}
@@ -210,24 +210,16 @@ export function Sidebar({
           </div>
         </div>
 
-        <div aria-live="polite" className="px-3 text-xs leading-relaxed text-muted-foreground" role="status">
+        <div aria-live="polite" className="px-3 pt-2 text-xs leading-relaxed text-muted-foreground" role="status">
           {contentSearch.tooShort ? <p className="py-1">{t("searchMessagesMinimum")}</p> : null}
           {contentSearch.searching ? (
-            <p className="py-1">{t("searchingMessages")}{" "}
-              <span aria-label={t("searchingMessages")} aria-valuemax={contentSearch.total} aria-valuemin={0} aria-valuenow={contentSearch.completed} role="progressbar">
-                ({contentSearch.completed}/{contentSearch.total})
-              </span>
-            </p>
+            <p className="py-1 flex items-center gap-2">{t("searchingMessages")} <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.12em] text-[#f3bd56]"> <SparklesIcon className="size-3" /> {contentSearch.completed}/{contentSearch.total}</span></p>
           ) : null}
           {contentSearch.finished && contentSearch.failed === 0 ? (
-            <p className="py-1">{t("searchMessagesComplete")}{" "}
-              <button className="inline-flex min-h-10 items-center rounded px-1 underline focus-visible:outline focus-visible:outline-2 lg:min-h-8" onClick={contentSearch.retry} type="button">{t("searchAgain")}</button>
-            </p>
+            <p className="py-1">{t("searchMessagesComplete")}<button className="inline-flex min-h-10 items-center rounded px-1 underline focus-visible:outline focus-visible:outline-2 lg:min-h-8" onClick={contentSearch.retry} type="button">{t("retry")}</button></p>
           ) : null}
           {!contentSearch.searching && contentSearch.failed > 0 ? (
-            <p className="py-1">{t("searchMessagesIncomplete")} ({contentSearch.failed}){" "}
-              <button className="inline-flex min-h-10 items-center rounded px-1 underline focus-visible:outline focus-visible:outline-2 lg:min-h-8" onClick={contentSearch.retry} type="button">{t("searchRetry")}</button>
-            </p>
+            <p className="py-1">{t("searchMessagesIncomplete")} ({contentSearch.failed})<button className="inline-flex min-h-10 items-center rounded px-1 underline focus-visible:outline focus-visible:outline-2 lg:min-h-8" onClick={contentSearch.retry} type="button">{t("retry")}</button></p>
           ) : null}
         </div>
         {historyError ? (
@@ -237,20 +229,20 @@ export function Sidebar({
         ) : null}
         {chatActionStorageError ? <p className="px-3 py-2 text-xs text-destructive" role="alert">{t("chatActionStorageUnavailable")}</p> : null}
         {chatActionWarnings.map((warning) => <ChatActionReview key={warning.key} warning={warning} acknowledge={acknowledgeChatAction} />)}
-        <nav aria-label={t("chats")} className="tflash-scroll min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+        <nav aria-label={t("chats")} className="tflash-scroll min-h-0 flex-1 overflow-y-auto px-2 pb-2 pt-2">
           {groups.length === 0 ? (
-            hydrated && !historyError && !contentSearch.searching && !contentSearch.tooShort && contentSearch.failed === 0 ? (
-              <p className="px-2.5 py-6 text-pretty text-muted-foreground text-xs leading-relaxed">
-                {query.trim().length > 0 ? t("noChatResults") : t("noChats")}
-              </p>
-            ) : null
+            <div className="rounded-2xl border border-white/8 bg-white/3 px-3 py-4 text-center text-[12px] text-muted-foreground">
+              {hydrated && !historyError && !contentSearch.searching && !contentSearch.tooShort && contentSearch.failed === 0 ? (
+                query.trim().length > 0 ? t("noChatResults") : t("noChats")
+              ) : null}
+            </div>
           ) : (
             groups.map((group) => (
               <section className="pt-3" key={group.key}>
-                <h2 className="px-2.5 pb-1 font-medium text-[11px] text-muted-foreground/85 uppercase tracking-[0.08em]">
+                <h2 className="px-2.5 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/85">
                   {t(group.key)}
                 </h2>
-                <ul className="space-y-px">
+                <ul className="space-y-1">
                   {group.chats.map((chat) => {
                     const active = chat.id === activeChatId;
                     const snippet = Object.hasOwn(contentSearch.matches, chat.id) ? contentSearch.matches[chat.id] : undefined;
@@ -259,11 +251,11 @@ export function Sidebar({
                         <a
                           aria-current={active ? "page" : undefined}
                           className={cn(
-                            "flex min-w-0 items-center rounded-md pr-9 pl-2.5 text-[13px] transition-colors",
-                            snippet ? "min-h-14 py-2" : "h-10 lg:h-8",
+                            "flex min-w-0 items-center rounded-xl pr-9 pl-2.5 text-[13px] transition-all",
+                            snippet ? "min-h-14 py-2" : "h-10 lg:h-9",
                             active
-                              ? "bg-accent font-medium text-foreground"
-                              : "text-muted-foreground hover:bg-accent/70 hover:text-foreground",
+                              ? "bg-white/8 font-medium text-foreground shadow-inner shadow-white/5"
+                              : "text-muted-foreground hover:bg-white/5 hover:text-foreground",
                           )}
                           href={`/s/${encodeURIComponent(chat.id)}`}
                         >
@@ -271,7 +263,7 @@ export function Sidebar({
                             <span className="truncate">{chat.title}</span>
                             {snippet ? (
                               <span className="line-clamp-2 break-words text-[11px] font-normal leading-snug text-muted-foreground">
-                                {snippet.before}<mark className="rounded-sm bg-primary/15 text-foreground">{snippet.match}</mark>{snippet.after}
+                                {snippet.before}<mark className="rounded-sm bg-[#f3bd56]/20 text-foreground">{snippet.match}</mark>{snippet.after}
                               </span>
                             ) : null}
                           </span>
@@ -280,7 +272,7 @@ export function Sidebar({
                           <DropdownMenuTrigger asChild>
                             <button
                               aria-label={`${t("chatActions")}: ${chat.title}`}
-                              className="tf-reveal absolute top-1/2 right-1 flex size-8 -translate-y-1/2 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-background hover:text-foreground focus-visible:opacity-100 data-[state=open]:opacity-100 group-hover/chat:opacity-100 lg:size-6"
+                              className="tf-reveal absolute top-1/2 right-1 flex size-8 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-white/5 hover:text-foreground group-hover/chat:opacity-100"
                               type="button"
                             >
                               <MoreHorizontalIcon className="size-4" />
@@ -304,9 +296,9 @@ export function Sidebar({
           )}
         </nav>
 
-        <div className="tf-safe-bottom shrink-0 border-t border-border/70 p-2">
+        <div className="tf-safe-bottom shrink-0 border-t border-white/8 bg-white/2 p-2">
           <button
-            className="flex h-10 w-full items-center gap-2.5 rounded-md px-2 text-[13px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground lg:h-8"
+            className="flex h-10 w-full items-center gap-2.5 rounded-xl px-2 text-[13px] text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground lg:h-8"
             onClick={onOpenSettings}
             type="button"
           >
@@ -358,7 +350,7 @@ function ChatActionReview({ warning, acknowledge }: { readonly warning: ChatActi
   const { t } = useAppSettings();
   const [reviewed, setReviewed] = useState(false);
   const label = warning.action === "activity" ? t("chatActionActivity") : warning.action === "rename" ? t("chatActionRename") : warning.action === "remove" ? t("chatActionRemove") : t("chatActionUnknown");
-  return <div className="mx-3 mb-2 rounded-md border border-destructive/50 p-2 text-xs" role="alert">
+  return <div className="mx-3 mb-2 rounded-xl border border-destructive/50 bg-destructive/5 p-2 text-xs" role="alert">
     <p>{t("chatActionUncertain")}</p>
     <p className="mt-1 break-all font-medium">{label}: {warning.chatId ?? t("chatActionUnknown")}</p>
     <label className="mt-2 flex items-start gap-2"><input type="checkbox" checked={reviewed} onChange={(event) => setReviewed(event.target.checked)} />{t("chatActionReviewLabel")}</label>
@@ -377,8 +369,6 @@ function AccountMenu({ account }: { readonly account: Account }) {
     setPending(true);
     setSignOutError(false);
     try {
-      // Both cookie sets can be present at once. Do not claim success if
-      // either sign-out failed, or if an authenticated session remains.
       const [supabaseResult, vercelResult] = await Promise.allSettled([
         browserSupabase().auth.signOut({ scope: "local" }),
         authClient.signOut(),
@@ -401,10 +391,10 @@ function AccountMenu({ account }: { readonly account: Account }) {
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
-          className="mt-1 flex h-11 w-full items-center gap-2.5 rounded-md px-2 text-left transition-colors hover:bg-accent lg:h-9"
+          className="mt-1 flex h-11 w-full items-center gap-2.5 rounded-xl px-2 text-left transition-colors hover:bg-white/5 lg:h-9"
           type="button"
         >
-          <span className="relative flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted text-[10px] font-medium text-muted-foreground">
+          <span className="relative flex size-7 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white/8 text-[10px] font-medium text-muted-foreground ring-1 ring-white/10">
             {account.image && !imageFailed ? (
               <img
                 alt=""
@@ -417,9 +407,7 @@ function AccountMenu({ account }: { readonly account: Account }) {
             )}
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block truncate font-medium text-[13px] text-foreground">
-              {account.name}
-            </span>
+            <span className="block truncate font-medium text-[13px] text-foreground">{account.name}</span>
             <span className="block truncate text-[11px] text-muted-foreground">{account.email}</span>
           </span>
         </button>
@@ -446,3 +434,4 @@ function getInitials(name: string, email: string): string {
   }
   return (parts[0]?.[0] ?? email[0] ?? "?").toUpperCase();
 }
+
