@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { DocumentImportButton } from "./documents";
 import { VoiceInputButton } from "./voice-input";
-import { FileIcon, PaperclipIcon, SquareIcon, XIcon } from "lucide-react";
+import { BookOpenIcon, BracesIcon, FileIcon, FileSearchIcon, MessageSquareTextIcon, PaperclipIcon, SquareIcon, XIcon } from "lucide-react";
 import {
   PromptInput,
   PromptInputButton,
@@ -123,21 +123,27 @@ export function ChatComposer({
 }
 
 export function AgentModePicker({ mode, onChange, language, disabled }: { mode: AgentMode; onChange?: (mode: AgentMode) => void; language: "en" | "so"; disabled: boolean }) {
+  const icons = { chat: MessageSquareTextIcon, coder: BracesIcon, research: FileSearchIcon };
   return (
-    <div aria-label={language === "so" ? "Habka agent-ka" : "Agent mode"} className="mb-2 flex flex-wrap gap-1" role="group">
-      {AGENT_MODES.map((item) => (
-        <button
-          aria-pressed={mode === item.id}
-          className={`tf-touch-target min-h-11 rounded-full border px-3 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${mode === item.id ? "border-foreground/25 bg-accent font-medium text-foreground" : "border-transparent text-muted-foreground hover:bg-accent/60 hover:text-foreground"}`}
-          disabled={disabled || !onChange}
-          key={item.id}
-          onClick={() => onChange?.(item.id)}
-          title={item.hint[language]}
-          type="button"
-        >
-          {item.label[language]}
-        </button>
-      ))}
+    <div aria-label={language === "so" ? "Habka agent-ka" : "Agent mode"} className="mb-2 flex flex-wrap items-center gap-1.5" role="group">
+      {AGENT_MODES.map((item) => {
+        const Icon = icons[item.id];
+        const selected = mode === item.id;
+        return (
+          <button
+            aria-pressed={selected}
+            className={`tf-touch-target inline-flex min-h-11 items-center gap-1.5 rounded-lg border px-3 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${selected ? "border-foreground/15 bg-foreground text-background shadow-sm" : "border-transparent text-muted-foreground hover:border-border/70 hover:bg-muted/70 hover:text-foreground"}`}
+            disabled={disabled || !onChange}
+            key={item.id}
+            onClick={() => onChange?.(item.id)}
+            title={item.hint[language]}
+            type="button"
+          >
+            <Icon aria-hidden="true" className="size-3.5" />
+            {item.label[language]}
+          </button>
+        );
+      })}
     </div>
   );
 }

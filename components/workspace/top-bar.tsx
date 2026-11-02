@@ -7,7 +7,6 @@ import {
   MessageSquarePlusIcon,
   MoreHorizontalIcon,
   Settings2Icon,
-  SparklesIcon,
 } from "lucide-react";
 import { FlashLockup } from "@/components/brand/logo";
 import { Button } from "@/components/ui/button";
@@ -47,12 +46,12 @@ export function TopBar({
   const connected = isConnected(selection.providerId);
 
   return (
-    <header className="tf-topbar tf-safe-x flex h-16 shrink-0 items-center gap-2 border-b border-[#f3cf8a]/15 bg-[radial-gradient(circle_at_top,_rgba(243,189,86,0.12),transparent_30%),linear-gradient(180deg,rgba(17,15,14,0.92),rgba(22,20,18,0.96))] px-3 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-xl sm:px-4">
+    <header className="tf-topbar tf-safe-x relative z-10 flex h-14 shrink-0 items-center gap-2 border-b border-border/70 bg-background/90 px-3 text-foreground backdrop-blur-xl sm:px-5">
       <button
         aria-label={t("openMenu")}
         aria-controls="conversation-sidebar"
         aria-expanded={sidebarOpen}
-        className="-ml-1 flex size-11 min-h-11 min-w-11 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-white/80 shadow-[0_10px_30px_-20px_rgba(0,0,0,0.9)] transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f3bd56]/50 focus-visible:ring-offset-2 focus-visible:ring-offset-[#120f0d] lg:hidden"
+        className="-ml-1 flex size-11 min-h-11 min-w-11 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 lg:hidden"
         onClick={onOpenSidebar}
         type="button"
       >
@@ -60,18 +59,12 @@ export function TopBar({
       </button>
 
       <div className="flex min-w-0 flex-1 items-center gap-2.5">
-        <div className="hidden items-center gap-2 rounded-full border border-[#f3bd56]/25 bg-[#f3bd56]/8 px-2.5 py-1.5 text-[11px] font-medium text-[#f7d38c] md:flex">
-          <SparklesIcon className="size-3.5" />
-          <span>Live</span>
-        </div>
         {title ? (
-          <div className="min-w-0 flex-1 rounded-xl border border-white/10 bg-white/4 px-2.5 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
-            <p className="truncate font-medium text-[13px] text-white">{title}</p>
-          </div>
+          <p className="min-w-0 truncate font-medium text-[13px] text-foreground">{title}</p>
         ) : (
           <div className="flex min-w-0 items-center gap-2">
             <FlashLockup className="hidden sm:block" markClassName="size-6" wordmarkClassName="text-[14px]" />
-            <span className="hidden text-[11px] font-medium uppercase tracking-[0.14em] text-white/70 md:inline">Workspace</span>
+            <span className="hidden text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground md:inline">Workspace</span>
           </div>
         )}
       </div>
@@ -79,7 +72,7 @@ export function TopBar({
       <div className="flex items-center gap-2">
         <button
           aria-label={`${t("chooseModel")}: ${modelName}${provider ? ` · ${provider.name}` : ""}`}
-          className="group flex h-11 min-h-11 min-w-0 max-w-[62vw] items-center gap-1.5 rounded-full border border-white/10 bg-white/5 pr-2 pl-2.5 text-[12px] shadow-[0_12px_30px_-18px_rgba(0,0,0,0.9)] transition-colors hover:border-[#f3bd56]/30 hover:bg-white/8 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f3bd56]/50 focus-visible:ring-offset-2 focus-visible:ring-offset-[#120f0d]"
+          className="group flex h-11 min-h-11 min-w-0 max-w-[62vw] items-center gap-1.5 rounded-xl border border-border/70 bg-card px-2.5 text-[12px] transition-colors hover:border-[#c9953d]/40 hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
           onClick={onOpenModels}
           title={t("modelPickerHint")}
           type="button"
@@ -88,11 +81,11 @@ export function TopBar({
             aria-hidden="true"
             className={cn(
               "size-1.5 shrink-0 rounded-full",
-              connected ? "bg-emerald-400 shadow-[0_0_0_3px_rgba(52,211,153,0.16)]" : "bg-white/30",
+              connected ? "bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.12)]" : "bg-muted-foreground/40",
             )}
           />
-          <span className="max-w-[7rem] truncate font-medium text-white sm:max-w-[13rem]">{modelName}</span>
-          {provider ? <span className="hidden truncate text-white/65 sm:inline">{provider.name}</span> : null}
+          <span className="max-w-[7rem] truncate font-medium text-foreground sm:max-w-[13rem]">{modelName}</span>
+          {provider ? <span className="hidden truncate text-muted-foreground sm:inline">{provider.name}</span> : null}
           <ChevronDownIcon className="size-3 shrink-0 text-white/65 transition-transform group-hover:translate-y-px" />
         </button>
 
@@ -100,7 +93,7 @@ export function TopBar({
           <DropdownMenuTrigger asChild>
             <Button
               aria-label={t("moreActions")}
-              className="tf-touch-target min-h-11 min-w-11 text-white/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f3bd56]/50 focus-visible:ring-offset-2 focus-visible:ring-offset-[#120f0d]"
+              className="tf-touch-target min-h-11 min-w-11 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               size="icon-sm"
               type="button"
               variant="ghost"
