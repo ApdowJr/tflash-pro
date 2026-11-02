@@ -58,10 +58,10 @@ test("the create-account link opens the right auth tab", () => {
 test("the landing page is bilingual, accessible and honest about limits", () => {
   const landing = read("components/marketing/landing-page.tsx");
   for (const copy of [
-    "speaks your language.",
-    "luqaddaada.",
-    "Approval is the default, not a setting.",
-    "Fasax waa default-ka, ma aha setting.",
+    "The interface and assistant stay fluent in Somali and English",
+    "Interface-ka iyo kaaliyuhu waxay ku hadlaan Soomaali iyo English",
+    "Approval is the default, not a feature.",
+    "Fasaxgu waa default-ka, ma aha muuqaal.",
     "No product can promise perfect security.",
     "Ma jiro badeecad dammaanad qaadi karta amni qumman.",
   ]) {
