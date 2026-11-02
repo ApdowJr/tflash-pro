@@ -206,10 +206,10 @@ export function Sidebar({
             <p className="py-1 flex items-center gap-2">{t("searchingMessages")} <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.12em] text-[#f3bd56]"> <SparklesIcon className="size-3" /> {contentSearch.completed}/{contentSearch.total}</span></p>
           ) : null}
           {contentSearch.finished && contentSearch.failed === 0 ? (
-            <p className="py-1">{t("searchMessagesComplete")}<button className="inline-flex min-h-10 items-center rounded px-1 underline focus-visible:outline focus-visible:outline-2 lg:min-h-8" onClick={contentSearch.retry} type="button">{t("retry")}</button></p>
+            <p className="py-1">{t("searchMessagesComplete")}<button className="inline-flex min-h-10 items-center rounded px-1 underline focus-visible:outline focus-visible:outline-2 lg:min-h-8" onClick={contentSearch.retry} type="button">{t("searchAgain")}</button></p>
           ) : null}
           {!contentSearch.searching && contentSearch.failed > 0 ? (
-            <p className="py-1">{t("searchMessagesIncomplete")} ({contentSearch.failed})<button className="inline-flex min-h-10 items-center rounded px-1 underline focus-visible:outline focus-visible:outline-2 lg:min-h-8" onClick={contentSearch.retry} type="button">{t("retry")}</button></p>
+            <p className="py-1">{t("searchMessagesIncomplete")} ({contentSearch.failed})<button className="inline-flex min-h-10 items-center rounded px-1 underline focus-visible:outline focus-visible:outline-2 lg:min-h-8" onClick={contentSearch.retry} type="button">{t("searchRetry")}</button></p>
           ) : null}
         </div>
         {historyError ? <div className="px-3 py-2 text-xs text-red-300" role="alert">{t(historyError)} <button className="underline" onClick={() => void refreshChats()} type="button">{t("refresh")}</button></div> : null}

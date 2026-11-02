@@ -1,3 +1,4 @@
+engineStrict: true
 minimumReleaseAge: 0
 minimumReleaseAgeStrict: true
 allowBuilds:

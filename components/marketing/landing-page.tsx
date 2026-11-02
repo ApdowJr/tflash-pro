@@ -297,7 +297,7 @@ const copy = {
       },
     ],
     securityNote:
-      "Ma jiraa badeecad dammaanad qaadi karta amni qumman. Mashruucu wuxuu qeexayaa xaddidaadaha, kharashka la yaqaan, iyo xadka ogolaanshaha si cad README-ka iyo hagidda shaqada.",
+      "Ma jiro badeecad dammaanad qaadi karta amni qumman. Mashruucu wuxuu qeexayaa xaddidaadaha, kharashka la yaqaan, iyo xadka ogolaanshaha si cad README-ka iyo hagidda shaqada.",
     faqKicker: "Su’aalo",
     faqTitle: "Jawaabaha gaaban.",
     faqs: [
