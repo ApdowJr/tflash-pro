@@ -699,7 +699,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
                 : `tflash:chat-scroll:${activeSessionId}`
             }
           >
-            <ConversationContent className="tflash-scroll mx-auto w-full max-w-2xl gap-6 px-4 pt-4 pb-8 sm:gap-7 sm:px-6">
+            <ConversationContent className="tflash-scroll mx-auto w-full max-w-3xl gap-6 px-4 pt-5 pb-8 sm:gap-7 sm:px-8">
               {agent.messages.map((message, index) =>
                 showPendingThinking &&
                 isPendingAssistantShell &&
@@ -736,7 +736,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
         )}
 
         <div className="tf-safe-bottom tf-chat-dock shrink-0 pt-1">
-          <div className="mx-auto w-full max-w-2xl">
+          <div className="mx-auto w-full max-w-3xl">
             {preparationError ? (
               <div className="mb-3 rounded-md border border-destructive/30 px-3 py-2 text-destructive text-sm" role="alert">
                 {preparationError}{canRetry ? <button className="ml-2 min-h-11 rounded px-1 underline focus-visible:outline focus-visible:outline-2" onClick={onRetry} type="button">{t("retry")}</button> : null}
