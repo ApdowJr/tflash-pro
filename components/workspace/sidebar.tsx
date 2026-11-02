@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  FolderIcon,
   LogOutIcon,
   MessageSquarePlusIcon,
   MoreHorizontalIcon,
@@ -39,6 +40,9 @@ import { useAppSettings, type ChatRecord } from "@/components/settings/app-setti
 import { ChatActionUncertainError, type ChatActionWarning } from "@/lib/chat-action-recovery";
 import { authClient } from "@/lib/auth-client";
 import { browserSupabase } from "@/lib/supabase/browser";
+import { useWorkspace } from "@/components/settings/workspace-store";
+import { AgentModePicker } from "@/components/chat/chat-composer";
+import type { AgentMode } from "@/lib/agent-modes";
 
 export type Account = {
   readonly id: string;
@@ -57,6 +61,9 @@ export function Sidebar({
   onClose,
   onNewChat,
   onOpenSettings,
+  onOpenProjects,
+  mode = "chat",
+  onModeChange,
 }: {
   readonly account?: Account;
   readonly activeChatId?: string;
@@ -64,8 +71,12 @@ export function Sidebar({
   readonly onClose: () => void;
   readonly onNewChat: () => void;
   readonly onOpenSettings: () => void;
+  readonly onOpenProjects?: () => void;
+  readonly mode?: AgentMode;
+  readonly onModeChange?: (mode: AgentMode) => void;
 }) {
   const { settings, t, hydrated, accountId, accountKind, renameChat, removeChat, historyError, refreshChats, chatActionWarnings, chatActionStorageError, acknowledgeChatAction } = useAppSettings();
+  const { workspace, ready: workspaceReady } = useWorkspace();
   const [query, setQuery] = useState("");
   const [action, setAction] = useState<ChatAction | null>(null);
   const [title, setTitle] = useState("");
@@ -150,7 +161,7 @@ export function Sidebar({
       <aside
         id="conversation-sidebar"
         className={cn(
-          "tf-safe-x fixed inset-y-0 left-0 z-50 flex w-[min(17.5rem,86vw)] flex-col border-r border-[#f3cf8a]/10 bg-[linear-gradient(180deg,#171512_0%,#1d1b18_100%)] text-foreground shadow-[0_30px_90px_-40px_rgba(0,0,0,0.8)] transition-transform duration-200 ease-out lg:static lg:z-auto lg:w-[17.5rem] lg:translate-x-0",
+          "tf-safe-x fixed inset-y-0 left-0 z-50 flex w-[min(16rem,88vw)] flex-col border-r border-white/10 bg-[#0b0a12] text-foreground shadow-[0_30px_90px_-40px_rgba(0,0,0,0.8)] transition-transform duration-200 ease-out lg:static lg:z-auto lg:w-64 lg:translate-x-0",
           open ? "visible translate-x-0 shadow-2xl lg:shadow-none" : "invisible -translate-x-full lg:visible",
         )}
       >
@@ -171,25 +182,38 @@ export function Sidebar({
 
         <div className="px-3 pb-2 pt-3">
           <button
-            className="flex h-11 w-full items-center gap-2 rounded-xl border border-[#f3bd56]/35 bg-[linear-gradient(135deg,#f3bd56,#f7d479)] px-2.5 text-[13px] font-semibold text-[#1d1a17] shadow-[0_18px_30px_-18px_rgba(243,189,86,0.9)] transition-all hover:-translate-y-0.5"
+            className="flex h-11 w-full items-center gap-2 rounded-xl border border-violet-400/25 bg-[linear-gradient(135deg,#6d28d9,#7c3aed)] px-3 text-[13px] font-semibold text-white shadow-[0_16px_34px_-18px_rgba(109,40,217,0.8)] transition-all hover:-translate-y-0.5 hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0b0a12]"
             onClick={onNewChat}
             type="button"
           >
             <MessageSquarePlusIcon className="size-4" />
             {t("newChat")}
-            <kbd className="ml-auto hidden rounded border border-[#1d1a17]/15 bg-[#fff2d1] px-1 py-0.5 font-sans text-[10px] text-[#3f352b] sm:block">
+            <kbd className="ml-auto hidden rounded border border-white/20 bg-white/10 px-1 py-0.5 font-sans text-[10px] text-white/80 sm:block">
               ⌘⇧O
             </kbd>
           </button>
         </div>
 
         <div className="px-3 pb-1">
+          <button
+            aria-label={`${t("projects")}${workspaceReady && workspace.projects.length ? ` (${workspace.projects.length})` : ""}`}
+            className="flex min-h-10 w-full items-center gap-2.5 rounded-xl px-2.5 text-left text-[13px] text-white/70 transition-colors hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/50"
+            onClick={onOpenProjects}
+            type="button"
+          >
+            <FolderIcon aria-hidden="true" className="size-4 shrink-0 text-violet-200/80" />
+            <span className="flex-1">{t("projects")}</span>
+            {workspaceReady && workspace.projects.length > 0 ? <span className="rounded-md bg-white/7 px-1.5 py-0.5 text-[10px] text-white/60">{workspace.projects.length}</span> : null}
+          </button>
+        </div>
+
+        <div className="px-3 pb-1">
           <div className="relative">
-            <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-white/55" />
+            <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-white/45" />
             <input
               ref={searchInputRef}
               aria-label={t("searchChats")}
-              className="h-10 w-full rounded-xl border border-white/8 bg-white/4 pr-11 pl-8 text-[13px] text-white placeholder:text-white/50 transition-colors focus:border-[#f3bd56]/55 focus:bg-white/5 focus:outline-none focus:ring-2 focus:ring-[#f3bd56]/20"
+              className="h-10 w-full rounded-xl border border-white/10 bg-white/[0.035] pr-11 pl-8 text-[13px] text-white placeholder:text-white/45 transition-colors focus:border-violet-400/45 focus:bg-white/[0.06] focus:outline-none focus:ring-2 focus:ring-violet-400/15"
               onChange={(event) => setQuery(event.target.value)}
               maxLength={MAX_MESSAGE_QUERY_LENGTH}
               placeholder={t("searchChats")}
@@ -203,7 +227,7 @@ export function Sidebar({
         <div aria-live="polite" className="px-3 pt-2 text-xs leading-relaxed text-white/65" role="status">
           {contentSearch.tooShort ? <p className="py-1">{t("searchMessagesMinimum")}</p> : null}
           {contentSearch.searching ? (
-            <p className="py-1 flex items-center gap-2">{t("searchingMessages")} <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.12em] text-[#f3bd56]"> <SparklesIcon className="size-3" /> {contentSearch.completed}/{contentSearch.total}</span></p>
+            <p className="py-1 flex items-center gap-2">{t("searchingMessages")} <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.12em] text-violet-200"> <SparklesIcon className="size-3" /> {contentSearch.completed}/{contentSearch.total}</span></p>
           ) : null}
           {contentSearch.finished && contentSearch.failed === 0 ? (
             <p className="py-1">{t("searchMessagesComplete")}<button className="inline-flex min-h-10 items-center rounded px-1 underline focus-visible:outline focus-visible:outline-2 lg:min-h-8" onClick={contentSearch.retry} type="button">{t("searchAgain")}</button></p>
@@ -215,7 +239,8 @@ export function Sidebar({
         {historyError ? <div className="px-3 py-2 text-xs text-red-300" role="alert">{t(historyError)} <button className="underline" onClick={() => void refreshChats()} type="button">{t("refresh")}</button></div> : null}
         {chatActionStorageError ? <p className="px-3 py-2 text-xs text-red-300" role="alert">{t("chatActionStorageUnavailable")}</p> : null}
         {chatActionWarnings.map((warning) => <ChatActionReview key={warning.key} warning={warning} acknowledge={acknowledgeChatAction} />)}
-        <nav aria-label={t("chats")} className="tflash-scroll min-h-0 flex-1 overflow-y-auto px-2 pb-2 pt-2">
+        <div className="px-3 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.15em] text-white/40">{t("history")}</div>
+        <nav aria-label={t("chats")} className="tflash-scroll min-h-0 flex-1 overflow-y-auto px-2 pb-2 pt-1">
           {groups.length === 0 ? (
             <div className="rounded-2xl border border-white/8 bg-white/3 px-3 py-4 text-center text-[12px] text-white/55">
               {hydrated && !historyError && !contentSearch.searching && !contentSearch.tooShort && contentSearch.failed === 0 ? (query.trim().length > 0 ? t("noChatResults") : t("noChats")) : null}
@@ -235,13 +260,13 @@ export function Sidebar({
                           className={cn(
                             "flex min-w-0 items-center rounded-xl pr-9 pl-2.5 text-[13px] transition-all",
                             snippet ? "min-h-14 py-2" : "h-10 lg:h-9",
-                            active ? "bg-white/8 font-medium text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]" : "text-white/65 hover:bg-white/5 hover:text-white",
+                            active ? "bg-violet-500/15 font-medium text-white shadow-[inset_0_1px_0_rgba(196,181,253,0.06)]" : "text-white/65 hover:bg-white/5 hover:text-white",
                           )}
                           href={`/s/${encodeURIComponent(chat.id)}`}
                         >
                           <span className="flex min-w-0 flex-col gap-0.5">
                             <span className="truncate">{chat.title}</span>
-                            {snippet ? <span className="line-clamp-2 break-words text-[11px] font-normal leading-snug text-white/55">{snippet.before}<mark className="rounded-sm bg-[#f3bd56]/20 text-white">{snippet.match}</mark>{snippet.after}</span> : null}
+                            {snippet ? <span className="line-clamp-2 break-words text-[11px] font-normal leading-snug text-white/55">{snippet.before}<mark className="rounded-sm bg-violet-300/20 text-white">{snippet.match}</mark>{snippet.after}</span> : null}
                           </span>
                         </a>
                         <DropdownMenu>
@@ -262,7 +287,12 @@ export function Sidebar({
           )}
         </nav>
 
-        <div className="tf-safe-bottom shrink-0 border-t border-white/8 bg-white/2 p-2">
+        <section className="shrink-0 border-t border-white/8 px-3 pt-3 pb-2" aria-label={settings.language === "so" ? "Hababka agent-ka" : "Agent modes"}>
+          <h2 className="mb-2 px-1 text-[10px] font-semibold uppercase tracking-[0.15em] text-white/40">{settings.language === "so" ? "Hababka" : "Modes"}</h2>
+          <AgentModePicker mode={mode} onChange={onModeChange} language={settings.language} disabled={false} />
+        </section>
+
+        <div className="tf-safe-bottom shrink-0 border-t border-white/8 bg-white/[0.015] p-2">
           <button className="flex h-10 w-full items-center gap-2.5 rounded-xl px-2 text-[13px] text-white/70 transition-colors hover:bg-white/5 hover:text-white lg:h-8" onClick={onOpenSettings} type="button">
             <Settings2Icon className="size-4 shrink-0" />
             {t("settings")}
@@ -344,7 +374,7 @@ function AccountMenu({ account }: { readonly account: Account }) {
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button className="mt-1 flex h-11 w-full items-center gap-2.5 rounded-xl px-2 text-left transition-colors hover:bg-white/5 lg:h-9" type="button">
-          <span className="relative flex size-7 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white/8 text-[10px] font-medium text-white ring-1 ring-white/10">
+          <span className="relative flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-violet-600/35 text-[10px] font-semibold text-violet-100 ring-1 ring-violet-200/20">
             {account.image && !imageFailed ? <img alt="" className="size-full object-cover" onError={() => setImageFailed(true)} src={account.image} /> : initials}
           </span>
           <span className="min-w-0 flex-1">

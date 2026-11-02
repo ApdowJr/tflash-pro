@@ -7,7 +7,9 @@ export const LANGUAGES: readonly { id: Language; label: string; flag: string }[]
 
 const en = {
   welcome: "How can I help?",
-  subtitle: "Ask a question or choose a suggestion.",
+  greeting: "Welcome,",
+  subtitle: "Choose Chat, Coder, Research, or open your projects.",
+  projectTileHint: "Create a project to group chats and add reusable instructions.",
   placeholder: "Ask Tflash anything…",
   messageInput: "Message Tflash",
   modeChat: "Chat",
@@ -422,7 +424,9 @@ export type TranslationKey = keyof typeof en;
 
 const so: Record<TranslationKey, string> = {
   welcome: "Maxaan kaa caawiyaa?",
-  subtitle: "Su’aal weydii ama dooro talo.",
+  greeting: "Soo dhawoow,",
+  subtitle: "Dooro Chat, Coder ama Research, ama fur mashaariicdaada.",
+  projectTileHint: "Samee mashruuc aad wada-hadallada ku ururiso oo aad ku darto tilmaamo.",
   placeholder: "Wax walba weydii Tflash…",
   messageInput: "Farriin u qor Tflash",
   modeChat: "Sheeko",

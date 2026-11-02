@@ -90,7 +90,7 @@ export type AppSettings = {
 };
 
 const DEFAULT_SETTINGS: AppSettings = {
-  theme: "system",
+  theme: "dark",
   language: "en",
   persona: "general",
   providerId: DEFAULT_PROVIDER_ID,

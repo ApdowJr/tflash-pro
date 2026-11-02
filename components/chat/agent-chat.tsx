@@ -215,7 +215,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   const cancellationEpoch = useRef(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<
-    "providers" | "connections" | "preferences"
+    "providers" | "connections" | "preferences" | "workspace"
   >("providers");
   const [settingsProvider, setSettingsProvider] = useState<string>();
   const [settingsInstance, setSettingsInstance] = useState(0);
@@ -423,7 +423,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   const startNewChat = () => window.location.assign("/");
 
   const openSettings = useCallback(
-    (tab: "providers" | "connections" | "preferences" = "providers", providerId?: string) => {
+    (tab: "providers" | "connections" | "preferences" | "workspace" = "providers", providerId?: string) => {
       setSettingsTab(tab);
       setSettingsProvider(providerId);
       setSettingsInstance((instance) => instance + 1);
@@ -628,8 +628,11 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
       <Sidebar
         account={account}
         activeChatId={activeSessionId}
+        mode={agentMode}
+        onModeChange={(nextMode) => { setAgentMode(nextMode); setSidebarOpen(false); }}
         onClose={() => setSidebarOpen(false)}
         onNewChat={startNewChat}
+        onOpenProjects={() => openSettings("workspace")}
         onOpenSettings={() => openSettings("providers")}
         open={sidebarOpen}
       />
@@ -731,7 +734,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
           </Conversation>
         ) : (
           <div className="tflash-scroll min-h-0 flex-1 overflow-y-auto">
-            <EmptyState />
+            <EmptyState name={account.name} mode={agentMode} onModeChange={setAgentMode} onOpenProjects={() => openSettings("workspace")} />
           </div>
         )}
 
@@ -749,7 +752,6 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
             <ProjectPicker sessionId={sessionId} disabled={isBusy || isResuming} />
             <ChatComposer
               mode={agentMode}
-              onModeChange={setAgentMode}
               isBusy={isBusy}
               isResuming={isResuming || disconnected || unknownDispatch || inputBlocked || stopBlocked || sharedBlocked || !sessionId}
               cancelling={cancelling}

@@ -6,9 +6,13 @@ export function ThemeInitializer() {
   useLayoutEffect(() => {
     try {
       const theme = window.localStorage.getItem("tflash:theme");
-      if (theme === "dark" || theme === "light") {
-        document.documentElement.dataset.theme = theme;
-        document.documentElement.style.colorScheme = theme;
+      const resolved = theme === "dark" || theme === "light" ? theme : theme === "system" ? "system" : "dark";
+      if (resolved === "system") {
+        document.documentElement.removeAttribute("data-theme");
+        document.documentElement.style.removeProperty("color-scheme");
+      } else {
+        document.documentElement.dataset.theme = resolved;
+        document.documentElement.style.colorScheme = resolved;
       }
     } catch {
       // Browser storage can be unavailable.

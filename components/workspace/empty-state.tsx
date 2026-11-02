@@ -1,67 +1,110 @@
 "use client";
 
-import { ArrowUpRightIcon, BookOpenIcon, BracesIcon, LanguagesIcon, ListChecksIcon } from "lucide-react";
+import { BracesIcon, FileSearchIcon, FolderIcon, MessageSquareTextIcon, ArrowUpRightIcon } from "lucide-react";
 import { FlashMark } from "@/components/brand/logo";
-import { usePromptInputController } from "@/components/ai-elements/prompt-input";
 import { useAppSettings } from "@/components/settings/app-settings";
+import { usePromptInputController } from "@/components/ai-elements/prompt-input";
+import { useWorkspace } from "@/components/settings/workspace-store";
+import { AGENT_MODES, type AgentMode } from "@/lib/agent-modes";
 
-const SUGGESTIONS = [
-  { key: "suggestion1" as const, label: "suggestionLearn" as const, icon: BookOpenIcon },
-  { key: "suggestion2" as const, label: "suggestionWrite" as const, icon: LanguagesIcon },
-  { key: "suggestion3" as const, label: "suggestionCode" as const, icon: BracesIcon },
-  { key: "suggestion4" as const, label: "suggestionResearch" as const, icon: ListChecksIcon },
-];
+const MODE_ICONS = {
+  chat: MessageSquareTextIcon,
+  coder: BracesIcon,
+  research: FileSearchIcon,
+} as const;
 
-/** A focused start screen: no synthetic usage metrics or claims. */
-export function EmptyState() {
-  const { t } = useAppSettings();
+const MODE_PROMPTS = {
+  chat: "suggestion1",
+  coder: "suggestion3",
+  research: "suggestion4",
+} as const;
+
+/** A personalized launch surface built only from the signed-in user's real account and workspace. */
+export function EmptyState({
+  name,
+  mode,
+  onModeChange,
+  onOpenProjects,
+}: {
+  readonly name: string;
+  readonly mode: AgentMode;
+  readonly onModeChange: (mode: AgentMode) => void;
+  readonly onOpenProjects: () => void;
+}) {
+  const { t, settings } = useAppSettings();
   const controller = usePromptInputController();
+  const { workspace, ready } = useWorkspace();
 
-  const choose = (text: string) => {
-    controller.textInput.append(text);
+  const selectMode = (nextMode: AgentMode) => {
+    onModeChange(nextMode);
+    controller.textInput.append(t(MODE_PROMPTS[nextMode]));
     window.setTimeout(() => {
       document.querySelector<HTMLTextAreaElement>('[data-slot="input-group-control"]')?.focus();
     }, 0);
   };
 
   return (
-    <div className="tf-rise mx-auto flex w-full max-w-3xl flex-col px-4 pt-[clamp(3.5rem,12vh,8rem)] pb-8 sm:px-6">
-      <div className="mb-8 flex flex-col items-center text-center">
-        <div className="mb-5 rounded-[18px] p-1.5 shadow-[0_8px_24px_-14px_rgba(27,25,22,0.45)] ring-1 ring-border/80">
-          <FlashMark className="size-10 rounded-xl" />
+    <div className="tf-rise mx-auto flex w-full max-w-4xl flex-col px-4 pt-[clamp(2.25rem,8vh,6rem)] pb-8 sm:px-6">
+      <header className="mb-8 flex flex-col items-center text-center">
+        <div className="mb-4 rounded-[18px] bg-violet-500/10 p-2 ring-1 ring-violet-300/15 shadow-[0_12px_42px_-20px_rgba(124,58,237,0.65)]">
+          <FlashMark className="size-11 rounded-xl" />
         </div>
-        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Tflash</p>
-        <h1 className="mt-2 text-balance text-[30px] font-semibold leading-tight tracking-[-0.04em] sm:text-[38px]">
-          {t("welcome")}
+        <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-violet-200/70">Tflash</p>
+        <h1 className="mt-4 max-w-full text-balance text-[clamp(1.8rem,4vw,3.15rem)] font-semibold leading-[1.12] tracking-[-0.045em] text-white">
+          {t("greeting")} <span className="bg-gradient-to-r from-violet-300 via-fuchsia-300 to-violet-200 bg-clip-text text-transparent">{name}</span>
         </h1>
-        <p className="mt-2 max-w-md text-pretty text-[14px] leading-relaxed text-muted-foreground">
-          {t("subtitle")}
-        </p>
-      </div>
+        <p className="mt-3 text-pretty text-[clamp(1.05rem,2vw,1.45rem)] font-medium tracking-[-0.025em] text-white/80">{t("welcome")}</p>
+        <p className="mt-2 max-w-lg text-[13px] leading-relaxed text-white/50">{t("subtitle")}</p>
+      </header>
 
-      <section aria-label={t("startWith")} className="mx-auto w-full max-w-2xl">
+      <section aria-label={settings.language === "so" ? "Dooro habka shaqada" : "Choose a way to work"} className="mx-auto w-full max-w-3xl">
         <div className="mb-3 flex items-center justify-between gap-3 px-1">
-          <h2 className="text-[11px] font-semibold uppercase tracking-[0.13em] text-muted-foreground">{t("startWith")}</h2>
-          <p className="text-[11px] text-muted-foreground/70">{t("suggestionHint")}</p>
+          <h2 className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/45">{t("startWith")}</h2>
+          <p className="text-[10px] text-white/35">{t("suggestionHint")}</p>
         </div>
-        <div className="grid gap-2 sm:grid-cols-2">
-          {SUGGESTIONS.map(({ key, label, icon: Icon }) => (
-            <button
-              className="group flex min-h-[72px] items-center gap-3 rounded-2xl border border-border/75 bg-card/80 px-3.5 py-3 text-left transition duration-150 hover:-translate-y-0.5 hover:border-[#c9953d]/40 hover:bg-card hover:shadow-[0_12px_28px_-20px_rgba(40,33,22,0.4)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-              key={key}
-              onClick={() => choose(t(key))}
-              type="button"
-            >
-              <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-muted text-foreground/75 transition-colors group-hover:bg-[#f3bd56]/20 group-hover:text-[#765323]">
-                <Icon aria-hidden="true" className="size-4" />
+        <div className="grid gap-3 sm:grid-cols-2">
+          {AGENT_MODES.map((item) => {
+            const Icon = MODE_ICONS[item.id];
+            const selected = mode === item.id;
+            return (
+              <button
+                aria-pressed={selected}
+                className={`group flex min-h-[88px] items-center gap-4 rounded-2xl border px-4 py-4 text-left transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/70 focus-visible:ring-offset-2 focus-visible:ring-offset-background ${selected ? "border-violet-400/35 bg-violet-500/[0.12] shadow-[0_12px_38px_-24px_rgba(139,92,246,0.6)]" : "border-white/[0.09] bg-white/[0.035] hover:border-violet-300/25 hover:bg-white/[0.06]"}`}
+                key={item.id}
+                onClick={() => selectMode(item.id)}
+                title={item.hint[settings.language]}
+                type="button"
+              >
+                <span className={`flex size-12 shrink-0 items-center justify-center rounded-[15px] border border-violet-300/15 bg-gradient-to-br from-violet-600/35 to-fuchsia-700/15 text-violet-100 shadow-inner transition-colors ${selected ? "from-violet-500/45 to-fuchsia-600/25" : "group-hover:from-violet-500/40"}`}>
+                  <Icon aria-hidden="true" className="size-5" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[14px] font-semibold text-white">{item.label[settings.language]}</span>
+                  <span className="mt-1 block text-[12px] leading-relaxed text-white/55">{t(MODE_PROMPTS[item.id])}</span>
+                </span>
+                <ArrowUpRightIcon aria-hidden="true" className="size-4 shrink-0 text-white/35 transition-all group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-violet-200" />
+              </button>
+            );
+          })}
+
+          <button
+            aria-label={`${t("projects")}${ready && workspace.projects.length ? ` (${workspace.projects.length})` : ""}`}
+            className="group flex min-h-[88px] items-center gap-4 rounded-2xl border border-white/[0.09] bg-white/[0.035] px-4 py-4 text-left transition duration-150 hover:border-violet-300/25 hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/70 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            onClick={onOpenProjects}
+            type="button"
+          >
+            <span className="flex size-12 shrink-0 items-center justify-center rounded-[15px] border border-violet-300/15 bg-gradient-to-br from-violet-600/35 to-fuchsia-700/15 text-violet-100 shadow-inner">
+              <FolderIcon aria-hidden="true" className="size-5" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="flex items-center gap-2 text-[14px] font-semibold text-white">
+                {t("projects")}
+                {ready && workspace.projects.length > 0 ? <span className="rounded-full bg-violet-300/10 px-2 py-0.5 text-[10px] font-medium text-violet-100/80">{workspace.projects.length}</span> : null}
               </span>
-              <span className="min-w-0 flex-1">
-                <span className="mb-1 block text-[10px] font-medium uppercase tracking-[0.1em] text-muted-foreground">{t(label)}</span>
-                <span className="block text-pretty text-[13px] font-medium leading-snug text-foreground">{t(key)}</span>
-              </span>
-              <ArrowUpRightIcon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground/50 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
-            </button>
-          ))}
+              <span className="mt-1 block text-[12px] leading-relaxed text-white/55">{t("projectTileHint")}</span>
+            </span>
+            <ArrowUpRightIcon aria-hidden="true" className="size-4 shrink-0 text-white/35 transition-all group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-violet-200" />
+          </button>
         </div>
       </section>
     </div>

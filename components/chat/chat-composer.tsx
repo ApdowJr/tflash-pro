@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { DocumentImportButton } from "./documents";
 import { VoiceInputButton } from "./voice-input";
-import { BookOpenIcon, BracesIcon, FileIcon, FileSearchIcon, MessageSquareTextIcon, PaperclipIcon, SquareIcon, XIcon } from "lucide-react";
+import { BracesIcon, FileIcon, FileSearchIcon, MessageSquareTextIcon, PaperclipIcon, SquareIcon, XIcon } from "lucide-react";
 import {
   PromptInput,
   PromptInputButton,
@@ -29,7 +29,6 @@ export function ChatComposer({
   onCancel,
   onSubmit,
   mode = "chat",
-  onModeChange,
 }: {
   readonly isBusy: boolean;
   readonly isResuming: boolean;
@@ -37,7 +36,6 @@ export function ChatComposer({
   readonly onCancel: () => void;
   readonly onSubmit: (message: PromptInputMessage) => Promise<void>;
   readonly mode?: AgentMode;
-  readonly onModeChange?: (mode: AgentMode) => void;
 }) {
   const { t, settings } = useAppSettings();
   const [documentPending, setDocumentPending] = useState(false);
@@ -67,7 +65,6 @@ export function ChatComposer({
           </button>
         </div>
       ))}
-      <AgentModePicker mode={mode} onChange={onModeChange} language={settings.language} disabled={isBusy || isResuming} />
       {mode === "coder" ? (
         <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-border/70 px-3 py-2 text-xs text-muted-foreground">
           <span>{settings.language === "so" ? "Qeex repo-ga iyo branch-ka; hubi gelitaanka iyo tijaabooyinka ka hor inta aan la sheegin in hawshu dhammaatay." : "Specify the repository and branch; verify access and tests before treating work as complete."}</span>
@@ -125,14 +122,14 @@ export function ChatComposer({
 export function AgentModePicker({ mode, onChange, language, disabled }: { mode: AgentMode; onChange?: (mode: AgentMode) => void; language: "en" | "so"; disabled: boolean }) {
   const icons = { chat: MessageSquareTextIcon, coder: BracesIcon, research: FileSearchIcon };
   return (
-    <div aria-label={language === "so" ? "Habka agent-ka" : "Agent mode"} className="mb-2 flex flex-wrap items-center gap-1.5" role="group">
+    <div aria-label={language === "so" ? "Habka agent-ka" : "Agent mode"} className="grid gap-1" role="group">
       {AGENT_MODES.map((item) => {
         const Icon = icons[item.id];
         const selected = mode === item.id;
         return (
           <button
             aria-pressed={selected}
-            className={`tf-touch-target inline-flex min-h-11 items-center gap-1.5 rounded-lg border px-3 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${selected ? "border-foreground/15 bg-foreground text-background shadow-sm" : "border-transparent text-muted-foreground hover:border-border/70 hover:bg-muted/70 hover:text-foreground"}`}
+            className={`tf-touch-target inline-flex min-h-10 w-full items-center gap-2.5 rounded-lg border px-2.5 text-left text-[12px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0b0a12] ${selected ? "border-violet-400/20 bg-violet-500/15 font-medium text-violet-100" : "border-transparent text-white/65 hover:border-white/8 hover:bg-white/5 hover:text-white"}`}
             disabled={disabled || !onChange}
             key={item.id}
             onClick={() => onChange?.(item.id)}
