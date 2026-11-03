@@ -39,10 +39,10 @@ function req(id = "chat-a", query = "needle", headers = {}, signal) {
 }
 function eveResponse(events, tail = events.length - 1) {
   return new Response("\n" + events.map((item) => JSON.stringify(item)).join("\n") + "\n", {
-    headers: { "x-eve-stream-version": "26", "x-eve-stream-tail-index": String(tail) },
+    headers: { "x-eve-stream-version": "27", "x-eve-stream-tail-index": String(tail) },
   });
 }
-const message = (text) => ({ type: "message.received", data: { message: text, parts: [{ type: "text", text }] } });
+const message = (text) => ({ at: "2026-10-31T00:00:00.000Z", facts: [{ type: "delivery.consumed", data: { deliveryId: "d", turnId: "t", parts: [{ kind: "text", text }] } }] });
 
 test("Supabase search checks row ownership and forwards only allowed credentials to the configured Eve origin", async () => {
   rows.clear();
@@ -124,7 +124,7 @@ test("server concurrency is bounded and cancelled requests free their slots", as
   const allStarted = new Promise((resolve) => { ready = resolve; });
   globalThis.fetch = async () => {
     if (++calls === 8) ready();
-    return new Response(new ReadableStream(), { headers: { "x-eve-stream-version": "26", "x-eve-stream-tail-index": "0" } });
+    return new Response(new ReadableStream(), { headers: { "x-eve-stream-version": "27", "x-eve-stream-tail-index": "0" } });
   };
   try {
     const controllers = Array.from({ length: 8 }, () => new AbortController());
@@ -164,7 +164,7 @@ test("an aborted upstream fetch that ignores its signal cannot block a search sl
     const pending=POST(req('chat-a','needle',{[OWNER_PROOF_HEADER]:proof},abort.signal),ctx('chat-a'));
     await started; abort.abort();
     assert.deepEqual(await (await pending).json(),{status:'unavailable'});
-    resolveFetch(new Response(new ReadableStream({cancel(){cancelled=true;}}),{headers:{'x-eve-stream-version':'26','x-eve-stream-tail-index':'0'}}));
+    resolveFetch(new Response(new ReadableStream({cancel(){cancelled=true;}}),{headers:{'x-eve-stream-version':'27','x-eve-stream-tail-index':'0'}}));
     await new Promise(resolve=>setImmediate(resolve));
     assert.equal(cancelled,true);
     globalThis.fetch=async()=>eveResponse([]);

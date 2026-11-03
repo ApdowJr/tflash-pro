@@ -45,6 +45,7 @@ const { browserSupabase } = await import("../lib/supabase/browser.ts");
 const { PromptInputProvider } = await import("../components/ai-elements/prompt-input.tsx");
 const { usePromptInputController } = await import("../components/ai-elements/prompt-input.tsx");
 const { TooltipProvider } = await import("../components/ui/tooltip.tsx");
+const { emptySessionView } = await import("eve/events");
 
 const realFetch = globalThis.fetch;
 const h = React.createElement;
@@ -689,11 +690,11 @@ test("actual chat messages render authored artifacts and reject a lookalike from
   seed();
   fakeFetch();
   const output = { kind: "tflash-artifact", version: 1, artifact: { filename: "result.txt", description: "Result", content: "Done" } };
-  const part = { type: "dynamic-tool", toolName: "create_artifact", toolCallId: "call-1", state: "output-available", input: {}, output };
+  const part = { type: "tool", kind: "tool", name: "create_artifact", label: "Create artifact", callId: "call-1", stepIndex: 0, state: "completed", input: {}, output };
   const props = { canRespond: () => false, isStreaming: false, onInputResponses() {}, questionsFor: () => [], message: { id: "assistant-1", role: "assistant", parts: [part] } };
   const rendered = render(app(h(AgentMessage, props)));
   assert.ok(await screen.findByRole("button", { name: "Download: result.txt" }));
-  rendered.rerender(app(h(AgentMessage, { ...props, message: { ...props.message, parts: [{ ...part, toolName: "unknown_tool" }] } })));
+  rendered.rerender(app(h(AgentMessage, { ...props, message: { ...props.message, parts: [{ ...part, name: "unknown_tool" }] } })));
   assert.equal(screen.queryByRole("button", { name: "Download: result.txt" }), null);
 });
 
@@ -713,7 +714,7 @@ test("research messages show inert bilingual sources and download the actual exe
   URL.createObjectURL = (blob) => { savedBlob = blob; return "blob:research-test"; };
   URL.revokeObjectURL = () => {};
   window.HTMLAnchorElement.prototype.click = function () { savedFilename = this.download; };
-  const props = (toolName, output, state = "output-available") => ({ canRespond: () => false, isStreaming: false, onInputResponses() {}, questionsFor: () => [], message: { id: "research-msg", role: "assistant", parts: [{ type: "dynamic-tool", toolName, toolCallId: "research-call", state, input: {}, output }] } });
+  const props = (toolName, output, state = "completed") => ({ canRespond: () => false, isStreaming: false, onInputResponses() {}, questionsFor: () => [], message: { id: "research-msg", role: "assistant", parts: [{ type: "tool", kind: "tool", name: toolName, label: toolName, callId: "research-call", stepIndex: 0, state, input: {}, output }] } });
   try {
     seed(); fakeFetch();
     const rendered = render(app(h(AgentMessage, props("web_fetch", fetched))));
@@ -735,9 +736,9 @@ test("research messages show inert bilingual sources and download the actual exe
     assert.equal(actual, result.artifact.content);
     assert.ok(actual.includes("[1]: <https://example.com/study>"));
     for (const [name, output, state] of [
-      ["unknown_tool", result, "output-available"],
-      ["create_research_report", result, "input-available"],
-      ["create_research_report", { ...result, sources: [{ ...fetched.source, url: "javascript:alert(1)" }] }, "output-available"],
+      ["unknown_tool", result, "completed"],
+      ["create_research_report", result, "running"],
+      ["create_research_report", { ...result, sources: [{ ...fetched.source, url: "javascript:alert(1)" }] }, "completed"],
     ]) {
       rendered.rerender(app(h(AgentMessage, props(name, output, state))));
       assert.equal(screen.queryByRole("button", { name: "Download: study.md" }), null);
@@ -820,8 +821,8 @@ test("activity UI uses authoritative results, hides arguments and keeps unreport
   const { ActivityPanel } = await import("../components/chat/activity-panel.tsx");
   seed({ language: "so" }); fakeFetch();
   render(app(h(ActivityPanel, { messages: [{ id: "msg", role: "assistant", parts: [
-    { type: "dynamic-tool", toolName: "bash", toolCallId: "call", state: "output-denied", input: { token: "DO-NOT-SHOW" }, approval: { id: "approval", approved: false } },
-  ] }], events: [{ type: "step.completed", data: { turnId: "t", stepIndex: 0, usage: { inputTokens: 5, outputTokens: 2 } } }] })));
+    { type: "tool", kind: "tool", name: "bash", label: "Bash", callId: "call", stepIndex: 0, state: "rejected", input: { token: "DO-NOT-SHOW" }, interaction: { interactionId: "approval", request: { kind: "approval", prompt: "Run shell command?", options: [{ id: "approve", label: "Approve" }, { id: "deny", label: "Deny" }] }, status: "settled", outcome: "declined" } },
+  ] }], events: [{ type: "usage.recorded", data: { kind: "model", usage: { inputTokens: 5, outputTokens: 2 } }, meta: { position: { line: 0, index: 0 } } }] })));
   await userEvent.setup().click(await screen.findByText("Ficillada iyo isticmaalka"));
   assert.ok(await screen.findByText("Ficillada iyo isticmaalka · 1"));
   assert.ok(screen.getByText("La diiday")); assert.ok(screen.getByText("Lama soo sheegin"));
@@ -881,7 +882,7 @@ test("actual chat submits only selected memory/project context, enforces the wir
   URL.revokeObjectURL = () => {};
   fakeFetch((path) => path.startsWith("blob:") ? { blob: async () => blobs.get(path) } : path === "/api/documents/read" ? Response.json({ text: "Actual extracted document body", truncated: false }) : undefined);
   const sends = [];
-  globalThis.__chatMock = { status: "ready", events: [], data: { messages: [], inputs: {} }, send: async (message, options) => { sends.push({ message, options }); }, respond: async () => {}, cancel: async () => {} };
+  globalThis.__chatMock = { status: "idle", events: [], view: emptySessionView(), messages: [], error: undefined, send: async (message, options) => { sends.push({ message, options }); }, respond: async () => {}, cancel: async () => {}, resume: async () => {} };
   let store;
   function Probe() { store = useWorkspace(); return null; }
   try {
@@ -1298,7 +1299,7 @@ test("provisional tool output cannot produce a completed artifact card", async (
   const { AgentMessage } = await import("../components/chat/agent-message.tsx");
   seed(); fakeFetch();
   const output = { kind: "tflash-artifact", version: 1, artifact: { filename: "draft.txt", description: "Draft", content: "Provisional" } };
-  const part = { type: "dynamic-tool", toolName: "create_artifact", toolCallId: "call-partial", state: "output-available", partial: true, input: {}, output };
+  const part = { type: "tool", kind: "tool", name: "create_artifact", label: "Create artifact", callId: "call-partial", stepIndex: 0, state: "streaming", inputText: "{}" };
   const props = { canRespond: () => false, isStreaming: true, onInputResponses() {}, questionsFor: () => [], message: { id: "assistant-partial", role: "assistant", parts: [part] } };
   render(app(h(AgentMessage, props)));
   assert.equal(screen.queryByRole("button", { name: "Download: draft.txt" }), null);
@@ -1322,7 +1323,7 @@ test("collapsed activity panel does not scan streaming history until opened", as
     if (property === Symbol.iterator) scans++;
     return Reflect.get(target, property, receiver);
   } });
-  const messages = watch([{ role: "assistant", parts: [{ type: "dynamic-tool", toolName: "bash", toolCallId: "a", state: "output-available", output: { status: "completed", exitCode: 0 } }] }]);
+  const messages = watch([{ role: "assistant", parts: [{ type: "tool", kind: "tool", name: "bash", label: "Bash", callId: "a", stepIndex: 0, state: "completed", input: {}, output: { status: "completed", exitCode: 0 } }] }]);
   const events = watch([]);
   const rendered = render(app(h(ActivityPanel, { messages, events })));
   for (let i = 0; i < 20; i++) rendered.rerender(app(h(ActivityPanel, { messages, events })));
@@ -1854,16 +1855,16 @@ test("late Vercel workspace load cannot leak across an account switch", async ()
 test("collapsed shell tool labels show failed, partial and unknown outcomes without opening outputs", async () => {
   const { AgentMessage } = await import("../components/chat/agent-message.tsx");
   seed(); fakeFetch();
-  const part=(id,output,partial=false)=>({type:'dynamic-tool',toolName:'bash',toolCallId:id,state:'output-available',input:{command:`secret-${id}`},output,partial});
+  const part=(id,output,partial=false)=>partial?{type:'tool',kind:'tool',name:'bash',label:'Bash',callId:id,stepIndex:0,state:'streaming',inputText:'{}'}:{type:'tool',kind:'tool',name:'bash',label:'Bash',callId:id,stepIndex:0,state:'completed',input:{command:`secret-${id}`},output};
   const parts=[part('failed',{status:'completed',exitCode:2}),part('background',{status:'running',pid:123}),part('unknown',{}),part('partial',{status:'completed',exitCode:1},true),part('success',{status:'completed',exitCode:0})];
   const message={id:'shell-test',role:'assistant',parts};
   render(app(h(AgentMessage,{message,isStreaming:false,canRespond:()=>false,questionsFor:()=>[],onInputResponses(){}})));
-  const headers=screen.getAllByRole('button',{name:/bash/});
+  const headers=screen.getAllByRole('button',{name:/bash/i});
   assert.equal(headers.length,5);
   assert.match(headers[0].textContent,/Failed/);
   assert.match(headers[1].textContent,/Started · outcome unknown/);
   assert.match(headers[2].textContent,/Outcome unknown/);
-  assert.match(headers[3].textContent,/Running/);
+  assert.match(headers[3].textContent,/Preparing/);
   assert.doesNotMatch(headers[4].textContent,/Failed|unknown|Running/);
   assert.equal(screen.queryByText(/secret-failed/),null);
   await userEvent.setup().click(headers[0]);
@@ -1873,9 +1874,9 @@ test("collapsed shell tool labels show failed, partial and unknown outcomes with
 test("shell status labels are translated in Somali", async () => {
   const { AgentMessage } = await import("../components/chat/agent-message.tsx");
   seed({language:'so'}); fakeFetch();
-  const message={id:'shell-so',role:'assistant',parts:[{type:'dynamic-tool',toolName:'bash',toolCallId:'failure',state:'output-available',input:{command:'x'},output:{status:'completed',exitCode:1}}]};
+  const message={id:'shell-so',role:'assistant',parts:[{type:'tool',kind:'tool',name:'bash',label:'Bash',callId:'failure',stepIndex:0,state:'completed',input:{command:'x'},output:{status:'completed',exitCode:1}}]};
   render(app(h(AgentMessage,{message,isStreaming:false,canRespond:()=>false,questionsFor:()=>[],onInputResponses(){}})));
-  assert.match((await screen.findByRole('button',{name:/bash/})).textContent,/Fashilantay/);
+  assert.match((await screen.findByRole('button',{name:/bash/i})).textContent,/Fashilantay/);
 });
 
 test("reported usage panel is lazy, localized, and updates as the event snapshot changes", async () => {
@@ -1883,7 +1884,7 @@ test("reported usage panel is lazy, localized, and updates as the event snapshot
   seed({language:'so'}); fakeFetch();
   let scans=0;
   const watch=items=>new Proxy(items,{get(target,key,receiver){if(key===Symbol.iterator) scans++; return Reflect.get(target,key,receiver);}});
-  const initial=watch([{type:'session.waiting',data:{usage:{inputTokens:100,outputTokens:20,costUsd:0.1}}}]);
+  const initial=watch([{type:'usage.recorded',data:{kind:'model',usage:{inputTokens:100,outputTokens:20,costUsd:0.1}},meta:{position:{line:0,index:0}}}]);
   const view=render(app(h(UsagePanel,{events:initial})));
   for(let i=0;i<5;i++) view.rerender(app(h(UsagePanel,{events:initial})));
   assert.equal(scans,0);
@@ -1891,7 +1892,7 @@ test("reported usage panel is lazy, localized, and updates as the event snapshot
   assert.ok(await screen.findByText('100'));
   assert.ok(screen.getByText('$0.1000'));
   assert.ok(scans>0);
-  const changed=watch([{type:'session.waiting',data:{usage:{inputTokens:110}}}]);
+  const changed=watch([{type:'usage.recorded',data:{kind:'model',usage:{inputTokens:110}},meta:{position:{line:1,index:0}}}]);
   view.rerender(app(h(UsagePanel,{events:changed})));
   assert.ok(await screen.findByText('110'));
   assert.equal(screen.queryByText('$0.1000'),null);

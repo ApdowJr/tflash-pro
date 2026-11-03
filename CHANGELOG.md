@@ -1,5 +1,35 @@
 # Changelog
 
+## 2026-10-31 — Eve 1.0 and held dependency majors
+
+Full platform upgrade with no intended UI change. See
+[docs/upgrade-2026-10-31.md](docs/upgrade-2026-10-31.md) for the migration and
+verification record.
+
+### Changed
+
+- Eve `0.83.2` → `1.0.0-rc.1`: v1 session view, message parts, interactions,
+  `task.ended` facts, incremental `usage.recorded` totals and stream version 27.
+- Shiki `3.23.0` → `4.5.0`, Motion `12.40.0` → `14.9.0`, nanoid `5.1.16` →
+  `6.0.2`, `@vercel/connect` `0.4.2` → `2.7.0`, `@types/node` `24.13.2` →
+  `26.6.6`, `@streamdown/code` `1.1.1` → `2.0.0`, and current AI SDK patch
+  releases.
+- Agent model resolution uses the v1 `defineDynamic` resolver; the model-step
+  budget counts `model.started` run ids, so replays stay idempotent.
+- Stop recovery uses `turn.settled { outcome: "cancelled" }`; input-response
+  recovery uses `interaction.settled`. Approval/question payloads carry
+  `interactionId`, while the exported `AgentInputResponse` name is preserved.
+- Chat search indexes only rendered conversation text and ignores transport
+  records; plan, artifact and research cards keep their existing styling.
+
+### Security
+
+- Regenerated the pinned pnpm source backport for Eve 1.0.0-rc.1's bundled Zod
+  4.5.4 (`GHSA-mrhx-c7xc-m3w5`), with exact chunk hashes and behavior probes.
+- `pnpm audit --audit-level=low`: no known advisories.
+- Verification: 450 tests pass, typecheck is clean, Next and Eve production
+  builds succeed, and both security audits pass.
+
 ## 2026-10-30 — public landing page and polish
 
 `/` is now public. A signed-out visitor sees a bilingual landing page instead of

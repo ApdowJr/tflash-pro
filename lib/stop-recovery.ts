@@ -25,20 +25,15 @@ export function beginStop(kind: string, userId: string, sessionId: string, turnI
   return beginSyncUncertainty("stop-request", kind, userId, JSON.stringify({ sessionId, turnId: turnId ?? null }));
 }
 export function clearStop(key: string) { clearSyncUncertainty([key]); }
-/** A cancellation boundary is complete only after the following session.waiting.
- * Projection state and a bare turn.cancelled are not a settled stream tail. */
+/** A turn's own settled fact is the authoritative cancellation boundary. */
 export function cancelledStopTurns(events: readonly { type: string; data?: unknown }[]): Set<string> {
   const result = new Set<string>();
-  const pending = new Set<string>();
   for (const event of events) {
-    if (event.type === "session.waiting") {
-      for (const id of pending) result.add(id);
-      pending.clear();
-      continue;
+    if (event.type !== "turn.settled" || !event.data || typeof event.data !== "object") continue;
+    const data = event.data as { turnId?: unknown; outcome?: unknown };
+    if (data.outcome === "cancelled" && typeof data.turnId === "string" && validId(data.turnId)) {
+      result.add(data.turnId);
     }
-    if (event.type !== "turn.cancelled" || !event.data || typeof event.data !== "object") continue;
-    const id = (event.data as { turnId?: unknown }).turnId;
-    if (typeof id === "string" && validId(id)) pending.add(id);
   }
   return result;
 }

@@ -15,9 +15,13 @@ test('human-input markers are scoped, secret-minimized and conservative when cor
   clearInputResponse(key);assert.equal(inputResponseWarnings('vercel','alice','session-a').length,0);
 });
 
-test('only terminal input.resolved records identify a settled response',()=>{
-  const events=[{type:'client.input.responded',data:{resolutions:[{requestId:'a',kind:'tool-approval',outcome:'approved'}]}},
-    {type:'input.resolved',data:{resolutions:[{requestId:'b',kind:'tool-approval',outcome:'approved'},{requestId:'c',kind:'question',outcome:'answered'},
-      {requestId:'d',kind:'question',outcome:'pending'},null,{requestId:'e',kind:'unknown',outcome:'approved'}]}}];
-  assert.deepEqual(resolvedInputRequestIds(events),['b','c']);
+test('only terminal interaction.settled records identify a settled response',()=>{
+  const events=[{type:'response.submitted',data:{interactionId:'a',responseId:'r'}},
+    {type:'interaction.settled',data:{interactionId:'b',outcome:'accepted'}},
+    {type:'interaction.settled',data:{interactionId:'c',outcome:'accepted'}},
+    {type:'interaction.settled',data:{interactionId:'b',outcome:'declined'}},
+    {type:'interaction.settled',data:{interactionId:'c',outcome:'bogus'}},
+    {type:'interaction.settled',data:null},{type:'interaction.settled',data:{interactionId:'d'}},
+    {type:'interaction.settled',data:{interactionId:'e',outcome:'expired'}}];
+  assert.deepEqual(resolvedInputRequestIds(events),['e','b','c']);
 });

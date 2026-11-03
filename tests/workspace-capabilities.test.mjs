@@ -7,6 +7,11 @@ const { modelStepLimit, countModelStep, modelUsageWindowReached } = await import
 const { activityRows, reportedUsage } = await import("../lib/activity.ts");
 const { attachedText } = await import("../lib/documents/contracts.ts");
 const project = (id) => ({ id, name: id, instructions: `Instructions ${id}`, chatIds: [] });
+const toolPart = (state, extra = {}) => ({ type: "tool", callId: "a", stepIndex: 0, kind: "tool", name: "bash", label: "Bash", state, ...extra });
+const taskStart = (taskId = "task-a", callId = "a") => ({ type: "task.started", data: { taskId, startedBy: { callId }, kind: "tool", name: "bash" } });
+const taskEnd = (outcome, taskId = "task-a") => ({ type: "task.ended", data: { taskId, outcome } });
+const usage = (value, position) => ({ type: "usage.recorded", ...(position ? { meta: { position } } : {}), data: { kind: "model", usage: value } });
+const at = (line, index = 0) => ({ line, index });
 
 test("projects move chats without duplicate membership; scoped notes are removed with a project", () => {
   let w = { ...emptyWorkspace(), projects: [project("one"), project("two")], notes: [{ id: "n", text: "private to one", enabled: true, projectId: "one" }] };
@@ -44,15 +49,15 @@ test("memory is opt-in, disabled notes and other-project notes are never supplie
   assert.equal(workspaceContext(emptyWorkspace(), "chat"), "");
 });
 
-test("usage limits are bounded, step counting is replay-safe and new turns get a new allowance", () => {
+test("usage limits are bounded, model-run counting is replay-safe and new turns get a new allowance", () => {
   for (const value of [undefined, null, "", "junk", "31", "0", "2.5", Infinity]) assert.equal(modelStepLimit(value), 12);
   assert.equal(modelStepLimit("3"), 3);
-  let result = countModelStep({ turnId: "", steps: [] }, "turn", 0, 2);
-  result = countModelStep(result.state, "turn", 0, 2);
+  let result = countModelStep({ turnId: "", steps: [] }, "turn", "run-0", 2);
+  result = countModelStep(result.state, "turn", "run-0", 2);
   assert.equal(result.state.steps.length, 1);
-  result = countModelStep(result.state, "turn", 1, 2); assert.equal(result.cancel, false);
-  result = countModelStep(result.state, "turn", 2, 2); assert.equal(result.cancel, true);
-  assert.equal(countModelStep(result.state, "next-turn", 10, 2).cancel, false);
+  result = countModelStep(result.state, "turn", "run-1", 2); assert.equal(result.cancel, false);
+  result = countModelStep(result.state, "turn", "run-2", 2); assert.equal(result.cancel, true);
+  assert.equal(countModelStep(result.state, "next-turn", "run-3", 2).cancel, false);
   const window = { inputTokens: 250_000, cacheReadTokens: 0, outputTokens: 0 };
   assert.equal(modelUsageWindowReached({ window }), true);
   assert.equal(modelUsageWindowReached({ window: { ...window, cacheReadTokens: 249_999 } }), false);
@@ -61,84 +66,67 @@ test("usage limits are bounded, step counting is replay-safe and new turns get a
 });
 
 test("activity excludes inputs/results/secrets, partial results aren't success and provider cost absence stays unknown", () => {
-  const part = { type: "dynamic-tool", toolName: "bash", toolCallId: "a", input: { secret: "DO-NOT-EXPORT" }, output: { status: "completed", exitCode: 0, text: "secret output" }, state: "output-available" };
-  const rows = activityRows([{ role: "assistant", parts: [{ ...part, partial: true }, part] }, { role: "user", parts: [part] }]);
+  const part = toolPart("completed", { input: { secret: "DO-NOT-EXPORT" }, output: { status: "completed", exitCode: 0, text: "secret output" } });
+  const rows = activityRows([{ role: "assistant", parts: [part] }, { role: "user", parts: [part] }]);
   assert.equal(rows.length, 1); assert.equal(rows[0].state, "output-available");
   assert.ok(!JSON.stringify(rows).includes("secret"));
-  assert.equal(activityRows([{ role: "assistant", parts: [{ ...part, partial: true }] }])[0].state, "running");
-  const taskEvents = [{ type: "task.started", data: { callId: "a" } }];
+  assert.equal(activityRows([{ role: "assistant", parts: [toolPart("streaming", { inputText: "private input" })] }])[0].state, "running");
+  const taskEvents = [taskStart()];
   assert.equal(activityRows([{ role: "assistant", parts: [part] }], taskEvents)[0].state, "running");
-  assert.equal(activityRows([{ role: "assistant", parts: [part] }], [...taskEvents, { type: "task.settled", data: { callId: "a", status: "cancelled" } }])[0].state, "cancelled");
-  const step = { type: "step.completed", meta: { id: "s" }, data: { turnId: "t", stepIndex: 0, usage: { inputTokens: 42, outputTokens: 7 } } };
-  assert.deepEqual(reportedUsage([step, step]), { inputTokens: 42, outputTokens: 7 });
-  assert.equal(reportedUsage([step]).costUsd, undefined);
-  const checkpoint = { type: "session.waiting", data: { usage: { inputTokens: 100, outputTokens: 30, costUsd: 0.01 } } };
-  const next = { ...step, meta: { id: "next" }, data: { ...step.data, turnId: "t2" } };
-  assert.deepEqual(reportedUsage([step, checkpoint, next]), { inputTokens: 142, outputTokens: 37 });
-  const priced = { ...next, data: { ...next.data, usage: { ...next.data.usage, costUsd: 0.02 } } };
-  assert.equal(reportedUsage([checkpoint, priced]).costUsd, 0.03);
-  assert.equal(reportedUsage([priced, step]).costUsd, undefined);
-  assert.equal(reportedUsage([{ type: "session.waiting", data: { usage: { inputTokens: 100 } } }, priced]).costUsd, undefined);
-  assert.equal(reportedUsage([priced, { type: "step.completed", data: { turnId: "t3", stepIndex: 1 } }]).costUsd, undefined);
-  assert.equal(reportedUsage([step, checkpoint]).costUsd, 0.01);
-  assert.equal(reportedUsage([priced, { type: "session.waiting", data: {} }]).costUsd, undefined);
-  assert.equal(reportedUsage([priced, { type: "step.completed" }]).costUsd, undefined);
-  assert.equal(reportedUsage([priced, { type: "session.waiting" }]).costUsd, undefined);
-  assert.equal(reportedUsage([priced, { type: "session.waiting", data: {} }, checkpoint]).costUsd, 0.01);
+  assert.equal(activityRows([{ role: "assistant", parts: [part] }], [...taskEvents, taskEnd("cancelled")])[0].state, "cancelled");
   assert.equal(attachedText("https://remote.test/private"), undefined);
   assert.equal(attachedText(`data:text/plain;base64,${Buffer.from("Soomaali — tijaabo").toString("base64")}`), "Soomaali — tijaabo");
 });
 
 test("replayed task starts and contradictory late successes cannot undo settled cancellation", () => {
-  const part = { type: "dynamic-tool", toolName: "bash", toolCallId: "a", state: "output-available" };
+  const part = toolPart("completed", { output: { status: "completed", exitCode: 0 } });
   const messages = [{ role: "assistant", parts: [part] }];
-  const start = { type: "task.started", meta: { id: "start" }, data: { callId: "a" } };
-  const cancel = { type: "task.settled", meta: { id: "cancel" }, data: { callId: "a", status: "cancelled" } };
-  const lateSuccess = { type: "task.settled", meta: { id: "late" }, data: { callId: "a", status: "completed" } };
+  const start = taskStart();
+  const cancel = taskEnd("cancelled");
+  const lateSuccess = taskEnd("completed");
   assert.equal(activityRows(messages, [start, cancel, start, lateSuccess])[0].state, "cancelled");
-  assert.equal(activityRows(messages, [cancel, start])[0].state, "cancelled");
-  const timed = { type: "action.result", meta: { at: "2026-10-30T10:00:00.000Z" }, data: { result: { callId: "a" } } };
+  assert.equal(activityRows(messages, [start, cancel, start])[0].state, "cancelled");
+  const timed = { type: "call.progress", meta: { at: "2026-10-30T10:00:00.000Z" }, data: { callId: "a" } };
   assert.equal(activityRows(messages, [timed])[0].at, "2026-10-30T10:00:00.000Z");
-  assert.equal(activityRows(messages, [start, { ...cancel, data: { callId: "a", status: "unknown" } }])[0].state, "running");
+  assert.equal(activityRows(messages, [start, taskEnd("unknown")])[0].state, "running");
 });
 
-test("turn status uses turn sequence and never infers task completion from a finished turn", async () => {
+test("turn status ranks settlements and never infers task completion from a finished turn", async () => {
   const { latestTurnOutcome } = await import("../lib/activity.ts");
-  const e = (type, turnId, sequence) => ({ type, data: { turnId, sequence } });
-  const cancelled = e("turn.cancelled", "a", 1);
-  assert.equal(latestTurnOutcome([e("turn.started", "a", 1), cancelled, e("turn.completed", "a", 1)]), "cancelled");
-  assert.equal(latestTurnOutcome([e("turn.started", "b", 2), cancelled]), "active");
-  assert.equal(latestTurnOutcome([cancelled, e("turn.completed", "b", 2), cancelled]), "completed");
-  assert.equal(latestTurnOutcome([{ type: "task.settled", data: { callId: "a", status: "completed" } }]), undefined);
+  const e = (type, turnId, extra = {}) => ({ type, data: { turnId, ...extra } });
+  assert.equal(latestTurnOutcome([e("turn.started", "a"), e("turn.settled", "a", { outcome: "cancelled" }), e("turn.settled", "a", { outcome: "completed" })]), "cancelled");
+  assert.equal(latestTurnOutcome([e("turn.settled", "a", { outcome: "cancelled" }), e("turn.started", "b")]), "active");
+  assert.equal(latestTurnOutcome([e("turn.started", "a"), e("turn.settled", "a", { outcome: "cancelled" }), e("turn.settled", "b", { outcome: "completed" }), e("turn.settled", "a", { outcome: "cancelled" })]), "completed");
+  assert.equal(latestTurnOutcome([e("delivery.consumed", "c")]), "active");
+  assert.equal(latestTurnOutcome([{ type: "task.ended", data: { taskId: "a", outcome: "completed" } }]), undefined);
 });
 
 test("bash activity does not equate a failed or background command with success", () => {
-  const part = { type: "dynamic-tool", toolName: "bash", toolCallId: "a", state: "output-available" };
-  const row = (output) => activityRows([{ role: "assistant", parts: [{ ...part, output }] }])[0].state;
+  const row = (output) => activityRows([{ role: "assistant", parts: [toolPart("completed", { output })] }])[0].state;
   assert.equal(row({ status: "completed", exitCode: 0 }), "output-available");
   assert.equal(row({ status: "completed", exitCode: 1 }), "output-error");
   assert.equal(row({ status: "running", pid: 123 }), "background-unknown");
   assert.equal(row(undefined), "outcome-unknown");
-  const messages = [{ role: "assistant", parts: [{ ...part, output: { status: "completed", exitCode: 0 } }] }];
-  const settled = (output) => [{ type: "task.settled", data: { callId: "a", status: "completed", output } }];
-  assert.equal(activityRows(messages, settled({ status: "completed", exitCode: 1 }))[0].state, "output-error");
-  assert.equal(activityRows(messages, settled({ status: "running" }))[0].state, "background-unknown");
-  assert.equal(activityRows(messages, settled(undefined))[0].state, "outcome-unknown");
+  const messages = [{ role: "assistant", parts: [toolPart("completed", { output: { status: "completed", exitCode: 0 } })] }];
+  const ended = (outcome) => [taskStart(), taskEnd(outcome)];
+  assert.equal(activityRows(messages, ended("failed"))[0].state, "output-error");
+  assert.equal(activityRows(messages, ended("cancelled"))[0].state, "cancelled");
+  assert.equal(activityRows(messages, ended("completed"))[0].state, "outcome-unknown");
+  assert.equal(activityRows(messages, ended("unknown"))[0].state, "running");
 });
 
-test("reported usage never presents partial token totals as complete and deduplicates replayed steps", () => {
-  const step=(turn,index,usage,id)=>({type:'step.completed',...(id?{meta:{id}}:{}),data:{turnId:turn,stepIndex:index,usage}});
-  const complete=step('turn',0,{inputTokens:100,outputTokens:10,costUsd:0.1});
-  const missingOutput=step('turn',1,{inputTokens:40,costUsd:0.2});
-  assert.deepEqual(reportedUsage([complete,missingOutput]),{inputTokens:140,costUsd:0.30000000000000004});
-  assert.deepEqual(reportedUsage([complete,missingOutput,missingOutput]),{inputTokens:140,costUsd:0.30000000000000004});
-  const checkpoint={type:'session.waiting',data:{usage:{inputTokens:140,outputTokens:20,costUsd:0.3}}};
-  assert.deepEqual(reportedUsage([complete,missingOutput,checkpoint,complete]),{inputTokens:140,outputTokens:20,costUsd:0.3});
-  assert.deepEqual(reportedUsage([complete,{type:'session.waiting',data:{}},step('new',0,{inputTokens:5,outputTokens:3,costUsd:0.01})]),{});
-  assert.deepEqual(reportedUsage([checkpoint,step('next',0,{inputTokens:2,outputTokens:3,costUsd:0.01})]),{inputTokens:142,outputTokens:23,costUsd:0.31});
-  const conflicting=step('turn',0,{inputTokens:101,outputTokens:10,costUsd:0.1});
-  assert.deepEqual(reportedUsage([complete,conflicting]),{outputTokens:10,costUsd:0.1});
-  assert.deepEqual(reportedUsage([complete,{type:'step.completed',data:{usage:{inputTokens:10,outputTokens:5,costUsd:0.1}}}]),{});
-  assert.deepEqual(reportedUsage([step('turn',0,{inputTokens:1.5,outputTokens:-1,costUsd:0})]),{costUsd:0});
-  assert.deepEqual(reportedUsage([step('turn',0,{inputTokens:0,outputTokens:0,costUsd:0})]),{inputTokens:0,outputTokens:0,costUsd:0});
+test("reported usage never presents partial token totals as complete and deduplicates replayed facts", () => {
+  const complete = usage({ inputTokens: 100, outputTokens: 10, costUsd: 0.1 }, at(0));
+  const missingOutput = usage({ inputTokens: 40, costUsd: 0.2 }, at(1));
+  assert.deepEqual(reportedUsage([complete, missingOutput]), { inputTokens: 140, costUsd: 0.1 + 0.2 });
+  assert.deepEqual(reportedUsage([complete, missingOutput, missingOutput]), { inputTokens: 140, costUsd: 0.1 + 0.2 });
+  assert.deepEqual(reportedUsage([complete, { ...complete }]), { inputTokens: 100, outputTokens: 10, costUsd: 0.1 });
+  assert.deepEqual(reportedUsage([complete, usage({ inputTokens: 5, outputTokens: 3, costUsd: 0.01 }, at(2))]), { inputTokens: 105, outputTokens: 13, costUsd: 0.1 + 0.01 });
+  assert.deepEqual(reportedUsage([complete, usage(undefined, at(2))]), {});
+  assert.deepEqual(reportedUsage([complete, usage({}, at(2))]), {});
+  assert.deepEqual(reportedUsage([complete, usage({ inputTokens: 5, outputTokens: 3 }, at(2))]), { inputTokens: 105, outputTokens: 13 });
+  assert.deepEqual(reportedUsage([missingOutput, usage({ inputTokens: 5, outputTokens: 3, costUsd: 0.01 }, at(2))]), { inputTokens: 45, costUsd: 0.2 + 0.01 });
+  assert.deepEqual(reportedUsage([usage({ inputTokens: 1.5, outputTokens: -1, costUsd: 0 }, at(0))]), { costUsd: 0 });
+  assert.deepEqual(reportedUsage([usage({ inputTokens: 0, outputTokens: 0, costUsd: 0 }, at(0))]), { inputTokens: 0, outputTokens: 0, costUsd: 0 });
+  assert.deepEqual(reportedUsage([{ type: "usage.recorded", data: { kind: "model" } }]), {});
 });

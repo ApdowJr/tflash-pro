@@ -18,10 +18,14 @@ test('stop markers isolate accounts and sessions; malformed records fail closed'
   assert.equal(isStopTurnId('turn-a'), true); assert.equal(isStopTurnId(''), false);
 });
 
-test('only exact durable turn.cancelled events can clear a scoped stop warning', () => {
-  const events = [{ type: 'turn.completed', data: { turnId: 'a' } }, { type: 'turn.failed', data: { turnId: 'b' } },
-    { type: 'turn.cancelled', data: { turnId: 'c' } }, { type: 'client.turn.cancelled', data: { turnId: 'd' } },
-    { type: 'turn.cancelled', data: { turnId: 'bad space' } }, { type: 'turn.cancelled', data: null }, { type: 'session.waiting', data: {} },
-    { type: 'turn.cancelled', data: { turnId: 'still-pending' } }];
-  assert.deepEqual([...cancelledStopTurns(events)], ['c']);
+test('only exact durable turn.settled cancellations can clear a scoped stop warning', () => {
+  const events = [{ type: 'turn.settled', data: { turnId: 'a', outcome: 'completed' } },
+    { type: 'turn.settled', data: { turnId: 'b', outcome: 'failed' } },
+    { type: 'turn.settled', data: { turnId: 'c', outcome: 'cancelled' } },
+    { type: 'turn.cancelled', data: { turnId: 'd' } },
+    { type: 'turn.settled', data: { turnId: 'bad space', outcome: 'cancelled' } },
+    { type: 'turn.settled', data: null }, { type: 'session.waiting', data: {} },
+    { type: 'turn.settled', data: { turnId: 'still-open' } },
+    { type: 'turn.settled', data: { turnId: 'e', outcome: 'cancelled' } }];
+  assert.deepEqual([...cancelledStopTurns(events)], ['c', 'e']);
 });

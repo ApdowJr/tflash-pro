@@ -54,7 +54,7 @@ test("the gate rejects missing, altered and unknown backports without touching n
   try {
     await writeFile(
       new URL("package.json", root),
-      JSON.stringify({ name: "eve", version: "0.83.2" }),
+      JSON.stringify({ name: "eve", version: "1.0.0-rc.1" }),
     );
     for (const file of Object.keys(record.files)) {
       await mkdir(path.dirname(path.join(temp, file)), { recursive: true });

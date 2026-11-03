@@ -9,17 +9,19 @@ export function modelStepLimit(raw: unknown): number {
     ? value
     : 12;
 }
-/** Pure transition used by the durable hook; replay of the same step is idempotent. */
+/**
+ * Counts distinct model runs in a turn. eve emits `model.started` once per run
+ * attempt, so the run id — not the attempt number — is the step identity and
+ * replaying the same run is idempotent.
+ */
 export function countModelStep(
-  state: { turnId: string; steps: readonly number[] },
+  state: { turnId: string; steps: readonly string[] },
   turnId: string,
-  stepIndex: number,
+  runId: string,
   cap: number,
 ) {
   const previous = state.turnId === turnId ? state.steps : [];
-  const steps = previous.includes(stepIndex)
-    ? previous
-    : [...previous, stepIndex];
+  const steps = previous.includes(runId) ? previous : [...previous, runId];
   return { state: { turnId, steps }, cancel: steps.length > cap };
 }
 type UsageWindow = {

@@ -320,21 +320,22 @@ test("the real chat offers playback for completed assistant text only, not tool 
   } });
   try {
     const { AgentChat } = await import("../components/chat/agent-chat.tsx");
+    const { emptySessionView } = await import("eve/events");
     seed();
     window.localStorage.setItem("tflash:settings:v1:voice-test", JSON.stringify({ language: "en", chatProofs: { "owned-chat": "test-proof" } }));
     const output = mockSynthesis([voice("en-US", "English voice")]);
     globalThis.__voiceAgent = {
-      status: "ready", events: [],
-      data: { inputs: {}, messages: [
+      status: "idle", events: [], view: emptySessionView(), error: undefined,
+      messages: [
         { id: "user-1", role: "user", parts: [{ type: "text", text: "User question" }] },
         { id: "assistant-1", role: "assistant", parts: [
           { type: "text", text: "First public answer." },
           { type: "reasoning", text: "Private reasoning", state: "done" },
-          { type: "dynamic-tool", toolName: "example", toolCallId: "call-1", state: "output-available", input: { secret: "tool input" }, output: "tool output" },
+          { type: "tool", kind: "tool", name: "example", label: "Example", callId: "call-1", stepIndex: 1, state: "completed", input: { secret: "tool input" }, output: "tool output" },
           { type: "text", text: "Second public answer." },
         ] },
-      ] },
-      send: async () => {}, respond: async () => {}, cancel: async () => {},
+      ],
+      send: async () => {}, respond: async () => {}, cancel: async () => {}, resume: async () => {},
     };
     const account = { id: "voice-test", kind: "vercel", name: "Test", email: "test@example.test" };
     const view = render(app(h(AgentChat, { account, sessionId: "owned-chat" })));
@@ -347,7 +348,7 @@ test("the real chat offers playback for completed assistant text only, not tool 
     assert.equal(output.spoken[0].text, "First public answer.\n\nSecond public answer.");
     assert.doesNotMatch(output.spoken[0].text, /User question|Private reasoning|tool input|tool output/);
     await user.click(within(dialog).getByRole("button", { name: "Done" }));
-    globalThis.__voiceAgent.status = "streaming";
+    globalThis.__voiceAgent.status = "busy";
     view.rerender(app(h(AgentChat, { account, sessionId: "owned-chat" })));
     assert.equal(screen.getByRole("button", { name: "Listen" }).disabled, true);
   } finally {

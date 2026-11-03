@@ -29,8 +29,8 @@ test("the authored plan tool validates full snapshots without executing their st
 });
 
 test("the progress panel uses only settled assistant plan-tool output, including after resume", () => {
-  const part = (value = plan, state = "output-available", toolName = "update_plan") => ({
-    type: "dynamic-tool", toolName, state, output: { kind: "tflash-plan", version: 1, plan: value },
+  const part = (value = plan, state = "completed", name = "update_plan") => ({
+    type: "tool", name, state, output: { kind: "tflash-plan", version: 1, plan: value },
   });
   const first = { role: "assistant", parts: [part()] };
   const updated = { ...plan, steps: plan.steps.map((step) => ({ ...step, status: "completed" })) };
@@ -38,9 +38,9 @@ test("the progress panel uses only settled assistant plan-tool output, including
   assert.deepEqual(latestAgentPlan([first, { role: "assistant", parts: [part(updated)] }]), updated);
   for (const ignored of [
     { role: "user", parts: [part(updated)] },
-    { role: "assistant", parts: [part(updated, "output-error")] },
-    { role: "assistant", parts: [part(updated, "input-available")] },
-    { role: "assistant", parts: [part(updated, "output-available", "some_other_tool")] },
+    { role: "assistant", parts: [part(updated, "failed")] },
+    { role: "assistant", parts: [part(updated, "running")] },
+    { role: "assistant", parts: [part(updated, "completed", "some_other_tool")] },
     { role: "assistant", parts: [part({ title: "Invalid", steps: [] })] },
   ]) assert.deepEqual(latestAgentPlan([first, ignored]), plan);
   assert.equal(latestAgentPlan([]), undefined);
@@ -64,8 +64,8 @@ test("text artifact generation returns real bounded content with a compact model
 });
 
 test("provisional plan snapshots never replace a settled plan", () => {
-  const settled = { role: "assistant", parts: [{ type: "dynamic-tool", toolName: "update_plan", state: "output-available", output: { kind: "tflash-plan", version: 1, plan } }] };
-  const provisional = { ...settled.parts[0], partial: true, output: { kind: "tflash-plan", version: 1, plan: { ...plan, title: "Provisional" } } };
-  assert.deepEqual(latestAgentPlan([settled, { role: "assistant", parts: [provisional] }]), plan);
-  assert.equal(latestAgentPlan([{ role: "assistant", parts: [provisional] }]), undefined);
+  const settled = { role: "assistant", parts: [{ type: "tool", name: "update_plan", state: "completed", output: { kind: "tflash-plan", version: 1, plan } }] };
+  const provisional = { role: "assistant", parts: [{ type: "tool", name: "update_plan", state: "streaming", inputText: JSON.stringify(plan) }] };
+  assert.deepEqual(latestAgentPlan([settled, provisional]), plan);
+  assert.equal(latestAgentPlan([provisional]), undefined);
 });

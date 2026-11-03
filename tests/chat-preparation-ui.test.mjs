@@ -38,6 +38,7 @@ const userEvent = (await import("@testing-library/user-event")).default;
 const { AppSettingsProvider } = await import("../components/settings/app-settings.tsx");
 const { TooltipProvider } = await import("../components/ui/tooltip.tsx");
 const { AgentChat } = await import("../components/chat/agent-chat.tsx");
+const { emptySessionView, foldEvents } = await import("eve/events");
 const h = React.createElement;
 const realFetch = globalThis.fetch;
 const realCreateObjectURL = URL.createObjectURL;
@@ -52,15 +53,50 @@ function deferred() {
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
   return { promise, resolve, reject };
 }
+// Eve v1 projects a stream of facts into an opaque SessionView. Plain objects
+// cannot satisfy the selectors, so fixtures fold real facts through the same
+// code the store uses.
+let factLine = 0;
+function fact(type, data) {
+  return {
+    type,
+    data,
+    meta: { position: { line: factLine++, index: 0 }, at: "2026-10-31T00:00:00.000Z", endOfLine: true },
+  };
+}
+function facts(...entries) { return entries.map(([type, data]) => fact(type, data)); }
+function viewOf({ turns: turnSpecs = [], interactions: interactionSpecs = [] } = {}) {
+  const list = [];
+  for (const spec of turnSpecs) {
+    const turnId = typeof spec === "string" ? spec : spec.turnId;
+    const started = typeof spec === "string" ? {} : spec;
+    list.push(fact("turn.started", {
+      turnId, cause: started.cause ?? { kind: "delivery" }, follows: started.follows ?? null,
+    }));
+    if (typeof spec === "object" && spec.outcome !== undefined) {
+      list.push(fact("turn.settled", {
+        turnId, outcome: spec.outcome, ...(spec.error === undefined ? {} : { error: spec.error }),
+      }));
+    }
+  }
+  for (const spec of interactionSpecs) list.push(fact("interaction.opened", spec));
+  return foldEvents(emptySessionView(), list);
+}
+function statusOf(agentStatus) {
+  if (agentStatus === "ready") return "idle";
+  if (agentStatus === "streaming") return "busy";
+  return agentStatus;
+}
 function seed({ language = "en", agentStatus = "ready" } = {}) {
   window.localStorage.clear();
   window.localStorage.setItem("tflash:language", language);
   window.localStorage.setItem("tflash:settings:v1:prepare-user", JSON.stringify({ language }));
   const sends = [];
   globalThis.__prepareAgent = {
-    status: agentStatus, events: [], data: { messages: [], inputs: {} },
+    status: statusOf(agentStatus), events: [], view: emptySessionView(), messages: [],
+    error: agentStatus === "error" ? new TypeError("Failed to fetch") : undefined,
     send: async (message, options) => { sends.push({ message, options }); },
-    respond: async () => {}, cancel: async () => {},
+    respond: async () => {}, cancel: async () => {}, resume: async () => {},
   };
   return sends;
 }
@@ -212,7 +248,7 @@ test("resuming an existing conversation keeps drafts and blocks forced sends unt
   fireEvent.submit(textarea.closest("form"));
   await waitFor(() => assert.equal(textarea.value, "Continue later"));
   assert.equal(sends.length, 0);
-  globalThis.__prepareAgent.status = "ready";
+  globalThis.__prepareAgent.status = "idle";
   view.rerender(app({ sessionId: "owned-chat" }));
   await waitFor(() => assert.equal(screen.getByRole("button", { name: "Send" }).disabled, false));
   assert.equal(textarea.value, "Continue later");
@@ -279,6 +315,7 @@ test("a Vercel conversation cannot become ready without its owner proof", async 
 
 test("follow-ups can still steer an active turn once the session is ready", async () => {
   const sends = seed({ agentStatus: "streaming" });
+  globalThis.__prepareAgent.view = viewOf({ turns: ["turn-a"] });
   fakeFetch(() => undefined);
   render(app({ sessionId: "owned-chat" }));
   const user = userEvent.setup();
@@ -316,8 +353,8 @@ test("stop remains available while typing a follow-up and blocks steering until 
 test("a disconnected active turn offers reconnection rather than continuing blindly", async () => {
   const sends = seed({ agentStatus: "error" });
   let resumes = 0;
-  globalThis.__prepareAgent.data.activeTurnId = "turn-a";
-  globalThis.__prepareAgent.data.turns = { "turn-a": { status: "active" } };
+  globalThis.__prepareAgent.error = Object.assign(new Error("Unauthorized"), { status: 401 });
+  globalThis.__prepareAgent.view = viewOf({ turns: ["turn-a"] });
   globalThis.__prepareAgent.resume = async () => { resumes++; };
   fakeFetch(() => undefined);
   render(app({ sessionId: "owned-chat" }));
@@ -354,12 +391,15 @@ test("stopping during chat-index persistence prevents the pending follow-up from
 test("task panel distinguishes a stopped turn from the agent-reported plan and ignores a stale prior failure", async () => {
   seed();
   const plan = { title: "Build feature", steps: [{ id: "one", title: "Implement", status: "in_progress" }, { id: "two", title: "Test", status: "pending" }] };
-  globalThis.__prepareAgent.data.messages = [{ id: "m", role: "assistant", parts: [{ type: "dynamic-tool", toolName: "update_plan", toolCallId: "p", state: "output-available", output: { kind: "tflash-plan", version: 1, plan } }] }];
-  globalThis.__prepareAgent.events = [
-    { type: "turn.started", data: { turnId: "new", sequence: 2 } },
-    { type: "turn.cancelled", data: { turnId: "new", sequence: 2 } },
-    { type: "turn.failed", data: { turnId: "old", sequence: 1, code: "FAILURE", message: "stale error" } },
-  ];
+  globalThis.__prepareAgent.messages = [{ id: "m", role: "assistant", parts: [{ type: "tool", kind: "tool", name: "update_plan", callId: "p", state: "completed", input: {}, output: { kind: "tflash-plan", version: 1, plan } }] }];
+  const stream = facts(
+    ["turn.started", { turnId: "old", cause: { kind: "delivery" }, follows: null }],
+    ["turn.settled", { turnId: "old", outcome: "failed", error: { code: "FAILURE", message: "stale error" } }],
+    ["turn.started", { turnId: "new", cause: { kind: "delivery" }, follows: "old" }],
+    ["turn.settled", { turnId: "new", outcome: "cancelled" }],
+  );
+  globalThis.__prepareAgent.events = stream;
+  globalThis.__prepareAgent.view = foldEvents(emptySessionView(), stream);
   fakeFetch(() => undefined);
   render(app({ sessionId: "owned-chat" }));
   await waitFor(() => assert.ok(screen.getByText("Turn stopped")));
@@ -371,8 +411,13 @@ test("task panel distinguishes a stopped turn from the agent-reported plan and i
 test("an open input is shown as waiting, not as an idle resumable task", async () => {
   seed();
   const plan = { title: "Build feature", steps: [{ id: "one", title: "Implement", status: "pending" }] };
-  globalThis.__prepareAgent.data.messages = [{ id: "m", role: "assistant", parts: [{ type: "dynamic-tool", toolName: "update_plan", toolCallId: "p", state: "output-available", output: { kind: "tflash-plan", version: 1, plan } }] }];
-  globalThis.__prepareAgent.data.inputs = { input: { status: "open", request: { kind: "tool-approval", action: { callId: "other" } } } };
+  globalThis.__prepareAgent.messages = [{ id: "m", role: "assistant", parts: [{ type: "tool", kind: "tool", name: "update_plan", callId: "p", state: "completed", input: {}, output: { kind: "tflash-plan", version: 1, plan } }] }];
+  globalThis.__prepareAgent.view = viewOf({ interactions: [{
+    interactionId: "input",
+    subject: { callId: "other" },
+    request: { kind: "approval", prompt: "Run a shell command?", options: [{ id: "approve", label: "Approve" }] },
+    origin: { sessionId: "owned-chat", interactionId: "origin", call: { callId: "other", name: "bash" } },
+  }] });
   fakeFetch(() => undefined);
   render(app({ sessionId: "owned-chat" }));
   await waitFor(() => assert.ok(screen.getByText("Waiting for you")));
@@ -383,8 +428,7 @@ test("transient stream failures reconnect with a bounded budget without sending 
   const sends = seed({ agentStatus: "error" });
   let resumes = 0;
   globalThis.__prepareAgent.error = new TypeError("Failed to fetch");
-  globalThis.__prepareAgent.data.activeTurnId = "turn-a";
-  globalThis.__prepareAgent.data.turns = { "turn-a": { status: "active" } };
+  globalThis.__prepareAgent.view = viewOf({ turns: ["turn-a"] });
   globalThis.__prepareAgent.resume = async () => { resumes++; };
   fakeFetch(() => undefined);
   render(app({ sessionId: "owned-chat" }));
@@ -399,8 +443,7 @@ test("permanent stream failures do not automatically reconnect", async () => {
   const sends = seed({ agentStatus: "error" });
   let resumes = 0;
   globalThis.__prepareAgent.error = Object.assign(new Error("Unauthorized"), { status: 401 });
-  globalThis.__prepareAgent.data.activeTurnId = "turn-a";
-  globalThis.__prepareAgent.data.turns = { "turn-a": { status: "active" } };
+  globalThis.__prepareAgent.view = viewOf({ turns: ["turn-a"] });
   globalThis.__prepareAgent.resume = async () => { resumes++; };
   fakeFetch(() => undefined);
   render(app({ sessionId: "owned-chat" }));
@@ -415,12 +458,12 @@ test("a stale active-turn projection cannot trigger auto-reconnect after a durab
   seed({ agentStatus: "error" });
   let resumes = 0;
   globalThis.__prepareAgent.error = new TypeError("Failed to fetch");
-  globalThis.__prepareAgent.events = [
-    { type: "turn.started", data: { turnId: "turn-a", sequence: 1 } },
-    { type: "turn.cancelled", data: { turnId: "turn-a", sequence: 1 } },
-  ];
-  globalThis.__prepareAgent.data.activeTurnId = "turn-a";
-  globalThis.__prepareAgent.data.turns = { "turn-a": { status: "active" } };
+  const stream = facts(
+    ["turn.started", { turnId: "turn-a", cause: { kind: "delivery" }, follows: null }],
+    ["turn.settled", { turnId: "turn-a", outcome: "cancelled" }],
+  );
+  globalThis.__prepareAgent.events = stream;
+  globalThis.__prepareAgent.view = foldEvents(emptySessionView(), stream);
   globalThis.__prepareAgent.resume = async () => { resumes++; };
   fakeFetch(() => undefined);
   render(app({ sessionId: "owned-chat" }));
@@ -433,13 +476,12 @@ test("intermittent streaming does not reset the automatic retry budget for the s
   seed({ agentStatus: "error" });
   let resumes = 0;
   globalThis.__prepareAgent.error = new TypeError("Failed to fetch");
-  globalThis.__prepareAgent.data.activeTurnId = "turn-a";
-  globalThis.__prepareAgent.data.turns = { "turn-a": { status: "active" } };
+  globalThis.__prepareAgent.view = viewOf({ turns: ["turn-a"] });
   globalThis.__prepareAgent.resume = async () => { resumes++; };
   fakeFetch(() => undefined);
   const rendered = render(app({ sessionId: "owned-chat" }));
   await waitFor(() => assert.equal(resumes, 1), { timeout: 2500 });
-  globalThis.__prepareAgent.status = "streaming";
+  globalThis.__prepareAgent.status = "busy";
   rendered.rerender(app({ sessionId: "owned-chat" }));
   globalThis.__prepareAgent.status = "error";
   rendered.rerender(app({ sessionId: "owned-chat" }));
@@ -451,8 +493,7 @@ test("intermittent streaming does not reset the automatic retry budget for the s
 
 test("a disconnected stop targets only the observed turn and reattaches to confirm", async () => {
   const sends = seed({ agentStatus: "error" });
-  globalThis.__prepareAgent.data.activeTurnId = "turn-old";
-  globalThis.__prepareAgent.data.turns = { "turn-old": { status: "active" } };
+  globalThis.__prepareAgent.view = viewOf({ turns: ["turn-old"] });
   let resumes = 0;
   globalThis.__prepareAgent.resume = async () => { resumes++; };
   const pending = deferred(); let calls = 0, body, proof;
@@ -468,9 +509,9 @@ test("a disconnected stop targets only the observed turn and reattaches to confi
   const stop = await screen.findByRole("button", { name: "Request stop for this turn" });
   await user.click(stop);
   await waitFor(() => assert.equal(calls, 1)); assert.equal(body.turnId, "turn-old"); assert.equal(proof, "proof-value");
-  assert.equal(screen.getByRole("button", { name: "Stopping…" }).disabled, true);
+  assert.ok(screen.getAllByRole("button", { name: "Stopping…" }).every((button) => button.disabled));
   assert.equal(sends.length, 0); assert.equal(resumes, 0);
-  await React.act(async () => { pending.resolve(Response.json({ ok: true, status: "accepted", sessionId: "owned-chat" }, { status: 202 })); await pending.promise; });
+  await React.act(async () => { pending.resolve(Response.json({ ok: true, sessionId: "owned-chat", deliveryId: "cancel-delivery" }, { status: 202 })); await pending.promise; });
   await waitFor(() => assert.equal(resumes, 1));
   assert.ok(screen.getByText(/stream disconnected while a turn was active/));
   assert.equal(sends.length, 0);
@@ -478,8 +519,7 @@ test("a disconnected stop targets only the observed turn and reattaches to confi
 
 test("a failed disconnected stop preserves the draft and reports an error", async () => {
   const sends = seed({ agentStatus: "error" });
-  globalThis.__prepareAgent.data.activeTurnId = "turn-old";
-  globalThis.__prepareAgent.data.turns = { "turn-old": { status: "active" } };
+  globalThis.__prepareAgent.view = viewOf({ turns: ["turn-old"] });
   globalThis.__prepareAgent.resume = async () => {};
   fakeFetch((path) => path.endsWith("/eve/v1/session/owned-chat/cancel") ? Response.json({ error: "offline" }, { status: 503 }) : undefined);
   render(app({ sessionId: "owned-chat" }));
@@ -490,15 +530,14 @@ test("a failed disconnected stop preserves the draft and reports an error", asyn
   await waitFor(() => assert.ok(screen.getByText("offline")));
   assert.equal(input.value, "Keep my draft"); assert.equal(sends.length, 0);
   assert.ok(screen.getByText(/A stop request may have been accepted/));
-  assert.equal(screen.getByRole("button", { name: "Stopping…" }).disabled, true);
+  assert.ok(screen.getAllByRole("button", { name: "Stopping…" }).every((button) => button.disabled));
   assert.equal(screen.getByRole("button", { name: "Reconnect" }).disabled, false);
 });
 
 test("a pending stop blocks scheduled reconnect and follow-ups until the turn settles", async () => {
   const sends = seed({ agentStatus: "error" });
   globalThis.__prepareAgent.error = new TypeError("Failed to fetch");
-  globalThis.__prepareAgent.data.activeTurnId = "turn-old";
-  globalThis.__prepareAgent.data.turns = { "turn-old": { status: "active" } };
+  globalThis.__prepareAgent.view = viewOf({ turns: ["turn-old"] });
   const pending = deferred(); const attached = deferred(); let resumes = 0;
   globalThis.__prepareAgent.resume = async () => { resumes++; await attached.promise; };
   // Hold the exact reconnect timer. Typing can take longer than its 500ms
@@ -522,20 +561,21 @@ test("a pending stop blocks scheduled reconnect and follow-ups until the turn se
   // Simulate a callback already queued when clearTimeout runs.
   await React.act(async () => scheduledRetry());
   assert.equal(resumes, 0, "the previously scheduled automatic retry must not race the stop request");
-  await React.act(async () => { pending.resolve(Response.json({ ok: true, status: "accepted", sessionId: "owned-chat" }, { status: 202 })); await pending.promise; });
+  await React.act(async () => { pending.resolve(Response.json({ ok: true, sessionId: "owned-chat", deliveryId: "cancel-delivery" }, { status: 202 })); await pending.promise; });
   await waitFor(() => assert.equal(resumes, 1));
-  globalThis.__prepareAgent.status = "streaming";
+  globalThis.__prepareAgent.status = "busy";
   rendered.rerender(app({ sessionId: "owned-chat" }));
   await React.act(async () => { attached.resolve(); await attached.promise; });
   assert.equal(screen.getByRole("button", { name: "Send" }).disabled, true);
   assert.equal(input.value, "Do not send while stopping");
   assert.equal(sends.length, 0);
-  globalThis.__prepareAgent.status = "ready";
-  globalThis.__prepareAgent.events = [
-    { type: "turn.started", data: { turnId: "turn-old", sequence: 1 } },
-    { type: "turn.cancelled", data: { turnId: "turn-old", sequence: 1 } },
-    { type: "session.waiting", data: {} },
-  ];
+  globalThis.__prepareAgent.status = "idle";
+  const stream = facts(
+    ["turn.started", { turnId: "turn-old", cause: { kind: "delivery" }, follows: null }],
+    ["turn.settled", { turnId: "turn-old", outcome: "cancelled" }],
+  );
+  globalThis.__prepareAgent.events = stream;
+  globalThis.__prepareAgent.view = foldEvents(emptySessionView(), stream);
   rendered.rerender(app({ sessionId: "owned-chat" }));
   await waitFor(() => assert.equal(screen.getByRole("button", { name: "Send" }).disabled, false));
   assert.equal(sends.length, 0);
@@ -543,20 +583,19 @@ test("a pending stop blocks scheduled reconnect and follow-ups until the turn se
 
 test("accepted stop with a lost turn projection remains blocked but allows manual reattachment", async () => {
   const sends = seed({ agentStatus: "error" });
-  globalThis.__prepareAgent.data.activeTurnId = "turn-old";
-  globalThis.__prepareAgent.data.turns = { "turn-old": { status: "active" } };
+  globalThis.__prepareAgent.error = Object.assign(new Error("Unauthorized"), { status: 401 });
+  globalThis.__prepareAgent.view = viewOf({ turns: ["turn-old"] });
   let resumes = 0;
   globalThis.__prepareAgent.resume = async () => { resumes++; throw new Error("offline"); };
-  fakeFetch((path) => path.endsWith("/eve/v1/session/owned-chat/cancel") ? Response.json({ ok: true, status: "accepted", sessionId: "owned-chat" }, { status: 202 }) : undefined);
+  fakeFetch((path) => path.endsWith("/eve/v1/session/owned-chat/cancel") ? Response.json({ ok: true, sessionId: "owned-chat", deliveryId: "cancel-delivery" }, { status: 202 }) : undefined);
   const rendered = render(app({ sessionId: "owned-chat" }));
   const user = userEvent.setup();
   const input = screen.getByPlaceholderText("Ask Tflash anything…");
   await user.type(input, "Keep this draft");
   await user.click(await screen.findByRole("button", { name: "Request stop for this turn" }));
   await waitFor(() => assert.equal(resumes, 1));
-  globalThis.__prepareAgent.status = "ready";
-  globalThis.__prepareAgent.data.activeTurnId = undefined;
-  globalThis.__prepareAgent.data.turns = {};
+  globalThis.__prepareAgent.status = "idle";
+  globalThis.__prepareAgent.view = emptySessionView();
   rendered.rerender(app({ sessionId: "owned-chat" }));
   assert.equal(screen.getByRole("button", { name: "Send" }).disabled, true);
   assert.equal(screen.getByRole("button", { name: "Reconnect" }).disabled, false);
@@ -569,19 +608,22 @@ test("accepted stop with a lost turn projection remains blocked but allows manua
 test("a stop response arriving after the terminal turn releases the composer", async () => {
   const sends = seed({ agentStatus: "streaming" });
   const pending = deferred();
-  globalThis.__prepareAgent.data.activeTurnId = "turn-old";
-  globalThis.__prepareAgent.data.turns = { "turn-old": { status: "active" } };
+  globalThis.__prepareAgent.view = viewOf({ turns: ["turn-old"] });
   fakeFetch(path => path.endsWith("/eve/v1/session/owned-chat/cancel") ? pending.promise : undefined);
   const rendered = render(app({ sessionId: "owned-chat" }));
   const user = userEvent.setup();
   await user.type(screen.getByPlaceholderText("Ask Tflash anything…"), "Keep draft");
   await user.click(screen.getByRole("button", { name: "Stop" }));
-  globalThis.__prepareAgent.status = "ready";
-  globalThis.__prepareAgent.data.turns["turn-old"].status = "cancelled";
-  globalThis.__prepareAgent.events = [{ type: "turn.cancelled", data: { turnId: "turn-old", sequence: 1 } }, { type: "session.waiting", data: {} }];
+  globalThis.__prepareAgent.status = "idle";
+  const stream = facts(
+    ["turn.started", { turnId: "turn-old", cause: { kind: "delivery" }, follows: null }],
+    ["turn.settled", { turnId: "turn-old", outcome: "cancelled" }],
+  );
+  globalThis.__prepareAgent.events = stream;
+  globalThis.__prepareAgent.view = foldEvents(emptySessionView(), stream);
   rendered.rerender(app({ sessionId: "owned-chat" }));
   assert.equal(screen.getByRole("button", { name: "Send" }).disabled, true);
-  await React.act(async () => { pending.resolve(Response.json({ ok: true, status: "accepted", sessionId: "owned-chat" }, { status: 202 })); await pending.promise; });
+  await React.act(async () => { pending.resolve(Response.json({ ok: true, sessionId: "owned-chat", deliveryId: "cancel-delivery" }, { status: 202 })); await pending.promise; });
   await waitFor(() => assert.equal(screen.getByRole("button", { name: "Send" }).disabled, false));
   assert.equal(sends.length, 0);
 });
@@ -589,8 +631,8 @@ test("a stop response arriving after the terminal turn releases the composer", a
 test("unrelated renders preserve reviewed continuation but a changed transcript requires review again", async () => {
   seed();
   const plan = { title: "Build feature", steps: [{ id: "one", title: "Implement", status: "pending" }] };
-  const part = { type: "dynamic-tool", toolName: "update_plan", toolCallId: "p", state: "output-available", output: { kind: "tflash-plan", version: 1, plan } };
-  globalThis.__prepareAgent.data.messages = [{ id: "m", role: "assistant", parts: [part] }];
+  const part = { type: "tool", kind: "tool", name: "update_plan", callId: "p", state: "completed", input: {}, output: { kind: "tflash-plan", version: 1, plan } };
+  globalThis.__prepareAgent.messages = [{ id: "m", role: "assistant", parts: [part] }];
   fakeFetch(() => undefined);
   const rendered = render(app({ sessionId: "owned-chat" }));
   const user = userEvent.setup();
@@ -600,28 +642,33 @@ test("unrelated renders preserve reviewed continuation but a changed transcript 
   await user.click(checkbox);
   rendered.rerender(app({ sessionId: "owned-chat" }));
   assert.equal(screen.getByRole("checkbox", { name: /I reviewed the recent activity/ }).checked, true);
-  globalThis.__prepareAgent.data.messages = [{ id: "m", role: "assistant", parts: [{ ...part, output: { ...part.output, plan: { ...plan, title: "Revised feature" } } }] }];
+  globalThis.__prepareAgent.messages = [{ id: "m", role: "assistant", parts: [{ ...part, output: { ...part.output, plan: { ...plan, title: "Revised feature" } } }] }];
   rendered.rerender(app({ sessionId: "owned-chat" }));
   await waitFor(() => assert.equal(screen.queryByRole("checkbox", { name: /I reviewed the recent activity/ }), null));
   assert.ok(screen.getByRole("button", { name: "Continue task" }));
 });
 
-test("turn projection is not rescanned on unrelated renders and updates on new events", async () => {
+test("turn projection is not rescanned on unrelated renders and updates on new facts", async () => {
   seed(); let scans = 0;
-  const initial = [{ type: "turn.started", data: { turnId: "turn-a", sequence: 1 } }];
-  globalThis.__prepareAgent.events = new Proxy(initial, { get(target, prop, receiver) {
-    if (prop === "forEach") return (...args) => { scans++; return target.forEach(...args); };
+  const tracked = (list) => new Proxy(list, { get(target, prop, receiver) {
+    if (prop === Symbol.iterator) return function* () { scans++; yield* target; };
     return Reflect.get(target, prop, receiver);
   } });
+  const initial = facts(["turn.started", { turnId: "turn-a", cause: { kind: "delivery" }, follows: null }]);
+  globalThis.__prepareAgent.events = tracked(initial);
+  globalThis.__prepareAgent.view = foldEvents(emptySessionView(), initial);
   fakeFetch(() => undefined);
   const rendered = render(app({ sessionId: "owned-chat" }));
   await waitFor(() => assert.ok(scans > 0));
   const before = scans;
   rendered.rerender(app({ sessionId: "owned-chat" }));
   assert.equal(scans, before);
-  globalThis.__prepareAgent.events = [...initial, { type: "turn.cancelled", data: { turnId: "turn-a", sequence: 1 } }];
+  const next = [...initial, ...facts(["turn.settled", { turnId: "turn-a", outcome: "cancelled" }])];
+  globalThis.__prepareAgent.events = tracked(next);
+  globalThis.__prepareAgent.view = foldEvents(emptySessionView(), next);
   rendered.rerender(app({ sessionId: "owned-chat" }));
   await waitFor(() => assert.ok(screen.getByText(/The turn stopped before finishing/)));
+  assert.ok(scans > before);
 });
 
 test("an unacknowledged dispatch blocks retry across a tab reload until explicit review", async () => {
@@ -667,7 +714,8 @@ test("an active turn can still be explicitly steered without erasing its dispatc
   await user.type(input,"First message");
   await user.keyboard("{Enter}");
   await waitFor(() => assert.equal(sent.length,1));
-  globalThis.__prepareAgent.status = "streaming";
+  globalThis.__prepareAgent.status = "busy";
+  globalThis.__prepareAgent.view = viewOf({ turns: ["turn-a"] });
   view.rerender(app({sessionId:"owned-chat"}));
   await user.clear(input);
   await user.type(input,"Steer it");
@@ -709,7 +757,7 @@ test("tracked manual continuation reserves and begins before the real chat send 
 
 test("conversation panels are removed from chat while permission revocation remains in settings", async () => {
   seed();
-  globalThis.__prepareAgent.data.messages = [{id:'message-1',role:'user',parts:[{type:'text',text:'Hello'}]}];
+  globalThis.__prepareAgent.messages = [{id:'message-1',role:'user',parts:[{type:'text',text:'Hello'}]}];
   let revocations=0;
   fakeFetch((path,options)=>{
     if(path.endsWith('/permissions/revoke-all')) { revocations++; return Response.json({revoked:true}); }
@@ -759,7 +807,7 @@ test("Somali starter suggestions and composer are translated and preserve a draf
 
 test("copy action reports clipboard failure and success without unhandled rejection", async () => {
   seed(); fakeFetch(()=>undefined);
-  globalThis.__prepareAgent.data.messages=[{id:'assistant-1',role:'assistant',parts:[{type:'text',text:'Useful answer'}]}];
+  globalThis.__prepareAgent.messages=[{id:'assistant-1',role:'assistant',parts:[{type:'text',text:'Useful answer'}]}];
   const previous=Object.getOwnPropertyDescriptor(navigator,'clipboard');
   const user=userEvent.setup();
   let fail=true, copied;
@@ -798,7 +846,7 @@ for (const failure of ["callback", "rejection"]) {
     await user.type(input, "First request");
     await user.keyboard("{Enter}");
     await waitFor(() => assert.equal(sends.length, 1));
-    globalThis.__prepareAgent.status = "streaming";
+    globalThis.__prepareAgent.status = "busy";
     view.rerender(app({ sessionId: "owned-chat" }));
     await user.clear(input);
     await user.type(input, "Do not send after failure");
@@ -811,7 +859,7 @@ for (const failure of ["callback", "rejection"]) {
     });
     await screen.findByText(/A message dispatch may have reached the agent/);
     // Even an explicit review cannot make the pre-error queued submission new.
-    globalThis.__prepareAgent.status = "ready";
+    globalThis.__prepareAgent.status = "idle";
     view.rerender(app({ sessionId: "owned-chat" }));
     await user.click(screen.getByRole("checkbox", { name: /I checked the turn/ }));
     await user.click(screen.getByRole("button", { name: "Finish review and allow a new message" }));
@@ -848,10 +896,10 @@ test("a blocked browser recovery marker is visible and does not hide an uncertai
 
 test("reported model usage is available in Workspace settings without restoring the removed activity panel", async () => {
   seed();
-  globalThis.__prepareAgent.events=[
-    {type:'step.completed',data:{turnId:'turn',stepIndex:0,usage:{inputTokens:10,outputTokens:3,costUsd:0.1}}},
-    {type:'step.completed',data:{turnId:'turn',stepIndex:1,usage:{inputTokens:20}}},
-  ];
+  globalThis.__prepareAgent.events=facts(
+    ['usage.recorded',{kind:'model',usage:{inputTokens:10,outputTokens:3,costUsd:0.1}}],
+    ['usage.recorded',{kind:'model',usage:{inputTokens:20}}],
+  );
   fakeFetch(()=>undefined);
   render(app({sessionId:'owned-chat'}));
   const user=userEvent.setup();
@@ -1005,9 +1053,14 @@ test("if saving the Vercel owner proof fails, the creation marker is not cleared
 
 function seedApprovalFixture() {
   seed();const id='request-secret-123';
-  const request={requestId:id,kind:'tool-approval',action:{callId:'shell-call'},prompt:'Run shell command?',options:[{id:'approve',label:'Approve'},{id:'cancel',label:'Cancel'}]};
-  const part={type:'dynamic-tool',toolName:'bash',toolCallId:'shell-call',state:'approval-requested',input:{command:'private shell command'},toolMetadata:{eve:{inputRequest:request}}};
-  globalThis.__prepareAgent.data={messages:[{id:'assistant-approval',role:'assistant',parts:[part]}],inputs:{[id]:{status:'open',request}}};
+  const request={kind:'approval',prompt:'Run shell command?',options:[{id:'approve',label:'Approve'},{id:'deny',label:'Deny'}]};
+  const interaction={interactionId:id,turnId:'turn-a',stepIndex:0,request,status:'open',call:{callId:'shell-call',name:'bash'}};
+  const part={type:'tool',kind:'tool',name:'bash',callId:'shell-call',label:'Bash',stepIndex:0,state:'approval',input:{command:'private shell command'},interaction};
+  globalThis.__prepareAgent.messages=[{id:'assistant-approval',role:'assistant',parts:[part]}];
+  globalThis.__prepareAgent.view=viewOf({interactions:[{
+    interactionId:id,subject:{callId:'shell-call'},request,
+    origin:{sessionId:'chat-a',interactionId:'origin',call:{callId:'shell-call',name:'bash'}},
+  }]});
   return {id,request,part};
 }
 
@@ -1034,9 +1087,9 @@ test('only matching authoritative input resolution clears the pending marker, no
   const {id}=seedApprovalFixture();let calls=0;globalThis.__prepareAgent.respond=async()=>{calls++;};fakeFetch(()=>undefined);
   const view=render(app({sessionId:'chat-a'}));const user=userEvent.setup();await user.click(await screen.findByRole('button',{name:'Approve once'}));
   await screen.findByText(/A response to an approval or question may have been accepted/);await waitFor(()=>assert.equal(calls,1));
-  globalThis.__prepareAgent.events=[{type:'client.input.responded',data:{resolutions:[{requestId:id,kind:'tool-approval',outcome:'approved'}]}},{type:'input.resolved',data:{resolutions:[{requestId:'other',kind:'tool-approval',outcome:'approved'}]}}];view.rerender(app({sessionId:'chat-a'}));
+  globalThis.__prepareAgent.events=facts(['interaction.settled',{interactionId:'other',outcome:'accepted'}]);view.rerender(app({sessionId:'chat-a'}));
   await React.act(async()=>{});assert.ok(screen.getByText(/A response to an approval or question may have been accepted/));
-  globalThis.__prepareAgent.events=[...globalThis.__prepareAgent.events,{type:'input.resolved',data:{resolutions:[{requestId:id,kind:'tool-approval',outcome:'approved'}]}}];view.rerender(app({sessionId:'chat-a'}));
+  globalThis.__prepareAgent.events=[...globalThis.__prepareAgent.events,...facts(['interaction.settled',{interactionId:id,outcome:'accepted'}])];view.rerender(app({sessionId:'chat-a'}));
   await waitFor(()=>assert.equal(Boolean(screen.queryByText(/A response to an approval or question may have been accepted/)),false));assert.equal(calls,1);
 });
 
@@ -1094,9 +1147,14 @@ test('Somali input recovery warning requires explicit review',async()=>{
 test('a lost free-text question response retains the draft and blocks automatic re-answer',async()=>{
   const originalFormData = globalThis.FormData; globalThis.FormData = window.FormData;
   try {
-  seed();const id='question-private';const request={requestId:id,kind:'question',action:{callId:'q-call'},prompt:'Which result should I use?',allowFreeform:true,options:[]};
-  const part={type:'dynamic-tool',toolName:'ask_question',toolCallId:'q-call',state:'input-available',input:{}};
-  globalThis.__prepareAgent.data={messages:[{id:'q-message',role:'assistant',parts:[part]}],inputs:{[id]:{status:'open',request}}};
+  seed();const id='question-private';const request={kind:'question',prompt:'Which result should I use?',allowFreeform:true,options:[]};
+  const interaction={interactionId:id,turnId:'turn-a',stepIndex:0,request,status:'open',call:{callId:'q-call',name:'ask_question'}};
+  const part={type:'tool',kind:'tool',name:'ask_question',callId:'q-call',label:'Ask question',stepIndex:0,state:'running',input:{},interaction};
+  globalThis.__prepareAgent.messages=[{id:'q-message',role:'assistant',parts:[part]}];
+  globalThis.__prepareAgent.view=viewOf({interactions:[{
+    interactionId:id,subject:{callId:'q-call'},request,
+    origin:{sessionId:'chat-a',interactionId:'origin',call:{callId:'q-call',name:'ask_question'}},
+  }]});
   let calls=0;globalThis.__prepareAgent.respond=async()=>{calls++;throw new Error('uncertain');};fakeFetch(()=>undefined);
   render(app({sessionId:'chat-a'}));const user=userEvent.setup();const answer=await screen.findByRole('textbox',{name:'Answer'});
   await user.type(answer,'Private response');await user.click(screen.getByRole('button',{name:'Answer'}));
@@ -1107,7 +1165,7 @@ test('a lost free-text question response retains the draft and blocks automatic 
 });
 
 test('stop remains available while an approval response is unconfirmed',async()=>{
-  seedApprovalFixture();globalThis.__prepareAgent.status='streaming';let stops=0;const pending=deferred();
+  seedApprovalFixture();globalThis.__prepareAgent.status='busy';let stops=0;const pending=deferred();
   globalThis.__prepareAgent.respond=()=>pending.promise;globalThis.__prepareAgent.cancel=async()=>{stops++;};fakeFetch(()=>undefined);
   render(app({sessionId:'chat-a'}));const user=userEvent.setup();await user.click(await screen.findByRole('button',{name:'Approve once'}));
   await screen.findByText(/A response to an approval or question may have been accepted/);await user.click(screen.getByRole('button',{name:'Stop'}));
@@ -1145,15 +1203,20 @@ test('plain chat marker needs human review even when the locally observed prompt
   const view=render(app({sessionId:'chat-a'}));const user=userEvent.setup();const field=await screen.findByPlaceholderText('Ask Tflash anything…');
   await user.type(field,'approve');await user.click(screen.getByRole('button',{name:'Send'}));await waitFor(()=>assert.equal(calls,1));
   await screen.findByText(/A response to an approval or question may have been accepted/);
-  globalThis.__prepareAgent.events=[{type:'input.resolved',data:{resolutions:[{requestId:id,kind:'tool-approval',outcome:'approved'}]}}];view.rerender(app({sessionId:'chat-a'}));
+  globalThis.__prepareAgent.events=facts(['interaction.settled',{interactionId:id,outcome:'accepted'}]);view.rerender(app({sessionId:'chat-a'}));
   await React.act(async()=>{});assert.ok(screen.getByText(/A response to an approval or question may have been accepted/));assert.equal(calls,1);
 });
 
 test('a question draft survives another tab introducing an uncertainty warning',async()=>{
   const originalFormData=globalThis.FormData;globalThis.FormData=window.FormData;
   try {
-    seed();const id='question-draft';const request={requestId:id,kind:'question',action:{callId:'q-call'},prompt:'Which result?',allowFreeform:true,options:[]};
-    globalThis.__prepareAgent.data={messages:[{id:'q',role:'assistant',parts:[{type:'dynamic-tool',toolName:'ask_question',toolCallId:'q-call',state:'input-available',input:{}}]}],inputs:{[id]:{status:'open',request}}};fakeFetch(()=>undefined);
+    seed();const id='question-draft';const request={kind:'question',prompt:'Which result?',allowFreeform:true,options:[]};
+    const interaction={interactionId:id,turnId:'turn-a',stepIndex:0,request,status:'open',call:{callId:'q-call',name:'ask_question'}};
+    globalThis.__prepareAgent.messages=[{id:'q',role:'assistant',parts:[{type:'tool',kind:'tool',name:'ask_question',callId:'q-call',label:'Ask question',stepIndex:0,state:'running',input:{},interaction}]}];
+    globalThis.__prepareAgent.view=viewOf({interactions:[{
+      interactionId:id,subject:{callId:'q-call'},request,
+      origin:{sessionId:'chat-a',interactionId:'origin',call:{callId:'q-call',name:'ask_question'}},
+    }]});fakeFetch(()=>undefined);
     render(app({sessionId:'chat-a'}));const user=userEvent.setup();await user.type(await screen.findByRole('textbox',{name:'Answer'}),'Keep this draft');
     const key='tflash:sync-uncertain:input-response:supabase:prepare-user:tab';
     await React.act(async()=>{window.localStorage.setItem(key,JSON.stringify({sessionId:'chat-a',digest:'a'.repeat(64)}));window.dispatchEvent(new window.StorageEvent('storage',{key}));});
@@ -1179,7 +1242,7 @@ test('failed marker deletion does not silently dismiss a settled approval warnin
   await screen.findByText(/A response to an approval or question may have been accepted/);
   proto.removeItem=function(key){if(key.includes(':input-response:'))throw new Error('blocked');return original.call(this,key);};
   try {
-    globalThis.__prepareAgent.events=[{type:'input.resolved',data:{resolutions:[{requestId:id,kind:'tool-approval',outcome:'approved'}]}}];view.rerender(app({sessionId:'chat-a'}));
+    globalThis.__prepareAgent.events=facts(['interaction.settled',{interactionId:id,outcome:'accepted'}]);view.rerender(app({sessionId:'chat-a'}));
     await screen.findByText(/Response recovery storage or secure hashing is unavailable/);assert.ok(screen.getByText(/A response to an approval or question may have been accepted/));
     await user.click(screen.getByLabelText(/I inspected the conversation and external effects/));await user.click(screen.getByRole('button',{name:'Acknowledge response review'}));
     assert.ok(screen.getByText(/Could not save the review/));
@@ -1189,24 +1252,29 @@ test('failed marker deletion does not silently dismiss a settled approval warnin
 test('connected Stop uses the exact observed turn even after streaming, and only its cancellation event clears the marker', async () => {
   const sends = seed({ agentStatus: 'streaming' }); let hookCancels = 0, body, calls = 0;
   globalThis.__prepareAgent.cancel = async () => { hookCancels++; };
-  globalThis.__prepareAgent.data.activeTurnId = 'turn-old';
-  globalThis.__prepareAgent.data.turns = { 'turn-old': { status: 'active' } };
-  fakeFetch((path, options) => { if (path.endsWith('/eve/v1/session/owned-chat/cancel')) { calls++; body = JSON.parse(options.body); assert.ok(options.signal); return Response.json({ ok: true, status: 'accepted', sessionId: 'owned-chat' }, { status: 202 }); } });
+  globalThis.__prepareAgent.view = viewOf({ turns: ['turn-old'] });
+  fakeFetch((path, options) => { if (path.endsWith('/eve/v1/session/owned-chat/cancel')) { calls++; body = JSON.parse(options.body); assert.ok(options.signal); return Response.json({ ok: true, sessionId: 'owned-chat', deliveryId: 'cancel-delivery' }, { status: 202 }); } });
   const view = render(app({ sessionId: 'owned-chat' })); const user = userEvent.setup();
   await user.click(await screen.findByRole('button', { name: 'Stop' }));
   await waitFor(() => assert.equal(calls, 1)); assert.equal(body.turnId, 'turn-old'); assert.equal(hookCancels, 0);
   await screen.findByText(/A stop request may have been accepted/);
   const keys = Object.keys(window.localStorage).filter(k => k.includes(':stop-request:'));
   assert.equal(keys.length, 1); assert.deepEqual(JSON.parse(window.localStorage.getItem(keys[0])), { sessionId: 'owned-chat', turnId: 'turn-old' });
-  globalThis.__prepareAgent.status = 'ready';
-  globalThis.__prepareAgent.events = [{ type: 'turn.cancelled', data: { turnId: 'other-turn' } }, { type: 'turn.completed', data: { turnId: 'turn-old' } }];
+  globalThis.__prepareAgent.status = 'idle';
+  const mixed = facts(
+    ['turn.started', { turnId: 'other-turn', cause: { kind: 'delivery' }, follows: null }],
+    ['turn.started', { turnId: 'turn-old', cause: { kind: 'delivery' }, follows: 'other-turn' }],
+    ['turn.settled', { turnId: 'other-turn', outcome: 'cancelled' }],
+    ['turn.settled', { turnId: 'turn-old', outcome: 'completed' }],
+  );
+  globalThis.__prepareAgent.events = mixed;
+  globalThis.__prepareAgent.view = foldEvents(emptySessionView(), mixed);
   view.rerender(app({ sessionId: 'owned-chat' }));
   assert.ok(screen.getByText(/A stop request may have been accepted/));
   assert.equal(screen.getByRole('button', { name: 'Send' }).disabled, true);
-  globalThis.__prepareAgent.events = [{ type: 'turn.cancelled', data: { turnId: 'turn-old' } }];
-  view.rerender(app({ sessionId: 'owned-chat' }));
-  assert.ok(screen.getByText(/A stop request may have been accepted/), 'a cancellation alone is not a session.waiting boundary');
-  globalThis.__prepareAgent.events = [...globalThis.__prepareAgent.events, { type: 'session.waiting', data: {} }];
+  const settled = [...mixed, ...facts(['turn.settled', { turnId: 'turn-old', outcome: 'cancelled' }])];
+  globalThis.__prepareAgent.events = settled;
+  globalThis.__prepareAgent.view = foldEvents(emptySessionView(), settled);
   view.rerender(app({ sessionId: 'owned-chat' }));
   await waitFor(() => assert.equal(Boolean(screen.queryByText(/A stop request may have been accepted/)), false));
   assert.equal(window.localStorage.getItem(keys[0]), null); assert.equal(sends.length, 0);
@@ -1269,7 +1337,7 @@ test('other-tab stop warning blocks forced sends; unrelated account and session 
 
 test('stalled reconnect releases its local wait without sending or cancelling the server turn', async () => {
   const sends = seed({ agentStatus: 'error' }); const pending = deferred(); let resumes = 0, cancels = 0, deadline;
-  globalThis.__prepareAgent.data.activeTurnId = 'turn-old'; globalThis.__prepareAgent.data.turns = { 'turn-old': { status: 'active' } };
+  globalThis.__prepareAgent.view = viewOf({ turns: ['turn-old'] });
   globalThis.__prepareAgent.resume = () => { resumes++; return pending.promise; }; globalThis.__prepareAgent.cancel = () => { cancels++; };
   const oldTimeout = AbortSignal.timeout;
   AbortSignal.timeout = ms => { if (ms === 15_000) { deadline = new AbortController(); return deadline.signal; } return oldTimeout(ms); };
@@ -1295,13 +1363,13 @@ test('Somali Stop uncertainty requires an explicit review', async () => {
 
 test('a stop that settles after unmount does not reconnect the old conversation', async () => {
   seed({ agentStatus: 'error' }); let resumes = 0;
-  globalThis.__prepareAgent.data.activeTurnId = 'turn-old'; globalThis.__prepareAgent.data.turns = { 'turn-old': { status: 'active' } };
+  globalThis.__prepareAgent.view = viewOf({ turns: ['turn-old'] });
   globalThis.__prepareAgent.resume = async () => { resumes++; }; const pending = deferred();
   fakeFetch(path => path.endsWith('/eve/v1/session/owned-chat/cancel') ? pending.promise : undefined);
   const view = render(app({ sessionId: 'owned-chat' })); const user = userEvent.setup();
   await user.click(await screen.findByRole('button', { name: 'Request stop for this turn' }));
   assert.equal(Object.keys(window.localStorage).filter(k => k.includes(':stop-request:')).length, 1);
-  view.unmount(); await React.act(async () => { pending.resolve(Response.json({ ok: true, status: 'accepted', sessionId: 'owned-chat' }, { status: 202 })); await pending.promise; });
+  view.unmount(); await React.act(async () => { pending.resolve(Response.json({ ok: true, sessionId: 'owned-chat', deliveryId: 'cancel-delivery' }, { status: 202 })); await pending.promise; });
   assert.equal(resumes, 0); assert.equal(Object.keys(window.localStorage).filter(k => k.includes(':stop-request:')).length, 1);
 });
 
@@ -1321,8 +1389,8 @@ test('a failed stop marker deletion keeps the warning and follow-ups blocked', a
 
 test('scoped stop timeout aborts only the transport wait and retains the exact-turn marker', async () => {
   const sends = seed({ agentStatus: 'streaming' }); const pending = deferred(); let signal, deadline, calls = 0;
-  globalThis.__prepareAgent.data.activeTurnId = 'turn-new'; globalThis.__prepareAgent.data.turns = { 'turn-new': { status: 'active' } };
-  globalThis.__prepareAgent.events = [{ type: 'turn.started', data: { turnId: 'turn-older', sequence: 1 } }];
+  globalThis.__prepareAgent.view = viewOf({ turns: ['turn-new'] });
+  globalThis.__prepareAgent.events = facts(['turn.started', { turnId: 'turn-older', cause: { kind: 'delivery' }, follows: null }]);
   fakeFetch((path, options) => { if (path.endsWith('/eve/v1/session/owned-chat/cancel')) { calls++; signal = options.signal; assert.equal(JSON.parse(options.body).turnId, 'turn-new'); return pending.promise; } });
   const original = AbortSignal.timeout; AbortSignal.timeout = ms => { if (ms === 15_000) { deadline = new AbortController(); return deadline.signal; } return original(ms); };
   try {
@@ -1332,8 +1400,8 @@ test('scoped stop timeout aborts only the transport wait and retains the exact-t
     await screen.findByText(/A stop request may have been accepted/);
     const keys = Object.keys(window.localStorage).filter(k => k.includes(':stop-request:'));
     assert.equal(JSON.parse(window.localStorage.getItem(keys[0])).turnId, 'turn-new');
-    globalThis.__prepareAgent.status = 'ready'; globalThis.__prepareAgent.events = [{ type: 'turn.cancelled', data: { turnId: 'turn-older' } }]; view.rerender(app({ sessionId: 'owned-chat' }));
-    await React.act(async () => { pending.resolve(Response.json({ ok: true, status: 'accepted', sessionId: 'owned-chat' }, { status: 202 })); await pending.promise; });
+    globalThis.__prepareAgent.status = 'ready'; globalThis.__prepareAgent.events = facts(['turn.settled', { turnId: 'turn-older', outcome: 'cancelled' }]); view.rerender(app({ sessionId: 'owned-chat' }));
+    await React.act(async () => { pending.resolve(Response.json({ ok: true, sessionId: 'owned-chat', deliveryId: 'cancel-delivery' }, { status: 202 })); await pending.promise; });
     assert.ok(screen.getByText(/A stop request may have been accepted/)); assert.equal(calls, 1); assert.equal(sends.length, 0);
   } finally { AbortSignal.timeout = original; }
 });
@@ -1357,7 +1425,9 @@ test('shared dispatch marker precedes send and preserves same-tab steering until
   const view = render(app({ sessionId: 'owned-chat' })); const user = userEvent.setup();
   const field = await screen.findByPlaceholderText('Ask Tflash anything…'); await user.type(field, 'private message'); await user.keyboard('{Enter}');
   await waitFor(() => assert.equal(sends.length, 1)); assert.equal(Boolean(screen.queryByText(/A message may be running in another tab/)), false);
-  globalThis.__prepareAgent.status = 'streaming'; view.rerender(app({ sessionId: 'owned-chat' }));
+  globalThis.__prepareAgent.status = 'busy';
+  globalThis.__prepareAgent.view = viewOf({ turns: ['turn-a'] });
+  view.rerender(app({ sessionId: 'owned-chat' }));
   await user.type(field, 'steer text'); await user.keyboard('{Enter}'); await waitFor(() => assert.equal(sends.length, 2));
   assert.equal(sends[1].options.turnPolicy, 'steer'); assert.equal(Object.keys(window.localStorage).filter(k => k.includes(':turn-dispatch:')).length, 2);
   await React.act(async () => { pending.resolve(); await pending.promise; });
@@ -1392,7 +1462,7 @@ test('another tab warning blocks a queued message after history persistence with
 });
 
 test('shared dispatch warning blocks approval responses but not protective Stop', async () => {
-  seedApprovalFixture(); globalThis.__prepareAgent.status = 'streaming'; let responses = 0, stops = 0;
+  seedApprovalFixture(); globalThis.__prepareAgent.status = 'busy'; let responses = 0, stops = 0;
   globalThis.__prepareAgent.respond = async () => { responses++; }; globalThis.__prepareAgent.cancel = async () => { stops++; }; fakeFetch(() => undefined);
   const key = 'tflash:sync-uncertain:turn-dispatch:supabase:prepare-user:other'; window.localStorage.setItem(key, JSON.stringify({ sessionId: 'chat-a' }));
   render(app({ sessionId: 'chat-a' })); const user = userEvent.setup(); await screen.findByText(/A message may be running in another tab/);

@@ -10,23 +10,23 @@ import {
 const log = createLogger("agent:usage-limit");
 const counter = defineState("tflash.model-step-budget.v1", () => ({
   turnId: "",
-  steps: [] as readonly number[],
+  steps: [] as readonly string[],
 }));
 export default defineHook({
   events: {
-    "step.started"(event, ctx) {
+    "model.started"(event, ctx) {
       const auth = ctx.session.auth.current ?? ctx.session.auth.initiator;
       const transition = countModelStep(
         counter.get(),
         ctx.session.turn.id,
-        event.data.stepIndex,
+        event.data.runId,
         modelStepLimit(auth?.attributes?.[ATTR_MAX_STEPS]),
       );
       counter.update(() => transition.state);
       // Eve cancels before this model call starts, not merely in the browser.
       if (transition.cancel) {
         // Only coordinates and limits, never model input, tool arguments or credentials.
-        log.warn("model step limit reached", { turnId: ctx.session.turn.id, stepIndex: event.data.stepIndex, limit: modelStepLimit(auth?.attributes?.[ATTR_MAX_STEPS]) });
+        log.warn("model step limit reached", { turnId: ctx.session.turn.id, runId: event.data.runId, limit: modelStepLimit(auth?.attributes?.[ATTR_MAX_STEPS]) });
         ctx.cancel();
       }
     },

@@ -22,8 +22,8 @@
 import { connect } from "@vercel/connect/eve";
 import {
   defineMcpClientConnection,
-  type ConnectionAuthDefinition,
-  type ConnectionAuthProvider,
+  type AuthorizationDefinition,
+  type ConnectionAuthResolver,
 } from "eve/connections";
 import { always } from "eve/tools/approval";
 import { integrationOrThrow, type IntegrationInfo } from "./catalog";
@@ -85,7 +85,7 @@ export function resolveIntegrationAuth(
 }
 
 /** Server-configured credential: Vercel Connect or a static env token. */
-function environmentAuthFor(integration: IntegrationInfo): ConnectionAuthProvider | undefined {
+function environmentAuthFor(integration: IntegrationInfo): AuthorizationDefinition | undefined {
   const resolved = resolveIntegrationAuth(integration);
   switch (resolved.mode) {
     case "connect":
@@ -99,7 +99,7 @@ function environmentAuthFor(integration: IntegrationInfo): ConnectionAuthProvide
     case "token": {
       const key = resolved.tokenEnvKey;
       return {
-        credentialOwner: "app",
+        principalType: "app",
         getToken: async () => {
           const token = envValue(key);
           if (!token) throw new Error(`${key} is not set.`);
@@ -112,20 +112,7 @@ function environmentAuthFor(integration: IntegrationInfo): ConnectionAuthProvide
   }
 }
 
-type AuthResolverContext = {
-  readonly session: {
-    readonly auth: {
-      readonly current?: {
-        readonly principalId?: string;
-        readonly attributes?: Readonly<Record<string, string | readonly string[]>>;
-      } | null;
-      readonly initiator?: {
-        readonly principalId?: string;
-        readonly attributes?: Readonly<Record<string, string | readonly string[]>>;
-      } | null;
-    };
-  };
-};
+type AuthResolverContext = Parameters<ConnectionAuthResolver>[0];
 
 /**
  * Per-caller credential, resolved on every tool call:
@@ -134,13 +121,13 @@ type AuthResolverContext = {
  *      browser, opened here, never logged) — user-scoped;
  *   2. otherwise the deployment's own Connect connector or static token.
  */
-function authResolverFor(integration: IntegrationInfo): ConnectionAuthDefinition {
-  return async (ctx: AuthResolverContext): Promise<ConnectionAuthProvider> => {
+function authResolverFor(integration: IntegrationInfo): ConnectionAuthResolver {
+  return async (ctx: AuthResolverContext) => {
     const current = ctx.session.auth.current ?? ctx.session.auth.initiator;
     const browserToken = await integrationTokenFor(integration.id, current?.attributes, current?.principalId);
     if (browserToken) {
       return {
-        credentialOwner: "user",
+        principalType: "user",
         getToken: async () => ({ token: browserToken }),
       };
     }
@@ -149,7 +136,7 @@ function authResolverFor(integration: IntegrationInfo): ConnectionAuthDefinition
     // Nothing configured: let the server answer anonymously so the model sees
     // an honest 401 instead of a fabricated success.
     return {
-      credentialOwner: "user",
+      principalType: "user",
       getToken: async () => {
         throw new Error(
           `${integration.name} is not connected. Open Settings → Connections and approve access, ` +

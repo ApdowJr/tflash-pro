@@ -27,22 +27,20 @@ export function beginInputResponse(kind: string, userId: string, sessionId: stri
   return beginSyncUncertainty("input-response", kind, userId, JSON.stringify({ sessionId, digest, mode }));
 }
 export function clearInputResponse(key: string) { clearSyncUncertainty([key]); }
-/** Only authoritative terminal stream events, never optimistic client.input.responded. */
+/** Only authoritative terminal stream facts, never an optimistic local answer. */
+const INTERACTION_OUTCOMES = new Set(["accepted", "declined", "invalid", "failed", "withdrawn", "interrupted", "abandoned", "expired"]);
 export function resolvedInputRequestIds(events: readonly { type: string; data?: unknown }[]): string[] {
   const ids: string[] = [];
+  const seen = new Set<string>();
   for (let i = events.length - 1; i >= 0 && ids.length < 2000; i--) {
     const e = events[i];
-    if (e.type !== "input.resolved" || !e.data || typeof e.data !== "object") continue;
-    const values = (e.data as { resolutions?: unknown }).resolutions;
-    if (!Array.isArray(values) || values.length > 2000) continue;
-    for (const value of values) {
-      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
-      const v = value as Record<string, unknown>;
-      if (typeof v.requestId === "string" && v.requestId.length > 0 && v.requestId.length <= 1024 &&
-        (v.kind === "tool-approval" || v.kind === "question" || v.kind === "session-limit") &&
-        typeof v.outcome === "string" && ["answered", "approved", "cancelled", "denied", "ignored", "invalid"].includes(v.outcome)) ids.push(v.requestId);
-      if (ids.length >= 2000) break;
-    }
+    if (e.type !== "interaction.settled" || !e.data || typeof e.data !== "object") continue;
+    const value = e.data as Record<string, unknown>;
+    const id = value.interactionId;
+    if (typeof id !== "string" || id.length === 0 || id.length > 1024 || seen.has(id)) continue;
+    if (typeof value.outcome !== "string" || !INTERACTION_OUTCOMES.has(value.outcome)) continue;
+    seen.add(id);
+    ids.push(id);
   }
   return ids;
 }

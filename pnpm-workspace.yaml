@@ -18,4 +18,4 @@ overrides:
   'zod@>=4.0.0 <4.6.7': 4.6.7
   'sharp@>=0.35.0 <0.35.5': 0.35.5
 patchedDependencies:
-  eve@0.83.2: patches/eve@0.83.2.patch
+  eve@1.0.0-rc.1: patches/eve@1.0.0-rc.1.patch
