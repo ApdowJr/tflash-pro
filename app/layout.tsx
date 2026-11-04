@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { ConnectivityBanner } from "@/components/app/connectivity-banner";
 import { ThemeInitializer } from "@/components/theme-initializer";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import "@fontsource-variable/dm-sans";
 import "@fontsource/dm-serif-display/400.css";
 import "@fontsource/dm-serif-display/400-italic.css";
 import "@fontsource/dm-mono/400.css";

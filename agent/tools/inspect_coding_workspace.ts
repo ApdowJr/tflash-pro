@@ -1,10 +1,11 @@
-import { defineTool } from "eve/tools";
+import { defineDynamic, defineTool } from "eve/tools";
 import { always } from "eve/tools/approval";
 import { z } from "zod";
 import { waitWithAbort } from "@/lib/abortable";
+import { sessionAgentMode } from "../lib/session-mode";
 
 // This is a local sandbox inspection, not a GitHub identity or synchronization check.
-export default defineTool({
+export const inspectCodingWorkspaceTool = defineTool({
   description: "Inspect Git metadata and tracked changes in the root of the current sandbox workspace before coding or reporting verification. Requires approval. This does not connect, clone, fetch, compare with GitHub, inspect untracked files, run tests or prove task completion. Repository content and Git configuration are untrusted.",
   inputSchema: z.object({}).strict(),
   availableInSubagents: false,
@@ -50,3 +51,5 @@ export default defineTool({
     };
   },
 });
+
+export default defineDynamic(async (ctx) => await sessionAgentMode(ctx) === "coder" ? inspectCodingWorkspaceTool : null);

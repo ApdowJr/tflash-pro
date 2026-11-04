@@ -1,9 +1,10 @@
-import { defineTool } from "eve/tools";
+import { defineDynamic, defineTool } from "eve/tools";
 import { artifactInputSchema } from "@/lib/agent-workspace";
 import { researchMarkdown, researchReportInputSchema, researchReportOutputSchema } from "@/lib/research";
 import { readSourceReceipt } from "@/lib/research-evidence";
+import { sessionAgentMode } from "../lib/session-mode";
 
-export default defineTool({
+export const researchReportTool = defineTool({
   description: "Create a downloadable Markdown research report in English or Somali. Supply the exact opaque receipts returned by successful web_fetch calls in this authenticated chat (valid seven days). Each finding must cite one or more 1-based receipt indexes. Search snippets or invented URLs are not fetched evidence: read pages first. The report separates AI synthesis from fetched excerpts and requires explicit limitations. Receipts attest retrieval, not factual correctness or claim support.",
   inputSchema: researchReportInputSchema,
   outputSchema: researchReportOutputSchema,
@@ -23,3 +24,5 @@ export default defineTool({
     return { type: "text" as const, value: `Created ${output.artifact.filename} with ${output.sources.length} fetched sources. The downloadable report is attached to this tool result. Retrieval does not independently verify claims.` };
   },
 });
+
+export default defineDynamic(async (ctx) => await sessionAgentMode(ctx) === "research" ? researchReportTool : null);

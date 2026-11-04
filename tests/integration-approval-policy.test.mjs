@@ -5,7 +5,7 @@ register();
 
 const { INTEGRATIONS } = await import("../lib/integrations/catalog.ts");
 const { defineIntegrationConnection } = await import("../lib/integrations/connection.ts");
-const bash = (await import("../agent/tools/bash.ts")).default;
+const bash = (await import("../agent/tools/bash.ts")).coderBash;
 
 test("every registered MCP integration requires approval despite reusable-looking hints", async () => {
   for (const integration of INTEGRATIONS) {

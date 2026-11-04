@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { register } from "tsx/esm/api";
 register();
 const fetchTool = (await import("../agent/tools/web_fetch.ts")).default;
-const reportTool = (await import("../agent/tools/create_research_report.ts")).default;
+const reportTool = (await import("../agent/tools/create_research_report.ts")).researchReportTool;
 const searchTool = (await import("../agent/tools/web_search.ts")).default;
 const { webSearch } = await import("eve/tools/web_search");
 const { researchReportInputSchema, researchFetchInputSchema, researchFetchOutputSchema } = await import("../lib/research.ts");

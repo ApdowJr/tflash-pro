@@ -2,7 +2,7 @@
 
 import type { EveMessage, EveMessagePart, EveToolPart } from "eve/react";
 import { signInEnding } from "eve/events";
-import { useRef, useState, type FormEvent } from "react";
+import { memo, useRef, useState, type FormEvent } from "react";
 import { bashResultState } from "@/lib/activity";
 import { planOutputSchema, artifactOutputSchema } from "@/lib/agent-workspace";
 import { AgentPlanCard, AgentArtifactCard } from "./agent-workspace";
@@ -71,7 +71,7 @@ type ToolPresentationPart = {
   readonly toolName: string;
 };
 
-export function AgentMessage({
+export const AgentMessage = memo(function AgentMessage({
   canRespond,
   isStreaming,
   message,
@@ -102,6 +102,7 @@ export function AgentMessage({
           hasAssistantText && part.type === "reasoning" ? null : (
             <AgentMessagePart
               canRespond={canRespond}
+              isUser={message.role === "user"}
               key={partKey(part, index)}
               onInputResponses={onInputResponses}
               part={part}
@@ -113,16 +114,18 @@ export function AgentMessage({
       </MessageContent>
     </Message>
   );
-}
+});
 
 function AgentMessagePart({
   canRespond,
+  isUser = false,
   onInputResponses,
   part,
   questionsFor,
   showCaret,
 }: {
   readonly canRespond: (interactionId: string) => boolean;
+  readonly isUser?: boolean;
   readonly onInputResponses: (responses: readonly AgentInputResponse[]) => void | Promise<void>;
   readonly part: EveMessagePart;
   readonly questionsFor: (callId: string) => readonly EveInteraction[];
@@ -131,8 +134,10 @@ function AgentMessagePart({
   const { t } = useAppSettings();
   switch (part.type) {
     case "text":
-      return (
-        <MessageResponse caret="block" isAnimating={showCaret}>
+      return isUser ? (
+        <p className="whitespace-pre-wrap break-words text-[14px] leading-relaxed">{part.text}</p>
+      ) : (
+        <MessageResponse caret="block" className="text-[14px] leading-7 sm:text-[15px]" isAnimating={showCaret}>
           {part.text}
         </MessageResponse>
       );

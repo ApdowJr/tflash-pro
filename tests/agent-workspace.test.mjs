@@ -36,6 +36,8 @@ test("the progress panel uses only settled assistant plan-tool output, including
   const updated = { ...plan, steps: plan.steps.map((step) => ({ ...step, status: "completed" })) };
   assert.deepEqual(latestAgentPlan(JSON.parse(JSON.stringify([first]))), plan);
   assert.deepEqual(latestAgentPlan([first, { role: "assistant", parts: [part(updated)] }]), updated);
+  const native = { role: "assistant", parts: [{ type: "tool", name: "update_plan", state: "completed", output: { kind: "tflash-plan", version: 1, plan: updated } }] };
+  assert.deepEqual(latestAgentPlan([first, native]), updated);
   for (const ignored of [
     { role: "user", parts: [part(updated)] },
     { role: "assistant", parts: [part(updated, "output-error")] },

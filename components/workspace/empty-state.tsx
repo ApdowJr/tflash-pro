@@ -1,8 +1,15 @@
 "use client";
 
-import { BracesIcon, FileSearchIcon, FolderIcon, MessageSquareTextIcon, ArrowUpRightIcon } from "lucide-react";
+import {
+  ArrowRightIcon,
+  BracesIcon,
+  FileSearchIcon,
+  FolderIcon,
+  MessageSquareTextIcon,
+} from "lucide-react";
 import { FlashMark } from "@/components/brand/logo";
 import { useAppSettings } from "@/components/settings/app-settings";
+import type { TranslationKey } from "@/components/settings/i18n";
 import { usePromptInputController } from "@/components/ai-elements/prompt-input";
 import { useWorkspace } from "@/components/settings/workspace-store";
 import { AGENT_MODES, type AgentMode } from "@/lib/agent-modes";
@@ -13,13 +20,13 @@ const MODE_ICONS = {
   research: FileSearchIcon,
 } as const;
 
-const MODE_PROMPTS = {
-  chat: "suggestion1",
-  coder: "suggestion3",
-  research: "suggestion4",
-} as const;
+const MODE_PROMPTS: Record<AgentMode, readonly [TranslationKey, TranslationKey]> = {
+  chat: ["suggestion1", "suggestion2"],
+  coder: ["suggestion3", "suggestion5"],
+  research: ["suggestion4", "suggestion6"],
+};
 
-/** A personalized launch surface built only from the signed-in user's real account and workspace. */
+/** A quiet launch surface for one new, mode-specific conversation. */
 export function EmptyState({
   name,
   mode,
@@ -34,79 +41,88 @@ export function EmptyState({
   const { t, settings } = useAppSettings();
   const controller = usePromptInputController();
   const { workspace, ready } = useWorkspace();
+  const activeMode = AGENT_MODES.find((item) => item.id === mode) ?? AGENT_MODES[0];
 
-  const selectMode = (nextMode: AgentMode) => {
-    onModeChange(nextMode);
-    controller.textInput.append(t(MODE_PROMPTS[nextMode]));
+  const addPrompt = (prompt: TranslationKey) => {
+    controller.textInput.append(t(prompt));
     window.setTimeout(() => {
       document.querySelector<HTMLTextAreaElement>('[data-slot="input-group-control"]')?.focus();
     }, 0);
   };
 
   return (
-    <div className="tf-rise mx-auto flex w-full max-w-4xl flex-col px-4 pt-[clamp(2.25rem,8vh,6rem)] pb-8 sm:px-6">
-      <header className="mb-8 flex flex-col items-center text-center">
-        <div className="mb-4 rounded-[18px] bg-violet-500/10 p-2 ring-1 ring-violet-300/15 shadow-[0_12px_42px_-20px_rgba(124,58,237,0.65)]">
-          <FlashMark className="size-11 rounded-xl" />
+    <div className="tf-rise mx-auto flex w-full max-w-3xl flex-col px-4 pt-[clamp(2rem,7vh,5rem)] pb-8 sm:px-6">
+      <header className="mb-8">
+        <div className="mb-5 flex items-center gap-3">
+          <FlashMark className="size-9 rounded-[10px]" />
+          <div>
+            <p className="text-sm font-semibold tracking-[-0.01em] text-foreground">Tflash</p>
+            <p className="text-xs text-muted-foreground">{activeMode.label[settings.language]}</p>
+          </div>
         </div>
-        <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-violet-200/70">Tflash</p>
-        <h1 className="mt-4 max-w-full text-balance text-[clamp(1.8rem,4vw,3.15rem)] font-semibold leading-[1.12] tracking-[-0.045em] text-white">
-          {t("greeting")} <span className="bg-gradient-to-r from-violet-300 via-fuchsia-300 to-violet-200 bg-clip-text text-transparent">{name}</span>
+        <h1 className="text-balance text-[clamp(1.8rem,4vw,2.75rem)] font-semibold leading-[1.12] tracking-[-0.04em] text-foreground">
+          {t("greeting")} {name}
         </h1>
-        <p className="mt-3 text-pretty text-[clamp(1.05rem,2vw,1.45rem)] font-medium tracking-[-0.025em] text-white/80">{t("welcome")}</p>
-        <p className="mt-2 max-w-lg text-[13px] leading-relaxed text-white/50">{t("subtitle")}</p>
+        <p className="mt-3 max-w-xl text-pretty text-[15px] leading-relaxed text-muted-foreground sm:text-base">
+          {activeMode.hint[settings.language]}. {t("modeSessionHint")}
+        </p>
       </header>
 
-      <section aria-label={settings.language === "so" ? "Dooro habka shaqada" : "Choose a way to work"} className="mx-auto w-full max-w-3xl">
-        <div className="mb-3 flex items-center justify-between gap-3 px-1">
-          <h2 className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/45">{t("startWith")}</h2>
-          <p className="text-[10px] text-white/35">{t("suggestionHint")}</p>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2">
+      <section aria-label={settings.language === "so" ? "Dooro habka shaqada" : "Choose a way to work"}>
+        <div className="grid gap-2 sm:grid-cols-3" role="group" aria-label={settings.language === "so" ? "Habka wada-hadalka cusub" : "New conversation mode"}>
           {AGENT_MODES.map((item) => {
             const Icon = MODE_ICONS[item.id];
             const selected = mode === item.id;
             return (
               <button
                 aria-pressed={selected}
-                className={`group flex min-h-[88px] items-center gap-4 rounded-2xl border px-4 py-4 text-left transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/70 focus-visible:ring-offset-2 focus-visible:ring-offset-background ${selected ? "border-violet-400/35 bg-violet-500/[0.12] shadow-[0_12px_38px_-24px_rgba(139,92,246,0.6)]" : "border-white/[0.09] bg-white/[0.035] hover:border-violet-300/25 hover:bg-white/[0.06]"}`}
+                className={`group flex min-h-[104px] flex-col items-start gap-3 rounded-xl border px-3.5 py-3.5 text-left transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${selected ? "border-primary/40 bg-primary/[0.055]" : "border-border bg-card hover:border-foreground/20 hover:bg-accent/55"}`}
                 key={item.id}
-                onClick={() => selectMode(item.id)}
-                title={item.hint[settings.language]}
+                onClick={() => onModeChange(item.id)}
                 type="button"
               >
-                <span className={`flex size-12 shrink-0 items-center justify-center rounded-[15px] border border-violet-300/15 bg-gradient-to-br from-violet-600/35 to-fuchsia-700/15 text-violet-100 shadow-inner transition-colors ${selected ? "from-violet-500/45 to-fuchsia-600/25" : "group-hover:from-violet-500/40"}`}>
-                  <Icon aria-hidden="true" className="size-5" />
+                <span className="flex w-full items-center gap-2.5">
+                  <Icon aria-hidden="true" className={`size-4 ${selected ? "text-primary" : "text-muted-foreground"}`} />
+                  <span className="text-sm font-semibold text-foreground">{item.label[settings.language]}</span>
+                  {selected ? <span className="ml-auto size-1.5 rounded-full bg-primary" aria-hidden="true" /> : null}
                 </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-[14px] font-semibold text-white">{item.label[settings.language]}</span>
-                  <span className="mt-1 block text-[12px] leading-relaxed text-white/55">{t(MODE_PROMPTS[item.id])}</span>
-                </span>
-                <ArrowUpRightIcon aria-hidden="true" className="size-4 shrink-0 text-white/35 transition-all group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-violet-200" />
+                <span className="text-xs leading-relaxed text-muted-foreground">{item.hint[settings.language]}</span>
               </button>
             );
           })}
-
-          <button
-            aria-label={`${t("projects")}${ready && workspace.projects.length ? ` (${workspace.projects.length})` : ""}`}
-            className="group flex min-h-[88px] items-center gap-4 rounded-2xl border border-white/[0.09] bg-white/[0.035] px-4 py-4 text-left transition duration-150 hover:border-violet-300/25 hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/70 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-            onClick={onOpenProjects}
-            type="button"
-          >
-            <span className="flex size-12 shrink-0 items-center justify-center rounded-[15px] border border-violet-300/15 bg-gradient-to-br from-violet-600/35 to-fuchsia-700/15 text-violet-100 shadow-inner">
-              <FolderIcon aria-hidden="true" className="size-5" />
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="flex items-center gap-2 text-[14px] font-semibold text-white">
-                {t("projects")}
-                {ready && workspace.projects.length > 0 ? <span className="rounded-full bg-violet-300/10 px-2 py-0.5 text-[10px] font-medium text-violet-100/80">{workspace.projects.length}</span> : null}
-              </span>
-              <span className="mt-1 block text-[12px] leading-relaxed text-white/55">{t("projectTileHint")}</span>
-            </span>
-            <ArrowUpRightIcon aria-hidden="true" className="size-4 shrink-0 text-white/35 transition-all group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-violet-200" />
-          </button>
         </div>
       </section>
+
+      <section className="mt-8" aria-label={t("startWith")}>
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <h2 className="text-xs font-semibold text-foreground">{t("startWith")}</h2>
+          <p className="hidden text-[11px] text-muted-foreground sm:block">{t("suggestionHint")}</p>
+        </div>
+        <div className="divide-y divide-border rounded-xl border bg-card">
+          {MODE_PROMPTS[mode].map((prompt) => (
+            <button
+              className="group flex min-h-12 w-full items-center gap-3 px-3.5 py-3 text-left text-[13px] text-foreground transition-colors hover:bg-accent/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:min-h-11"
+              key={prompt}
+              onClick={() => addPrompt(prompt)}
+              type="button"
+            >
+              <span className="min-w-0 flex-1">{t(prompt)}</span>
+              <ArrowRightIcon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-focus-visible:translate-x-0.5" />
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <button
+        className="mt-4 flex min-h-11 items-center gap-2 self-start rounded-lg px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        onClick={onOpenProjects}
+        type="button"
+      >
+        <FolderIcon aria-hidden="true" className="size-4" />
+        <span>{t("projects")}</span>
+        {ready && workspace.projects.length > 0 ? <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px]">{workspace.projects.length}</span> : null}
+        <ArrowRightIcon aria-hidden="true" className="size-3.5" />
+      </button>
     </div>
   );
 }

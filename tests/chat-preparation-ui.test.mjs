@@ -151,7 +151,7 @@ test("draft survives preparation, forced submission, a storage failure, retry an
   });
   render(h(React.StrictMode, null, app()));
   const user = userEvent.setup();
-  const textarea = await screen.findByPlaceholderText("Ask Tflash anything…");
+  const textarea = await screen.findByPlaceholderText("Ask a question or bring in a file…");
   await waitFor(() => assert.equal(creates, 1));
   assert.equal(textarea.disabled, false);
   assert.equal(screen.getByRole("button", { name: "Send" }).disabled, true);
@@ -178,7 +178,7 @@ test("draft survives preparation, forced submission, a storage failure, retry an
   assert.equal(sends.length, 0);
 
   await React.act(async () => second.resolve(Response.json({ sessionId: "ready-chat" }, { status: 201 })));
-  const readyTextarea = await screen.findByPlaceholderText("Ask Tflash anything…");
+  const readyTextarea = await screen.findByPlaceholderText("Ask a question or bring in a file…");
   await waitFor(() => assert.equal(screen.getByRole("button", { name: "Send" }).disabled, false));
   assert.equal(readyTextarea.value, "Please keep my draft safely");
   assert.equal(globalThis.__prepareOptions.initialSession.sessionId, "ready-chat");
@@ -202,7 +202,7 @@ test("Somali storage and authentication failures have understandable messages an
   render(app());
   const user = userEvent.setup();
   assert.match((await screen.findByRole("alert")).textContent, /Wada hadalka lama kaydin karin/);
-  const textarea = screen.getByPlaceholderText("Wax walba weydii Tflash…");
+  const textarea = screen.getByPlaceholderText("Su'aal weydii ama fayl soo geli…");
   await user.type(textarea, "Salaan");
   assert.equal(screen.getByRole("button", { name: "Dir" }).disabled, true);
   await user.click(screen.getByRole("button", { name: "Mar kale isku day" }));
@@ -227,7 +227,7 @@ test("a stalled creation times out and leaves the editable draft for retry", asy
   });
   render(app());
   const user = userEvent.setup();
-  const textarea = await screen.findByPlaceholderText("Ask Tflash anything…");
+  const textarea = await screen.findByPlaceholderText("Ask a question or bring in a file…");
   await user.type(textarea, "Still here");
   await waitFor(() => assert.equal(typeof expire, "function"));
   await React.act(async () => expire());
@@ -242,7 +242,7 @@ test("resuming an existing conversation keeps drafts and blocks forced sends unt
   fakeFetch(() => undefined);
   const view = render(app({ sessionId: "owned-chat" }));
   const user = userEvent.setup();
-  const textarea = await screen.findByPlaceholderText("Ask Tflash anything…");
+  const textarea = await screen.findByPlaceholderText("Ask a question or bring in a file…");
   await waitFor(() => assert.equal(globalThis.__prepareOptions.initialSession?.sessionId, "owned-chat"));
   await user.type(textarea, "Continue later");
   assert.equal(screen.getByRole("button", { name: "Send" }).disabled, true);
@@ -270,7 +270,7 @@ test("attachments survive an unavailable session and are only sent after registr
   });
   render(app());
   const user = userEvent.setup();
-  const textarea = await screen.findByPlaceholderText("Ask Tflash anything…");
+  const textarea = await screen.findByPlaceholderText("Ask a question or bring in a file…");
   await user.type(textarea, "Describe this");
   await user.upload(screen.getByLabelText("Upload files"), new File(["fixture"], "draft.png", { type: "image/png" }));
   await screen.findByRole("button", { name: "Remove attachment: draft.png" });
@@ -280,7 +280,7 @@ test("attachments survive an unavailable session and are only sent after registr
   assert.equal(sends.length, 0);
   await React.act(async () => pending.resolve(Response.json({ sessionId: "attachment-chat" }, { status: 201 })));
   await waitFor(() => assert.equal(screen.getByRole("button", { name: "Send" }).disabled, false));
-  assert.equal(screen.getByPlaceholderText("Ask Tflash anything…").value, "Describe this");
+  assert.equal(screen.getByPlaceholderText("Ask a question or bring in a file…").value, "Describe this");
   assert.ok(screen.getByRole("button", { name: "Remove attachment: draft.png" }));
   await user.click(screen.getByRole("button", { name: "Send" }));
   await waitFor(() => assert.equal(sends.length, 1));
@@ -300,7 +300,7 @@ test("a Vercel conversation cannot become ready without its owner proof", async 
   });
   render(app({}, "vercel"));
   const user = userEvent.setup();
-  const textarea = await screen.findByPlaceholderText("Ask Tflash anything…");
+  const textarea = await screen.findByPlaceholderText("Ask a question or bring in a file…");
   await user.type(textarea, "Secure draft");
   assert.match((await screen.findByRole("alert")).textContent, /A previous conversation may have been created/);
   assert.equal(screen.getByRole("button", { name: "Send" }).disabled, true);
@@ -308,7 +308,7 @@ test("a Vercel conversation cannot become ready without its owner proof", async 
   await user.click(screen.getByRole("checkbox", { name: /I checked what I can/ }));
   await user.click(screen.getByRole("button", { name: "Acknowledge and start a new conversation" }));
   await waitFor(() => assert.equal(screen.getByRole("button", { name: "Send" }).disabled, false));
-  assert.equal(screen.getByPlaceholderText("Ask Tflash anything…").value, "Secure draft");
+  assert.equal(screen.getByPlaceholderText("Ask a question or bring in a file…").value, "Secure draft");
   assert.equal(globalThis.__prepareOptions.initialSession.sessionId, "owned");
   assert.equal(globalThis.__prepareOptions.headers()["x-tflash-owner-proof"], "test-owner-proof");
   assert.equal(sends.length, 0);
@@ -320,7 +320,7 @@ test("follow-ups can still steer an active turn once the session is ready", asyn
   render(app({ sessionId: "owned-chat" }));
   const user = userEvent.setup();
   await waitFor(() => assert.equal(globalThis.__prepareOptions.initialSession?.sessionId, "owned-chat"));
-  const textarea = screen.getByPlaceholderText("Ask Tflash anything…");
+  const textarea = screen.getByPlaceholderText("Ask a question or bring in a file…");
   await user.type(textarea, "Correct the answer");
   await user.click(screen.getByRole("button", { name: "Send" }));
   await waitFor(() => assert.equal(sends.length, 1));
@@ -338,7 +338,7 @@ test("stop remains available while typing a follow-up and blocks steering until 
   render(app({ sessionId: "owned-chat" }));
   const user = userEvent.setup();
   await waitFor(() => assert.equal(globalThis.__prepareOptions.initialSession?.sessionId, "owned-chat"));
-  const textarea = screen.getByPlaceholderText("Ask Tflash anything…");
+  const textarea = screen.getByPlaceholderText("Ask a question or bring in a file…");
   await user.type(textarea, "Keep this draft");
   assert.ok(screen.getByRole("button", { name: "Send" }));
   await user.click(screen.getByRole("button", { name: "Stop" }));
@@ -361,7 +361,7 @@ test("a disconnected active turn offers reconnection rather than continuing blin
   const user = userEvent.setup();
   await waitFor(() => assert.equal(globalThis.__prepareOptions.initialSession?.sessionId, "owned-chat"));
   assert.ok(screen.getByText(/stream disconnected while a turn was active/));
-  await user.type(screen.getByPlaceholderText("Ask Tflash anything…"), "Keep this draft");
+  await user.type(screen.getByPlaceholderText("Ask a question or bring in a file…"), "Keep this draft");
   assert.equal(screen.getByRole("button", { name: "Send" }).disabled, true);
   await user.click(screen.getByRole("button", { name: "Reconnect" }));
   assert.equal(resumes, 1);
@@ -379,12 +379,12 @@ test("stopping during chat-index persistence prevents the pending follow-up from
   render(app({ sessionId: "owned-chat" }));
   const user = userEvent.setup();
   await waitFor(() => assert.equal(globalThis.__prepareOptions.initialSession?.sessionId, "owned-chat"));
-  await user.type(screen.getByPlaceholderText("Ask Tflash anything…"), "Do not send after stopping");
+  await user.type(screen.getByPlaceholderText("Ask a question or bring in a file…"), "Do not send after stopping");
   await user.click(screen.getByRole("button", { name: "Send" }));
   await user.click(screen.getByRole("button", { name: "Stop" }));
   assert.equal(cancels, 1);
   await React.act(async () => { save.resolve(Response.json({ ok: true })); await save.promise; });
-  await waitFor(() => assert.equal(screen.getByPlaceholderText("Ask Tflash anything…").value, "Do not send after stopping"));
+  await waitFor(() => assert.equal(screen.getByPlaceholderText("Ask a question or bring in a file…").value, "Do not send after stopping"));
   assert.equal(sends.length, 0);
 });
 
@@ -521,7 +521,7 @@ test("a failed disconnected stop preserves the draft and reports an error", asyn
   fakeFetch((path) => path.endsWith("/eve/v1/session/owned-chat/cancel") ? Response.json({ error: "offline" }, { status: 503 }) : undefined);
   render(app({ sessionId: "owned-chat" }));
   const user = userEvent.setup();
-  const input = screen.getByPlaceholderText("Ask Tflash anything…");
+  const input = screen.getByPlaceholderText("Ask a question or bring in a file…");
   await user.type(input, "Keep my draft");
   await user.click(await screen.findByRole("button", { name: "Request stop for this turn" }));
   await waitFor(() => assert.ok(screen.getByText("offline")));
@@ -552,7 +552,7 @@ test("a pending stop blocks scheduled reconnect and follow-ups until the turn se
   fakeFetch((path) => path.endsWith("/eve/v1/session/owned-chat/cancel") ? pending.promise : undefined);
   const rendered = render(app({ sessionId: "owned-chat" }));
   const user = userEvent.setup();
-  const input = screen.getByPlaceholderText("Ask Tflash anything…");
+  const input = screen.getByPlaceholderText("Ask a question or bring in a file…");
   await user.type(input, "Do not send while stopping");
   await user.click(await screen.findByRole("button", { name: "Request stop for this turn" }));
   assert.equal(typeof scheduledRetry, "function");
@@ -587,7 +587,7 @@ test("accepted stop with a lost turn projection remains blocked but allows manua
   fakeFetch((path) => path.endsWith("/eve/v1/session/owned-chat/cancel") ? Response.json({ ok: true, status: "accepted", sessionId: "owned-chat", deliveryId: "cancelled-delivery" }, { status: 202 }) : undefined);
   const rendered = render(app({ sessionId: "owned-chat" }));
   const user = userEvent.setup();
-  const input = screen.getByPlaceholderText("Ask Tflash anything…");
+  const input = screen.getByPlaceholderText("Ask a question or bring in a file…");
   await user.type(input, "Keep this draft");
   await user.click(await screen.findByRole("button", { name: "Request stop for this turn" }));
   await waitFor(() => assert.equal(resumes, 1));
@@ -611,7 +611,7 @@ test("a stop response arriving after the terminal turn releases the composer", a
   fakeFetch(path => path.endsWith("/eve/v1/session/owned-chat/cancel") ? pending.promise : undefined);
   const rendered = render(app({ sessionId: "owned-chat" }));
   const user = userEvent.setup();
-  await user.type(screen.getByPlaceholderText("Ask Tflash anything…"), "Keep draft");
+  await user.type(screen.getByPlaceholderText("Ask a question or bring in a file…"), "Keep draft");
   await user.click(screen.getByRole("button", { name: "Stop" }));
   globalThis.__prepareAgent.status = "ready";
   globalThis.__prepareAgent.data.turns["turn-old"].status = "cancelled";
@@ -671,7 +671,7 @@ test("an unacknowledged dispatch blocks retry across a tab reload until explicit
   globalThis.__prepareAgent.send = async (message) => { sends.push({message}); globalThis.__prepareOptions.onError(new Error("connection lost")); };
   const view = render(app({sessionId:"owned-chat"}));
   const user = userEvent.setup();
-  const input = await screen.findByPlaceholderText("Ask Tflash anything…");
+  const input = await screen.findByPlaceholderText("Ask a question or bring in a file…");
   await user.type(input, "Do not repeat this");
   await user.keyboard("{Enter}");
   await screen.findByText(/A message dispatch may have reached the agent/);
@@ -700,7 +700,7 @@ test("an active turn can still be explicitly steered without erasing its dispatc
   globalThis.__prepareAgent.send = async (message, options) => { sent.push({message,options}); if (sent.length === 1) await original.promise; };
   const view = render(app({sessionId:"owned-chat"}));
   const user = userEvent.setup();
-  const input = await screen.findByPlaceholderText("Ask Tflash anything…");
+  const input = await screen.findByPlaceholderText("Ask a question or bring in a file…");
   await user.type(input,"First message");
   await user.keyboard("{Enter}");
   await waitFor(() => assert.equal(sent.length,1));
@@ -831,7 +831,7 @@ for (const failure of ["callback", "rejection"]) {
     });
     const view = render(app({ sessionId: "owned-chat" }));
     const user = userEvent.setup();
-    const input = await screen.findByPlaceholderText("Ask Tflash anything…");
+    const input = await screen.findByPlaceholderText("Ask a question or bring in a file…");
     await user.type(input, "First request");
     await user.keyboard("{Enter}");
     await waitFor(() => assert.equal(sends.length, 1));
@@ -872,7 +872,7 @@ test("a blocked browser recovery marker is visible and does not hide an uncertai
     fakeFetch(() => undefined);
     render(app({ sessionId: "owned-chat" }));
     const user = userEvent.setup();
-    const input = await screen.findByPlaceholderText("Ask Tflash anything…");
+    const input = await screen.findByPlaceholderText("Ask a question or bring in a file…");
     await user.type(input, "Keep my draft");
     await user.keyboard("{Enter}");
     await screen.findByText(/could not save its dispatch recovery marker/);
@@ -913,7 +913,7 @@ test("uncertain activity save keeps the message draft and does not send or repla
   });
   try {
     render(app({sessionId:'owned-chat'}));const user=userEvent.setup();
-    const textarea=await screen.findByPlaceholderText('Ask Tflash anything…');await user.type(textarea,'Keep this message');
+    const textarea=await screen.findByPlaceholderText('Ask a question or bring in a file…');await user.type(textarea,'Keep this message');
     await user.click(screen.getByRole('button',{name:'Send'}));await waitFor(()=>assert.ok(signal));
     await React.act(async()=>deadlines.find(c=>c.signal===signal).abort());
     await waitFor(()=>assert.equal(textarea.value,'Keep this message'));
@@ -934,7 +934,7 @@ test("uncertain session creation blocks automatic replay across remount and requ
     createCalls++;const headers=new Headers(options.headers);assert.equal(headers.get('x-tflash-expected-user-id'),'prepare-user');assert.equal(headers.get('x-tflash-expected-account-kind'),'supabase');
     return createCalls===1?pending:Response.json({sessionId:'second'},{status:201});
   }});
-  const mounted=render(app());const user=userEvent.setup();const textarea=await screen.findByPlaceholderText('Ask Tflash anything…');
+  const mounted=render(app());const user=userEvent.setup();const textarea=await screen.findByPlaceholderText('Ask a question or bring in a file…');
   await user.type(textarea,'Unsent draft');await waitFor(()=>assert.equal(createCalls,1));await React.act(async()=>expire());
   await screen.findByText(/A previous conversation may have been created/);assert.equal(textarea.value,'Unsent draft');
   assert.equal(screen.getByRole('button',{name:'Acknowledge and start a new conversation'}).disabled,true);
@@ -1012,7 +1012,7 @@ test("Somali uncertain creation requests explicit review and preserves the draft
   seed({language:'so'});window.localStorage.setItem('tflash:sync-uncertain:chat-create:supabase:prepare-user:old','1');
   let creates=0;fakeFetch((path,options)=>{if(path==='/api/chats'&&options.method==='POST'){creates++;return Response.json({sessionId:'unexpected'});}});
   render(app());await screen.findByText(/Wada hadal hore ayaa laga yaabaa/);
-  const textarea=screen.getByPlaceholderText('Wax walba weydii Tflash…');await userEvent.setup().type(textarea,'Qoraal');
+  const textarea=screen.getByPlaceholderText("Su'aal weydii ama fayl soo geli…");await userEvent.setup().type(textarea,'Qoraal');
   assert.equal(textarea.value,'Qoraal');assert.equal(creates,0);
   assert.equal(screen.getByRole('button',{name:'Qiro oo bilow wada hadal cusub'}).disabled,true);
 });
@@ -1059,7 +1059,7 @@ test('lost approval response persists a secret-free warning and blocks replay an
   await user.click(screen.getByLabelText(/I inspected the conversation and external effects/));assert.equal(screen.getByRole('button',{name:'Acknowledge response review'}).disabled,true);
   await React.act(async()=>{wait.reject(new Error('lost'));try{await wait.promise;}catch{}});
   assert.equal(screen.getByRole('button',{name:'Approve once'}).disabled,true);
-  const textarea=screen.getByPlaceholderText('Ask Tflash anything…');await user.type(textarea,'approve');assert.equal(screen.getByRole('button',{name:'Send'}).disabled,true);
+  const textarea=screen.getByPlaceholderText('Ask a question or bring in a file…');await user.type(textarea,'approve');assert.equal(screen.getByRole('button',{name:'Send'}).disabled,true);
   view.unmount();render(app({sessionId:'chat-a'}));await screen.findByText(/A response to an approval or question may have been accepted/);
   assert.equal(screen.getByRole('button',{name:'Approve once'}).disabled,true);assert.equal(calls,1);
   await user.click(screen.getByLabelText(/I inspected the conversation and external effects/));await user.click(screen.getByRole('button',{name:'Acknowledge response review'}));
@@ -1113,7 +1113,7 @@ test('a queued chat message cannot send after approval uncertainty appears durin
   seedApprovalFixture();let responds=0,sends=0;const index=deferred(),response=deferred();let patchStarted=false;
   globalThis.__prepareAgent.send=async()=>{sends++;};globalThis.__prepareAgent.respond=()=>{responds++;return response.promise;};
   fakeFetch((path,options)=>{if(path==='/api/chats/chat-a'&&options.method==='PATCH'){patchStarted=true;return index.promise;}});
-  render(app({sessionId:'chat-a'}));const user=userEvent.setup();const field=await screen.findByPlaceholderText('Ask Tflash anything…');
+  render(app({sessionId:'chat-a'}));const user=userEvent.setup();const field=await screen.findByPlaceholderText('Ask a question or bring in a file…');
   await user.type(field,'Do not send yet');await user.click(screen.getByRole('button',{name:'Send'}));await waitFor(()=>assert.equal(patchStarted,true));
   await user.click(await screen.findByRole('button',{name:'Approve once'}));await waitFor(()=>assert.equal(responds,1));
   await React.act(async()=>{index.resolve(Response.json({ok:true,title:'Test'}));await index.promise;});
@@ -1160,7 +1160,7 @@ test('unmount after responding retains the marker and ignores a late promise',as
 
 test('plain chat while an approval is open is protected as a possible response',async()=>{
   const {id}=seedApprovalFixture();let calls=0;globalThis.__prepareAgent.send=async()=>{calls++;throw new Error('lost');};fakeFetch(()=>undefined);
-  const view=render(app({sessionId:'chat-a'}));const user=userEvent.setup();const field=await screen.findByPlaceholderText('Ask Tflash anything…');
+  const view=render(app({sessionId:'chat-a'}));const user=userEvent.setup();const field=await screen.findByPlaceholderText('Ask a question or bring in a file…');
   await user.type(field,'approve');await user.click(screen.getByRole('button',{name:'Send'}));await waitFor(()=>assert.equal(calls,1));
   await screen.findByText(/A response to an approval or question may have been accepted/);assert.equal(field.value,'approve');
   const keys=Object.keys(window.localStorage).filter(k=>k.includes(':input-response:'));assert.equal(keys.length,1);assert.doesNotMatch(window.localStorage.getItem(keys[0]),/approve|request-secret/);
@@ -1171,7 +1171,7 @@ test('plain chat cannot answer an open approval if its recovery marker cannot be
   seedApprovalFixture();let calls=0;globalThis.__prepareAgent.send=async()=>{calls++;};fakeFetch(()=>undefined);
   const proto=Object.getPrototypeOf(window.localStorage),original=proto.setItem;
   proto.setItem=function(key,value){if(key.includes(':input-response:'))throw new Error('blocked');return original.call(this,key,value);};
-  try {render(app({sessionId:'chat-a'}));const user=userEvent.setup();const field=await screen.findByPlaceholderText('Ask Tflash anything…');
+  try {render(app({sessionId:'chat-a'}));const user=userEvent.setup();const field=await screen.findByPlaceholderText('Ask a question or bring in a file…');
     await user.type(field,'approve');await user.click(screen.getByRole('button',{name:'Send'}));await screen.findByText(/Response recovery storage or secure hashing is unavailable/);
     assert.equal(calls,0);assert.equal(field.value,'approve');assert.equal(screen.getByRole('button',{name:'Send'}).disabled,true);
   } finally {proto.setItem=original;}
@@ -1179,7 +1179,7 @@ test('plain chat cannot answer an open approval if its recovery marker cannot be
 
 test('plain chat marker needs human review even when the locally observed prompt resolves',async()=>{
   const {id}=seedApprovalFixture();let calls=0;globalThis.__prepareAgent.send=async()=>{calls++;};fakeFetch(()=>undefined);
-  const view=render(app({sessionId:'chat-a'}));const user=userEvent.setup();const field=await screen.findByPlaceholderText('Ask Tflash anything…');
+  const view=render(app({sessionId:'chat-a'}));const user=userEvent.setup();const field=await screen.findByPlaceholderText('Ask a question or bring in a file…');
   await user.type(field,'approve');await user.click(screen.getByRole('button',{name:'Send'}));await waitFor(()=>assert.equal(calls,1));
   await screen.findByText(/A response to an approval or question may have been accepted/);
   globalThis.__prepareAgent.events=[{type:'input.resolved',data:{resolutions:[{requestId:id,kind:'tool-approval',outcome:'approved'}]}}];view.rerender(app({sessionId:'chat-a'}));
@@ -1255,7 +1255,7 @@ test('timed-out stop remains uncertain across remount and a late result never re
   AbortSignal.timeout = (ms) => { if (ms === 15_000) { deadline = new AbortController(); return deadline.signal; } return oldTimeout(ms); };
   try {
     fakeFetch(() => undefined); const view = render(app({ sessionId: 'owned-chat' })); const user = userEvent.setup();
-    const field = await screen.findByPlaceholderText('Ask Tflash anything…'); await user.type(field, 'Preserve this draft');
+    const field = await screen.findByPlaceholderText('Ask a question or bring in a file…'); await user.type(field, 'Preserve this draft');
     await user.click(screen.getByRole('button', { name: 'Stop' })); await waitFor(() => assert.equal(stops, 1));
     assert.equal(screen.getByRole('button', { name: 'Acknowledge stop review' }).disabled, true);
     await React.act(async () => deadline.abort(new Error('local stop wait expired')));
@@ -1293,7 +1293,7 @@ test('Stop remains protective when marker writes fail, with an in-memory warning
 
 test('other-tab stop warning blocks forced sends; unrelated account and session remain isolated', async () => {
   const sends = seed(); fakeFetch(() => undefined); const view = render(app({ sessionId: 'owned-chat' }));
-  const field = await screen.findByPlaceholderText('Ask Tflash anything…'); const user = userEvent.setup(); await user.type(field, 'Keep draft');
+  const field = await screen.findByPlaceholderText('Ask a question or bring in a file…'); const user = userEvent.setup(); await user.type(field, 'Keep draft');
   const prefix = 'tflash:sync-uncertain:stop-request:supabase:';
   await React.act(async () => { window.localStorage.setItem(prefix + 'other:one', JSON.stringify({ sessionId: 'owned-chat', turnId: null })); window.localStorage.setItem(prefix + 'prepare-user:two', JSON.stringify({ sessionId: 'another-chat', turnId: null })); window.dispatchEvent(new window.StorageEvent('storage')); });
   assert.equal(Boolean(screen.queryByText(/A stop request may have been accepted/)), false);
@@ -1392,7 +1392,7 @@ test('shared dispatch marker precedes send and preserves same-tab steering until
     sends.push({ message, options }); await pending.promise;
   };
   const view = render(app({ sessionId: 'owned-chat' })); const user = userEvent.setup();
-  const field = await screen.findByPlaceholderText('Ask Tflash anything…'); await user.type(field, 'private message'); await user.keyboard('{Enter}');
+  const field = await screen.findByPlaceholderText('Ask a question or bring in a file…'); await user.type(field, 'private message'); await user.keyboard('{Enter}');
   await waitFor(() => assert.equal(sends.length, 1)); assert.equal(Boolean(screen.queryByText(/A message may be running in another tab/)), false);
   globalThis.__prepareAgent.status = 'streaming'; view.rerender(app({ sessionId: 'owned-chat' }));
   await user.type(field, 'steer text'); await user.keyboard('{Enter}'); await waitFor(() => assert.equal(sends.length, 2));
@@ -1406,7 +1406,7 @@ test('an in-flight dispatch survives unmount and a late success does not erase s
   seed(); fakeFetch(() => undefined); const pending = deferred(); let sends = 0;
   globalThis.__prepareAgent.send = () => { sends++; return pending.promise; };
   const view = render(app({ sessionId: 'owned-chat' })); const user = userEvent.setup();
-  await user.type(await screen.findByPlaceholderText('Ask Tflash anything…'), 'possible side effect'); await user.keyboard('{Enter}'); await waitFor(() => assert.equal(sends, 1));
+  await user.type(await screen.findByPlaceholderText('Ask a question or bring in a file…'), 'possible side effect'); await user.keyboard('{Enter}'); await waitFor(() => assert.equal(sends, 1));
   const key = Object.keys(window.localStorage).find(k => k.includes(':turn-dispatch:')); assert.ok(key);
   view.unmount(); await React.act(async () => { pending.resolve(); await pending.promise; });
   assert.ok(window.localStorage.getItem(key)); assert.ok(window.sessionStorage.getItem('tflash:dispatch-review:v1:supabase:prepare-user:owned-chat'));
@@ -1419,7 +1419,7 @@ test('an in-flight dispatch survives unmount and a late success does not erase s
 test('another tab warning blocks a queued message after history persistence without replay', async () => {
   const sends = seed(); const pending = deferred(); let historyStarted = false;
   fakeFetch((path, options) => { if (path === '/api/chats/owned-chat' && options.method === 'PATCH') { historyStarted = true; return pending.promise; } });
-  render(app({ sessionId: 'owned-chat' })); const user = userEvent.setup(); const field = await screen.findByPlaceholderText('Ask Tflash anything…');
+  render(app({ sessionId: 'owned-chat' })); const user = userEvent.setup(); const field = await screen.findByPlaceholderText('Ask a question or bring in a file…');
   await user.type(field, 'Preserve my draft'); await user.keyboard('{Enter}'); await waitFor(() => assert.equal(historyStarted, true));
   const key = 'tflash:sync-uncertain:turn-dispatch:supabase:prepare-user:other-tab';
   await React.act(async () => { window.localStorage.setItem(key, JSON.stringify({ sessionId: 'owned-chat' })); window.dispatchEvent(new window.StorageEvent('storage', { key })); });
@@ -1452,7 +1452,7 @@ test('shared dispatch reviews are individual and cannot clear another new marker
 test('shared marker creation failure is visible while preserving same-tab fallback behavior', async () => {
   const sends = seed(); fakeFetch(() => undefined); const proto = Object.getPrototypeOf(window.localStorage), original = proto.setItem;
   proto.setItem = function(key, value) { if (key.includes(':turn-dispatch:')) throw new Error('blocked'); return original.call(this, key, value); };
-  try { render(app({ sessionId: 'owned-chat' })); const user = userEvent.setup(); const field = await screen.findByPlaceholderText('Ask Tflash anything…');
+  try { render(app({ sessionId: 'owned-chat' })); const user = userEvent.setup(); const field = await screen.findByPlaceholderText('Ask a question or bring in a file…');
     await user.type(field, 'one message'); await user.keyboard('{Enter}'); await waitFor(() => assert.equal(sends.length, 1));
     await screen.findByText(/The cross-tab dispatch warning could not be saved/);
     assert.equal(Object.keys(window.localStorage).filter(k => k.includes(':turn-dispatch:')).length, 0); assert.equal(sends.length, 1);
@@ -1462,7 +1462,7 @@ test('shared marker creation failure is visible while preserving same-tab fallba
 test('shared marker deletion failure leaves a warning rather than silently clearing it', async () => {
   const sends = seed(); fakeFetch(() => undefined); const proto = Object.getPrototypeOf(window.localStorage), original = proto.removeItem;
   proto.removeItem = function(key) { if (key.includes(':turn-dispatch:')) throw new Error('blocked'); return original.call(this, key); };
-  try { render(app({ sessionId: 'owned-chat' })); const user = userEvent.setup(); const field = await screen.findByPlaceholderText('Ask Tflash anything…');
+  try { render(app({ sessionId: 'owned-chat' })); const user = userEvent.setup(); const field = await screen.findByPlaceholderText('Ask a question or bring in a file…');
     await user.type(field, 'one message'); await user.keyboard('{Enter}'); await waitFor(() => assert.equal(sends.length, 1));
     await screen.findByText(/A message may be running in another tab/); assert.equal(screen.getByRole('button', { name: 'Send' }).disabled, true);
     await user.click(screen.getByRole('checkbox', { name: /I checked the conversation and external effects and understand the earlier request/ }));
@@ -1494,7 +1494,7 @@ test('a competing shared marker appearing during reservation prevents dispatch',
   const sends = seed(); fakeFetch(() => undefined); const proto = Object.getPrototypeOf(window.localStorage), original = proto.setItem;
   const foreign = 'tflash:sync-uncertain:turn-dispatch:supabase:prepare-user:concurrent'; let inserted = false;
   proto.setItem = function(key, value) { const result = original.call(this, key, value); if (!inserted && key.includes(':turn-dispatch:')) { inserted = true; original.call(this, foreign, JSON.stringify({ sessionId: 'owned-chat' })); } return result; };
-  try { render(app({ sessionId: 'owned-chat' })); const user = userEvent.setup(); const field = await screen.findByPlaceholderText('Ask Tflash anything…');
+  try { render(app({ sessionId: 'owned-chat' })); const user = userEvent.setup(); const field = await screen.findByPlaceholderText('Ask a question or bring in a file…');
     await user.type(field, 'Do not send'); await user.keyboard('{Enter}'); await screen.findByText(/A message may be running in another tab/);
     await waitFor(() => assert.equal(field.value, 'Do not send')); assert.equal(sends.length, 0);
     const keys = Object.keys(window.localStorage).filter(k => k.includes(':turn-dispatch:')); assert.deepEqual(keys, [foreign]);
@@ -1507,7 +1507,7 @@ test('unreadable shared dispatch recovery blocks sends but still permits protect
   const proto = Object.getPrototypeOf(window.localStorage), original = proto.getItem;
   proto.getItem = function(k) { if (k === key) throw new Error('unreadable'); return original.call(this, k); };
   try { render(app({ sessionId: 'owned-chat' })); const user = userEvent.setup(); await screen.findByText(/Cross-tab dispatch recovery cannot be read/);
-    const field = await screen.findByPlaceholderText('Ask Tflash anything…'); await user.type(field, 'keep me');
+    const field = await screen.findByPlaceholderText('Ask a question or bring in a file…'); await user.type(field, 'keep me');
     assert.equal(screen.getByRole('button', { name: 'Send' }).disabled, true);
     await user.click(screen.getByRole('button', { name: 'Stop' })); await waitFor(() => assert.equal(stops, 1));
   } finally { proto.getItem = original; }
