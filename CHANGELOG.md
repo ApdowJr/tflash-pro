@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-11-04 — error recovery for split panels
+
+A workspace panel that cannot be downloaded no longer replaces the whole
+screen. See [docs/error-recovery-2026-11-04.md](docs/error-recovery-2026-11-04.md)
+for the failure class and verification.
+
+### Fixed
+
+- Coder and Research workspace chunks are mounted through a panel-scoped error
+  boundary. If the dynamic import fails (a stale deployment, a dropped
+  connection, a blocked request), the panel explains it in place and offers a
+  retry and a reload; the conversation, composer, sidebar and approvals stay
+  usable. `React.lazy` caches a rejected import, so the previous route-level
+  screen's "try again" could never recover without a full reload.
+- The route error screen retries once automatically, offers a reload action and
+  logs the error name, message and stack alongside the digest.
+- Address-bar updates go through one guarded `replaceRoute()` helper instead of a
+  bare `History.prototype.replaceState` call, so a blocked History API cannot
+  break sending a turn or switching mode.
+
 ## 2026-10-30 — public landing page and polish
 
 `/` is now public. A signed-out visitor sees a bilingual landing page instead of

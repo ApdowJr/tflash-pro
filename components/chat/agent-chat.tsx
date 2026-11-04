@@ -9,7 +9,7 @@ import { Client } from "eve/client";
 import { activeTurn, interactions, turn } from "eve/events";
 import { useEveAgent } from "eve/react";
 import { AlertCircleIcon, CheckIcon, CopyIcon } from "lucide-react";
-import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Conversation,
   ConversationContent,
@@ -32,6 +32,7 @@ import { useAppSettings } from "@/components/settings/app-settings";
 import { SettingsDialog } from "@/components/settings/settings-dialog";
 import { sessionTitle } from "@/lib/chat-history";
 import { OWNER_PROOF_HEADER } from "@/lib/security/chat-ownership-wire";
+import { LazyPanel } from "@/components/app/lazy-panel";
 import { AgentMessage, type AgentInputResponse } from "./agent-message";
 import { InputResponseNotice, useInputResponseRecovery } from "./input-response-recovery";
 import { StopRecoveryNotice, useStopRecovery } from "./stop-recovery";
@@ -59,19 +60,63 @@ const DEFAULT_AGENT_NAME = "Tflash";
 // Specialized workspaces are useful only in their own mode. Keep their UI and
 // projection code out of the general Chat path, and preserve the grid while a
 // mode chunk loads instead of mounting an unstyled placeholder.
-const CoderWorkspace = lazy(async () => ({ default: (await import("@/components/coder/coder-workspace")).CoderWorkspace }));
-const ResearchWorkspace = lazy(async () => ({ default: (await import("@/components/research/research-workspace")).ResearchWorkspace }));
+const loadCoderWorkspace = async () => ({ default: (await import("@/components/coder/coder-workspace")).CoderWorkspace });
+const loadResearchWorkspace = async () => ({ default: (await import("@/components/research/research-workspace")).ResearchWorkspace });
+
+/** Shared frame so a loading, failed or loaded panel keeps the same layout. */
+function WorkspaceFrame({ label, mobileVisible, children }: {
+  readonly label: "Coder" | "Research";
+  readonly mobileVisible: boolean;
+  readonly children: ReactNode;
+}) {
+  return <section aria-label={`${label} workspace`} className={`min-h-0 min-w-0 flex-col border-t bg-muted/10 xl:flex xl:border-t-0 xl:border-l ${mobileVisible ? "flex flex-1" : "hidden"}`}>
+    {children}
+  </section>;
+}
 
 function WorkspaceLoading({ label, mobileVisible }: { readonly label: "Coder" | "Research"; readonly mobileVisible: boolean }) {
-  return <section aria-label={`${label} workspace`} className={`min-h-0 min-w-0 flex-col border-t bg-muted/10 xl:flex xl:border-t-0 xl:border-l ${mobileVisible ? "flex flex-1" : "hidden"}`}>
+  return <WorkspaceFrame label={label} mobileVisible={mobileVisible}>
     <p className="m-auto p-6 text-xs text-muted-foreground" role="status">Loading {label} workspace…</p>
-  </section>;
+  </WorkspaceFrame>;
+}
+
+/**
+ * A panel that could not be downloaded stays inside its own column: the
+ * conversation, composer and sidebar keep working, and the reader can retry
+ * without losing the transcript.
+ */
+function WorkspaceUnavailable({ label, mobileVisible, onRetry }: {
+  readonly label: "Coder" | "Research";
+  readonly mobileVisible: boolean;
+  readonly onRetry: () => void;
+}) {
+  const { t } = useAppSettings();
+  return <WorkspaceFrame label={label} mobileVisible={mobileVisible}>
+    <div className="m-auto flex max-w-sm flex-col items-start gap-3 p-6" role="alert">
+      <p className="text-sm font-medium text-foreground">{t("workspacePanelFailed")}</p>
+      <div className="flex flex-wrap gap-2">
+        <Button onClick={onRetry} size="sm" type="button" variant="outline">{t("retry")}</Button>
+        <Button onClick={() => window.location.reload()} size="sm" type="button" variant="ghost">{t("workspacePanelReload")}</Button>
+      </div>
+    </div>
+  </WorkspaceFrame>;
 }
 
 type ReadySession = { readonly id: string; readonly resume: boolean; readonly proof?: string };
 type PreparationError = "chatStorageSetupRequired" | "chatStorageUnavailable" | "chatPreparationFailed" | "chatSignInRequired" | "chatOwnershipUnavailable" | "chatCreationUncertain" | "chatCreationStorageUnavailable";
 type CreatedSession = { readonly id: string; readonly proof?: string; readonly marker: string };
 class CreationNotStartedError extends Error {}
+
+/** Update the address bar without ever throwing into the caller's flow. A
+ * blocked History API (hardened browsers, an embedded frame, a same-URL
+ * replace) must not break sending a turn or switching an unstarted mode. */
+function replaceRoute(url: string) {
+  try {
+    window.history.replaceState(window.history.state, "", url);
+  } catch {
+    // The conversation still works; only the visible URL stays behind.
+  }
+}
 
 /** Start sessions server-side so every login method receives a bound owner. */
 export function AgentChat({ account, sessionId, sessionless = false, initialMode = "chat" }: {
@@ -276,7 +321,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
 
   const replaceSessionRoute = (nextSessionId: string) => {
     if (resume) return;
-    History.prototype.replaceState.call(window.history, window.history.state, "", `/s/${encodeURIComponent(nextSessionId)}`);
+    replaceRoute(`/s/${encodeURIComponent(nextSessionId)}`);
   };
 
   const agent = useEveAgent({
@@ -456,7 +501,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
       return;
     }
     setAgentMode(nextMode);
-    History.prototype.replaceState.call(window.history, window.history.state, "", `/?mode=${nextMode}`);
+    replaceRoute(`/?mode=${nextMode}`);
   };
 
   const openSettings = useCallback(
@@ -821,26 +866,38 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
           </div>
         </div>
         </section>
-        {agentMode === "coder" && coderProjection ? <Suspense fallback={<WorkspaceLoading label="Coder" mobileVisible={workspaceMobileView === "workspace"} />}><CoderWorkspace
-          disabled={isResuming || disconnected || unknownDispatch || inputBlocked || stopBlocked || sharedBlocked || hasOpenInput || !sessionId}
-          isBusy={isBusy}
-          mobileVisible={workspaceMobileView === "workspace"}
-          onCommand={runWorkspaceCommand}
-          onReviewApprovals={() => setWorkspaceMobileView("chat")}
-          pendingApprovals={openInputs.filter((input) => input.request.kind === "approval").length}
-          plan={currentPlan}
-          projection={coderProjection}
-        /></Suspense> : null}
-        {agentMode === "research" && researchProjection ? <Suspense fallback={<WorkspaceLoading label="Research" mobileVisible={workspaceMobileView === "workspace"} />}><ResearchWorkspace
-          disabled={isResuming || disconnected || unknownDispatch || inputBlocked || stopBlocked || sharedBlocked || hasOpenInput || !sessionId}
-          isBusy={isBusy}
-          mobileVisible={workspaceMobileView === "workspace"}
-          onCommand={runWorkspaceCommand}
-          onReviewApprovals={() => setWorkspaceMobileView("chat")}
-          pendingApprovals={openInputs.filter((input) => input.request.kind === "approval").length}
-          plan={currentPlan}
-          projection={researchProjection}
-        /></Suspense> : null}
+        {agentMode === "coder" && coderProjection ? <LazyPanel
+          failure={(retry) => <WorkspaceUnavailable label="Coder" mobileVisible={workspaceMobileView === "workspace"} onRetry={retry} />}
+          fallback={<WorkspaceLoading label="Coder" mobileVisible={workspaceMobileView === "workspace"} />}
+          label="Coder"
+          load={loadCoderWorkspace}
+          render={(CoderWorkspace) => <CoderWorkspace
+            disabled={isResuming || disconnected || unknownDispatch || inputBlocked || stopBlocked || sharedBlocked || hasOpenInput || !sessionId}
+            isBusy={isBusy}
+            mobileVisible={workspaceMobileView === "workspace"}
+            onCommand={runWorkspaceCommand}
+            onReviewApprovals={() => setWorkspaceMobileView("chat")}
+            pendingApprovals={openInputs.filter((input) => input.request.kind === "approval").length}
+            plan={currentPlan}
+            projection={coderProjection}
+          />}
+        /> : null}
+        {agentMode === "research" && researchProjection ? <LazyPanel
+          failure={(retry) => <WorkspaceUnavailable label="Research" mobileVisible={workspaceMobileView === "workspace"} onRetry={retry} />}
+          fallback={<WorkspaceLoading label="Research" mobileVisible={workspaceMobileView === "workspace"} />}
+          label="Research"
+          load={loadResearchWorkspace}
+          render={(ResearchWorkspace) => <ResearchWorkspace
+            disabled={isResuming || disconnected || unknownDispatch || inputBlocked || stopBlocked || sharedBlocked || hasOpenInput || !sessionId}
+            isBusy={isBusy}
+            mobileVisible={workspaceMobileView === "workspace"}
+            onCommand={runWorkspaceCommand}
+            onReviewApprovals={() => setWorkspaceMobileView("chat")}
+            pendingApprovals={openInputs.filter((input) => input.request.kind === "approval").length}
+            plan={currentPlan}
+            projection={researchProjection}
+          />}
+        /> : null}
         </div>
       </main>
 
