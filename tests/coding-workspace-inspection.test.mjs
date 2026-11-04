@@ -1,17 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { registerHooks } from "node:module";
+import { register } from "tsx/esm/api";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync, exec } from "node:child_process";
 import { promisify } from "node:util";
 
-registerHooks({ resolve(specifier, context, nextResolve) {
-  if (specifier.startsWith("@/")) return { url: new URL(`../${specifier.slice(2)}.ts`, import.meta.url).href, shortCircuit: true };
-  return nextResolve(specifier, context);
-} });
-const tool = (await import("../agent/tools/inspect_coding_workspace.ts")).default;
+register();
+const tool = (await import("../agent/tools/inspect_coding_workspace.ts")).inspectCodingWorkspaceTool;
 const execute = promisify(exec);
 const git = (cwd, ...args) => execFileSync("git", args, { cwd, stdio: "pipe" }).toString().trim();
 function sandbox(cwd, override) {

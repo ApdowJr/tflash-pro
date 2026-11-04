@@ -1,4 +1,5 @@
 import { ATTR_MAX_STEPS, HEADER_MAX_STEPS, modelStepLimit } from "@/lib/usage-limits";
+import { ATTR_AGENT_MODE, HEADER_AGENT_MODE, parseAgentMode } from "@/lib/agent-modes";
 import { eveChannel } from "eve/channels/eve";
 import { ForbiddenError, type AuthFn } from "eve/channels/auth";
 import { requestSupabase } from "@/lib/supabase/request";
@@ -40,6 +41,7 @@ function requestAttributes(request: Request) {
   );
   return {
     ...selectionToAttributes(selectionFromHeaders(request.headers)),
+    [ATTR_AGENT_MODE]: parseAgentMode(request.headers.get(HEADER_AGENT_MODE)),
     [ATTR_MAX_STEPS]: String(modelStepLimit(request.headers.get(HEADER_MAX_STEPS))),
     ...(integrationTokens ? { [ATTR_INTEGRATION_TOKENS]: integrationTokens } : {}),
   };

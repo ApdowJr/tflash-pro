@@ -4,10 +4,12 @@ import { serverSupabase } from "@/lib/supabase/server";
 import { verifyChatOwnership } from "@/lib/security/chat-ownership";
 import { AppSettingsProvider } from "@/components/settings/app-settings";
 import { AgentChat } from "./agent-chat";
+import type { AgentMode } from "@/lib/agent-modes";
 
-export async function AuthenticatedAgentChat({ sessionId, sessionless, principal: knownPrincipal }: {
+export async function AuthenticatedAgentChat({ sessionId, sessionless, principal: knownPrincipal, initialMode }: {
   readonly sessionId?: string;
   readonly sessionless?: boolean;
+  readonly initialMode?: AgentMode;
   /** Passed by callers that already resolved the session, to avoid a second lookup. */
   readonly principal?: AppPrincipal;
 }) {
@@ -27,7 +29,7 @@ export async function AuthenticatedAgentChat({ sessionId, sessionless, principal
   // by Eve on every session route, including streams and controls.
   return (
     <AppSettingsProvider key={`${principal.kind}:${principal.id}`} userId={principal.id} accountKind={principal.kind}>
-      <AgentChat account={principal} sessionId={sessionId} sessionless={sessionless} />
+      <AgentChat account={principal} initialMode={initialMode} sessionId={sessionId} sessionless={sessionless} />
     </AppSettingsProvider>
   );
 }

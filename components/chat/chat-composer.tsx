@@ -65,27 +65,31 @@ export function ChatComposer({
           </button>
         </div>
       ))}
-      {mode === "coder" ? (
-        <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-border/70 px-3 py-2 text-xs text-muted-foreground">
-          <span>{settings.language === "so" ? "Qeex repo-ga iyo branch-ka; hubi gelitaanka iyo tijaabooyinka ka hor inta aan la sheegin in hawshu dhammaatay." : "Specify the repository and branch; verify access and tests before treating work as complete."}</span>
-          <button
-            className="min-h-11 shrink-0 rounded-md font-medium text-foreground underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            onClick={() => {
-              const template = settings.language === "so"
-                ? "Hawl coding:\nRepository: [magaca ama URL]\nBranch: [branch-ka]\nWaxa la qabanayo: [sharax hawsha]\nTijaabooyinka ama shuruudaha: [ikhtiyaari]"
-                : "Coding task:\nRepository: [name or URL]\nBranch: [branch]\nTask: [describe the work]\nTests or acceptance criteria: [optional]";
-              const current = controller.textInput.value;
-              controller.textInput.setInput(current ? `${current}\n\n${template}` : template);
-            }}
-            type="button"
-          >
-            {settings.language === "so" ? "Ku dar qaab hawleed" : "Insert task template"}
-          </button>
-          <span>{settings.language === "so" ? "Tani ma xirayso repo mana dirayso fariin. Ha gelin sir ama token." : "Does not connect a repository or send a message. Do not include secrets or tokens."}</span>
+      {mode !== "chat" ? (
+        <div className="mb-2 flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 px-1 text-[11px] text-muted-foreground">
+          <span className="font-medium text-foreground">{mode === "coder" ? t("coderContextHint") : t("deepResearch")}</span>
+          {mode === "research" ? <span>{t("deepResearchHint")}</span> : (
+            <>
+              <button
+                className="min-h-9 rounded-md font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={() => {
+                  const template = settings.language === "so"
+                    ? "Hawl coding:\nRepository: [magaca ama URL]\nBranch: [branch-ka]\nWaxa la qabanayo: [sharax hawsha]\nTijaabooyinka ama shuruudaha: [ikhtiyaari]"
+                    : "Coding task:\nRepository: [name or URL]\nBranch: [branch]\nTask: [describe the work]\nTests or acceptance criteria: [optional]";
+                  const current = controller.textInput.value;
+                  controller.textInput.setInput(current ? `${current}\n\n${template}` : template);
+                }}
+                type="button"
+              >
+                {settings.language === "so" ? "Ku dar qaab hawleed" : "Insert task template"}
+              </button>
+              <span className="hidden lg:inline">{settings.language === "so" ? "Tani ma xirayso repo mana dirayso fariin. Ha gelin sir ama token." : "Does not connect a repository or send a message. Do not include secrets or tokens."}</span>
+            </>
+          )}
         </div>
       ) : null}
       <PromptInput
-        className="tflash-composer overflow-visible rounded-[1.35rem] border-border/80 bg-card dark:bg-card focus-within:border-foreground/25! focus-within:ring-1 focus-within:ring-foreground/10"
+        className="tflash-composer overflow-visible rounded-2xl border-border bg-card shadow-[var(--shell-shadow)] focus-within:border-primary/45! focus-within:ring-2 focus-within:ring-primary/10"
         onSubmit={onSubmit}
         onSubmitCapture={(event) => { if (documentPending) { event.preventDefault(); event.stopPropagation(); } }}
       >
@@ -95,7 +99,7 @@ export function ChatComposer({
           className="min-h-[3.75rem] px-4 pt-3.5 pb-0 text-[15px] leading-relaxed placeholder:text-muted-foreground/70 md:text-[15px]"
           // Drafts remain editable while a session prepares or after an error;
           // Send stays disabled until it is safe to submit.
-          placeholder={t("placeholder")}
+          placeholder={t(mode === "coder" ? "coderPlaceholder" : mode === "research" ? "researchPlaceholder" : "chatPlaceholder")}
         />
         <PromptInputFooter className={`flex-wrap border-t-0 px-2.5 pt-1.5 pb-2.5 ${isBusy && (controller.textInput.value.trim() || controller.attachments.files.length) ? "pr-24" : "pr-14"}`}>
           <PromptInputTools className="gap-1">
@@ -122,22 +126,22 @@ export function ChatComposer({
 export function AgentModePicker({ mode, onChange, language, disabled }: { mode: AgentMode; onChange?: (mode: AgentMode) => void; language: "en" | "so"; disabled: boolean }) {
   const icons = { chat: MessageSquareTextIcon, coder: BracesIcon, research: FileSearchIcon };
   return (
-    <div aria-label={language === "so" ? "Habka agent-ka" : "Agent mode"} className="grid gap-1" role="group">
+    <div aria-label={language === "so" ? "Habka agent-ka" : "Agent mode"} className="grid grid-cols-3 gap-1 rounded-xl border bg-background/55 p-1" role="group">
       {AGENT_MODES.map((item) => {
         const Icon = icons[item.id];
         const selected = mode === item.id;
         return (
           <button
             aria-pressed={selected}
-            className={`tf-touch-target inline-flex min-h-10 w-full items-center gap-2.5 rounded-lg border px-2.5 text-left text-[12px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0b0a12] ${selected ? "border-violet-400/20 bg-violet-500/15 font-medium text-violet-100" : "border-transparent text-white/65 hover:border-white/8 hover:bg-white/5 hover:text-white"}`}
+            className={`tf-touch-target inline-flex min-h-12 min-w-0 flex-col items-center justify-center gap-1 rounded-lg border px-1 text-center text-[10.5px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 ${selected ? "border-border bg-card text-foreground shadow-sm" : "border-transparent text-muted-foreground hover:bg-accent/70 hover:text-foreground"}`}
             disabled={disabled || !onChange}
             key={item.id}
             onClick={() => onChange?.(item.id)}
             title={item.hint[language]}
             type="button"
           >
-            <Icon aria-hidden="true" className="size-3.5" />
-            {item.label[language]}
+            <Icon aria-hidden="true" className={`size-3.5 ${selected ? "text-primary" : ""}`} />
+            <span className="max-w-full truncate">{item.label[language]}</span>
           </button>
         );
       })}

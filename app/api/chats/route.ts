@@ -7,6 +7,7 @@ import { CREATE_PROOF_HEADER, signChatCreation, signChatOwnership, verifyChatOwn
 import { internalEveHeaders, internalOrigin } from "@/lib/security/internal-origin";
 import { guardRateLimit } from "@/lib/security/rate-limits";
 import { waitWithAbort } from "@/lib/abortable";
+import { HEADER_AGENT_MODE, parseAgentMode } from "@/lib/agent-modes";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -89,6 +90,7 @@ export async function POST(request: Request): Promise<Response> {
     const headers = internalEveHeaders({
       cookie: request.headers.get("cookie") ?? "",
       [CREATE_PROOF_HEADER]: signChatCreation(principal.id),
+      [HEADER_AGENT_MODE]: parseAgentMode(request.headers.get(HEADER_AGENT_MODE)),
     });
     for (const name of [HEADER_PROVIDER, HEADER_MODEL, HEADER_CONTEXT, HEADER_TOKEN, HEADER_INTEGRATION_TOKENS]) {
       const value = request.headers.get(name);

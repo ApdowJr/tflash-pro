@@ -30,6 +30,10 @@ const userEvent = (await import("@testing-library/user-event")).default;
 const { AppSettingsProvider, useAppSettings } = await import("../components/settings/app-settings.tsx");
 const { Sidebar } = await import("../components/workspace/sidebar.tsx");
 const { TopBar } = await import("../components/workspace/top-bar.tsx");
+const { EmptyState } = await import("../components/workspace/empty-state.tsx");
+const { CoderWorkspace } = await import("../components/coder/coder-workspace.tsx");
+const { ResearchWorkspace } = await import("../components/research/research-workspace.tsx");
+const { agentModeStorageKey } = await import("../lib/agent-modes.ts");
 const { SettingsDialog } = await import("../components/settings/settings-dialog.tsx");
 const { ConnectionsPanel } = await import("../components/settings/connections-panel.tsx");
 const { INTEGRATIONS } = await import("../lib/integrations/catalog.ts");
@@ -293,7 +297,7 @@ test("the composer keeps a newer text draft and attachments after an earlier sen
   try {
     render(app(h(TooltipProvider, null, h(PromptInputProvider, null, h(ChatComposer, { isBusy: false, isResuming: false, onCancel() {}, onSubmit })))));
     const user = userEvent.setup();
-    const textarea = screen.getByPlaceholderText("Ask Tflash anything…");
+    const textarea = screen.getByPlaceholderText("Ask a question or bring in a file…");
     const upload = document.querySelector('input[type="file"]');
     await user.type(textarea, "First draft");
     await user.upload(upload, new File(["first"], "first.txt", { type: "text/plain" }));
@@ -387,7 +391,7 @@ test("a failed send keeps the draft available for retry", async () => {
     h(ChatComposer, { isBusy: false, isResuming: false, onCancel() {}, onSubmit }),
   ))));
   const user = userEvent.setup();
-  const textarea = screen.getByPlaceholderText("Ask Tflash anything…");
+  const textarea = screen.getByPlaceholderText("Ask a question or bring in a file…");
   await user.type(textarea, "Please keep this draft");
   fireEvent.submit(textarea.closest("form"));
   await waitFor(() => assert.equal(attempted, true));
@@ -406,7 +410,7 @@ test("a failed in-flight send does not overwrite a newer draft", async () => {
     h(ChatComposer, { isBusy: false, isResuming: false, onCancel() {}, onSubmit }),
   ))));
   const user = userEvent.setup();
-  const textarea = screen.getByPlaceholderText("Ask Tflash anything…");
+  const textarea = screen.getByPlaceholderText("Ask a question or bring in a file…");
   await user.type(textarea, "First draft");
   fireEvent.submit(textarea.closest("form"));
   await waitFor(() => assert.equal(attempted, true));
@@ -525,7 +529,7 @@ test("a second identical draft survives completion of an earlier send", async ()
     h(ChatComposer, { isBusy: false, isResuming: false, onCancel() {}, onSubmit: async () => { await pending; } }),
   ))));
   const user = userEvent.setup();
-  const textarea = screen.getByPlaceholderText("Ask Tflash anything…");
+  const textarea = screen.getByPlaceholderText("Ask a question or bring in a file…");
   await user.type(textarea, "Same words");
   fireEvent.submit(textarea.closest("form"));
   assert.equal(textarea.value, "");
@@ -700,7 +704,7 @@ test("actual chat messages render authored artifacts and reject a lookalike from
 test("research messages show inert bilingual sources and download the actual executor-generated report", async () => {
   const { AgentMessage } = await import("../components/chat/agent-message.tsx");
   const fetchTool = (await import("../agent/tools/web_fetch.ts")).default;
-  const reportTool = (await import("../agent/tools/create_research_report.ts")).default;
+  const reportTool = (await import("../agent/tools/create_research_report.ts")).researchReportTool;
   const context = { approval: { responder: { principalId: userId } }, session: { id: "ui-research", auth: { current: { principalId: userId, principalType: "user" } } } };
   globalThis.fetch = async () => new Response('<script>window.researchInjected=true</script> Sample size: 42.', { headers: { "content-type": "text/plain" } });
   const fetched = await fetchTool.execute({ url: "https://example.com/study" }, context);
@@ -888,12 +892,12 @@ test("actual chat submits only selected memory/project context, enforces the wir
   try {
     render(app(h(TooltipProvider, null, h(Probe), h(AgentChat, { account: { id: userId, kind: "vercel", name: "Test", email: "test@example.test" }, sessionId: "owned-chat" }))));
     const user = userEvent.setup();
-    await waitFor(() => assert.equal(screen.getByPlaceholderText("Ask Tflash anything…").disabled, false));
-    await user.type(screen.getByPlaceholderText("Ask Tflash anything…"), "Read this document");
+    await waitFor(() => assert.equal(screen.getByPlaceholderText("Ask a question or bring in a file…").disabled, false));
+    await user.type(screen.getByPlaceholderText("Ask a question or bring in a file…"), "Read this document");
     fireEvent.change(screen.getByLabelText("Read PDF or DOCX", { selector: "input" }), { target: { files: [new File(["%PDF-fixture"], "study.pdf", { type: "application/pdf" })] } });
     await screen.findByText("study.pdf.extracted.txt");
     await waitFor(() => assert.equal(screen.getByRole("button", { name: "Send" }).disabled, false));
-    fireEvent.submit(screen.getByPlaceholderText("Ask Tflash anything…").closest("form"));
+    fireEvent.submit(screen.getByPlaceholderText("Ask a question or bring in a file…").closest("form"));
     await waitFor(() => assert.equal(sends.length, 1));
     assert.ok(sends[0].options.clientContext.includes("Use primary sources"));
     assert.ok(sends[0].options.clientContext.includes("Selected memory"));
@@ -903,8 +907,8 @@ test("actual chat submits only selected memory/project context, enforces the wir
     assert.ok(sends[0].message.some((part) => part.type === "text" && part.text.includes("Actual extracted document body")));
     assert.ok(sends[0].message.every((part) => part.type === "text"));
     await React.act(async () => { store.change((w) => ({ ...w, memoryEnabled: false })); });
-    await user.type(screen.getByPlaceholderText("Ask Tflash anything…"), "Next question");
-    fireEvent.submit(screen.getByPlaceholderText("Ask Tflash anything…").closest("form"));
+    await user.type(screen.getByPlaceholderText("Ask a question or bring in a file…"), "Next question");
+    fireEvent.submit(screen.getByPlaceholderText("Ask a question or bring in a file…").closest("form"));
     await waitFor(() => assert.equal(sends.length, 2));
     assert.ok(!sends[1].options.clientContext.includes("Selected memory"));
     assert.ok(sends[1].options.clientContext.includes("Use primary sources"));
@@ -1010,6 +1014,37 @@ test("agent mode selector exposes three accessible choices and changes the selec
   assert.equal(screen.getByRole("button", { name: "Sheeko" }).getAttribute("aria-pressed"), "true");
   await userEvent.click(screen.getByRole("button", { name: "Cilmi-baaris" }));
   assert.deepEqual(selected, ["research"]);
+});
+
+test("sidebar history and message search stay within the selected conversation mode", async () => {
+  seed({ chats: [
+    { id: "chat-a", title: "General answer", updatedAt: Date.now() },
+    { id: "code-a", title: "Fix repository bug", updatedAt: Date.now() },
+    { id: "research-a", title: "Compare sources", updatedAt: Date.now() },
+  ] });
+  window.localStorage.setItem(agentModeStorageKey("vercel", userId, "code-a"), "coder");
+  window.localStorage.setItem(agentModeStorageKey("vercel", userId, "research-a"), "research");
+  fakeFetch();
+  render(app(h(Sidebar, { open: true, mode: "coder", onModeChange() {}, onClose() {}, onNewChat() {}, onOpenSettings() {} })));
+  assert.ok(await screen.findByText("Fix repository bug"));
+  assert.equal(screen.queryByText("General answer"), null);
+  assert.equal(screen.queryByText("Compare sources"), null);
+});
+
+test("choosing a mode on the launch screen does not insert or submit a draft", async () => {
+  seed();
+  fakeFetch();
+  const selected = [];
+  let sends = 0;
+  render(app(h(TooltipProvider, null, h(PromptInputProvider, null,
+    h(EmptyState, { name: "Ayaan", mode: "chat", onModeChange: (mode) => selected.push(mode), onOpenProjects() {} }),
+    h(ChatComposer, { mode: "chat", isBusy: false, isResuming: false, onCancel() {}, onSubmit: async () => { sends++; } }),
+  ))));
+  const modes = screen.getByRole("group", { name: "New conversation mode" });
+  await userEvent.setup().click(within(modes).getByRole("button", { name: /Coder/ }));
+  assert.deepEqual(selected, ["coder"]);
+  assert.equal(screen.getByRole("textbox", { name: "Message Tflash" }).value, "");
+  assert.equal(sends, 0);
 });
 
 
@@ -3095,7 +3130,7 @@ test("Coder task template preserves the draft and does not submit or connect", a
     h(ChatComposer, { mode: "coder", isBusy: false, isResuming: false, onCancel() {}, onSubmit: async () => { sends++; } }),
   ))));
   const user = userEvent.setup();
-  const textarea = screen.getByPlaceholderText("Ask Tflash anything…");
+  const textarea = screen.getByPlaceholderText("Describe the coding task, repository and expected result…");
   await user.type(textarea, "Existing draft");
   await user.click(screen.getByRole("button", { name: "Insert task template" }));
   assert.match(textarea.value, /^Existing draft\n\nCoding task:/);
@@ -3117,4 +3152,170 @@ test("Coder template is localized and absent in Chat mode", async () => {
   view.rerender(tree("coder"));
   await userEvent.setup().click(screen.getByRole("button", { name: "Ku dar qaab hawleed" }));
   assert.match(screen.getByRole("textbox", { name: /farriin/i }).value, /Hawl coding:/);
+});
+
+test("Coder workspace loads real projections and sends exact unsent editor drafts for approval", async () => {
+  const content = "const a = 1;\n";
+  const document = { kind: "coder-workspace-read", version: 1, path: "src/a.ts", content, sha256: "a".repeat(64), bytes: content.length, totalLines: 2, truncated: false };
+  const projection = {
+    snapshotStale: false,
+    documents: { "src/a.ts": document },
+    snapshot: {
+      kind: "coder-workspace-snapshot", version: 1, workspaceRoot: "/workspace", files: [{ path: "src/a.ts" }], filesTruncated: false,
+      repository: { isRepository: true, root: "/workspace", branch: "main", changes: [{ path: "src/a.ts", status: " M" }], changesTruncated: false },
+      diff: "diff --git a/src/a.ts b/src/a.ts\n-const a = 0;\n+const a = 1;", diffTruncated: false, warnings: [], capturedAt: "2026-11-04T12:00:00.000Z",
+    },
+    commands: [{ id: "cmd-1", command: "pnpm test", state: "completed", exitCode: 0, stdout: "1 passed", stderr: "", truncated: false, isTest: true }],
+    diagnostics: [],
+  };
+  const commands = [];
+  let reviews = 0;
+  render(h(CoderWorkspace, {
+    projection, isBusy: false, mobileVisible: true, pendingApprovals: 2,
+    onCommand: (text) => commands.push(text), onReviewApprovals: () => { reviews++; },
+  }));
+  assert.ok(screen.getByText("/workspace"));
+  fireEvent.click(screen.getByRole("button", { name: "a.ts" }));
+  const editor = screen.getByLabelText("Edit src/a.ts");
+  assert.equal(editor.value, content);
+  fireEvent.change(editor, { target: { value: "const a = 2;\n" } });
+  assert.ok(screen.getByText("unsent draft"));
+  fireEvent.click(screen.getByRole("button", { name: "Ask Coder to apply" }));
+  assert.equal(commands.length, 1);
+  assert.match(commands[0], /coder_workspace_write/);
+  assert.match(commands[0], /const a = 2;/);
+  assert.match(commands[0], /expectedSha256/);
+  assert.ok(screen.getByText("not applied"));
+  fireEvent.click(screen.getByRole("button", { name: "Refresh workspace" }));
+  assert.match(commands[1], /coder_workspace_snapshot/);
+  fireEvent.click(screen.getByRole("tab", { name: /Changes/ }));
+  assert.ok(screen.getByLabelText("Workspace diff").textContent.includes("+const a = 1;"));
+  fireEvent.click(screen.getByRole("tab", { name: /Terminal/ }));
+  assert.ok(screen.getByText("pnpm test"));
+  assert.ok(screen.getByText("1 passed"));
+  fireEvent.click(screen.getByRole("button", { name: "Run checks" }));
+  assert.match(commands[2], /narrowest relevant existing checks/);
+  fireEvent.click(screen.getByRole("button", { name: "2 approvals" }));
+  assert.equal(reviews, 1);
+});
+
+test("Coder workspace preserves a conflicting local draft and blocks stale application", () => {
+  const makeDocument = (content, fill) => ({ kind: "coder-workspace-read", version: 1, path: "src/a.ts", content, sha256: fill.repeat(64), bytes: content.length, totalLines: 2, truncated: false });
+  const snapshot = {
+    kind: "coder-workspace-snapshot", version: 1, workspaceRoot: "/workspace", files: [{ path: "src/a.ts" }], filesTruncated: false,
+    repository: { isRepository: false, changes: [], changesTruncated: false }, diff: "", diffTruncated: false, warnings: [], capturedAt: "2026-11-04T12:00:00.000Z",
+  };
+  const base = { snapshot, snapshotStale: false, commands: [], diagnostics: [] };
+  const props = { isBusy: false, mobileVisible: true, onCommand: () => {}, onReviewApprovals: () => {} };
+  const view = render(h(CoderWorkspace, { ...props, projection: { ...base, documents: { "src/a.ts": makeDocument("old\n", "a") } } }));
+  fireEvent.click(screen.getByRole("button", { name: "a.ts" }));
+  fireEvent.change(screen.getByLabelText("Edit src/a.ts"), { target: { value: "mine\n" } });
+  view.rerender(h(CoderWorkspace, { ...props, projection: { ...base, documents: { "src/a.ts": makeDocument("remote\n", "b") } } }));
+  assert.ok(screen.getAllByText("workspace changed").length > 0);
+  assert.equal(screen.getByLabelText("Edit src/a.ts").value, "mine\n");
+  assert.equal(screen.getByRole("button", { name: "Ask Coder to apply" }).disabled, true);
+});
+
+test("Coder repository action validates public URLs and requests the real clone tool", () => {
+  const commands = [];
+  const projection = {
+    snapshotStale: false, documents: {}, commands: [], diagnostics: [],
+    snapshot: {
+      kind: "coder-workspace-snapshot", version: 1, workspaceRoot: "/workspace", files: [], filesTruncated: false,
+      repository: { isRepository: false, changes: [], changesTruncated: false }, diff: "", diffTruncated: false, warnings: [], capturedAt: "2026-11-04T12:00:00.000Z",
+    },
+  };
+  render(h(CoderWorkspace, { projection, isBusy: false, mobileVisible: true, onCommand: (text) => commands.push(text), onReviewApprovals: () => {} }));
+  fireEvent.click(screen.getByRole("tab", { name: /Changes/ }));
+  const input = screen.getByLabelText("Public repository URL");
+  fireEvent.change(input, { target: { value: "https://user:secret@github.com/owner/repo" } });
+  fireEvent.click(screen.getByRole("button", { name: "Clone" }));
+  assert.equal(commands.length, 0);
+  assert.ok(screen.getByRole("alert").textContent.includes("credentials"));
+  fireEvent.change(input, { target: { value: "https://github.com/owner/repo" } });
+  fireEvent.click(screen.getByRole("button", { name: "Clone" }));
+  assert.equal(commands.length, 1);
+  assert.match(commands[0], /coder_repository_clone/);
+  assert.match(commands[0], /https:\/\/github.com\/owner\/repo/);
+});
+
+test("Coder terminal and plan remain available before the first sandbox snapshot", () => {
+  const projection = {
+    snapshotStale: false, documents: {}, diagnostics: [],
+    commands: [{ id: "early", command: "pnpm test", state: "completed", exitCode: 0, stdout: "early result", stderr: "", truncated: false, isTest: true }],
+  };
+  render(h(CoderWorkspace, { projection, isBusy: false, mobileVisible: true, onCommand: () => {}, onReviewApprovals: () => {} }));
+  fireEvent.click(screen.getByRole("tab", { name: /Terminal/ }));
+  assert.ok(screen.getByText("early result"));
+  fireEvent.click(screen.getByRole("tab", { name: "Plan" }));
+  assert.ok(screen.getByText(/No agent-reported plan yet/));
+  const planTab = screen.getByRole("tab", { name: "Plan" });
+  planTab.focus();
+  fireEvent.keyDown(planTab, { key: "Home" });
+  const codeTab = screen.getByRole("tab", { name: "Code" });
+  assert.equal(codeTab.getAttribute("aria-selected"), "true");
+  assert.equal(document.activeElement, codeTab);
+  fireEvent.keyDown(codeTab, { key: "End" });
+  assert.equal(planTab.getAttribute("aria-selected"), "true");
+  assert.equal(document.activeElement, planTab);
+});
+
+test("Research workspace discovers leads, reads evidence, compares sources, and requests a report", async () => {
+  seed({ local: { defaultModel: "openai/gpt-5-mini" } }); fakeFetch();
+  const urls = ["https://example.com/study", "https://example.org/review"];
+  const projection = {
+    initialRequest: "Compare the evidence",
+    leads: [
+      { id: "https://example.com/study", url: urls[0], title: "Original study", snippet: "Search snippet only", domain: "example.com", fetched: true, provider: "exa" },
+      { id: "https://example.org/review", url: urls[1], title: "Independent review", snippet: "Review snippet", domain: "example.org", fetched: true, provider: "openai" },
+      { id: "https://example.net/new", url: "https://example.net/new", title: "Unread lead", snippet: "Not evidence", domain: "example.net", provider: "parallel" },
+    ],
+    evidence: urls.map((url, index) => ({ url, title: index ? "Independent review" : "Original study", source: { url, fetchedAt: "2026-11-04T12:00:00.000Z", excerpt: `Excerpt ${index}`, truncated: false }, content: `Full retrieved content ${index}` })),
+    report: undefined,
+  };
+  const commands = []; let reviews = 0;
+  const view = () => app(h(ResearchWorkspace, {
+    disabled: false, isBusy: false, mobileVisible: true, onCommand: (text) => commands.push(text),
+    onReviewApprovals: () => reviews++, pendingApprovals: 1, plan: null, projection,
+  }));
+  const mounted = render(view());
+  assert.ok(screen.getByText("Compare the evidence"));
+  const briefTab = screen.getByRole("tab", { name: "Brief" });
+  briefTab.focus();
+  fireEvent.keyDown(briefTab, { key: "ArrowRight" });
+  const keyboardLeadsTab = screen.getByRole("tab", { name: "Leads 3" });
+  assert.equal(keyboardLeadsTab.getAttribute("aria-selected"), "true");
+  assert.equal(document.activeElement, keyboardLeadsTab);
+  fireEvent.keyDown(keyboardLeadsTab, { key: "Home" });
+  assert.equal(briefTab.getAttribute("aria-selected"), "true");
+  assert.equal(document.activeElement, briefTab);
+  fireEvent.change(screen.getByRole("textbox", { name: "Research question" }), { target: { value: "What does current evidence show?" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Research scope" }), { target: { value: "Prioritize independent primary sources." } });
+  fireEvent.click(screen.getByRole("button", { name: "Refine deep research" }));
+  assert.match(commands[0], /Deep research brief/);
+  assert.match(commands[0], /Prioritize independent primary sources/);
+  assert.match(commands[0], /discover, read, compare/);
+
+  fireEvent.click(screen.getByRole("tab", { name: "Leads 3" }));
+  assert.equal(screen.getAllByText("Search lead").length, 3);
+  fireEvent.click(screen.getByRole("button", { name: "Fetch" }));
+  assert.match(commands[1], /Call web_fetch once with \{"url":"https:\/\/example.net\/new"\}/);
+
+  fireEvent.click(screen.getByRole("tab", { name: "Evidence 2" }));
+  fireEvent.click(screen.getByText("Inspect retrieved content"));
+  assert.ok(screen.getByText("Full retrieved content 0"));
+  fireEvent.click(screen.getByRole("button", { name: `Add ${urls[0]} to comparison` }));
+  fireEvent.click(screen.getByRole("button", { name: `Add ${urls[1]} to comparison` }));
+  fireEvent.click(screen.getByRole("tab", { name: "Compare 2" }));
+  assert.ok(screen.getByText("Excerpt 0")); assert.ok(screen.getByText("Excerpt 1"));
+  fireEvent.click(screen.getByRole("button", { name: "Synthesize comparison" }));
+  assert.match(commands[2], /already fetched evidence/);
+  fireEvent.click(screen.getByRole("button", { name: "Create cited report" }));
+  assert.match(commands[3], /exact source receipts/);
+  fireEvent.click(screen.getByRole("button", { name: "1 approval" }));
+  assert.equal(reviews, 1);
+
+  projection.report = { artifact: { filename: "research.md", description: "AI synthesis", content: "# Findings" }, sources: projection.evidence.map((item) => item.source) };
+  mounted.rerender(view());
+  assert.ok(screen.getByRole("button", { name: "Download: research.md" }));
 });

@@ -27,8 +27,9 @@ test("Coder and Research instructions preserve approval boundaries and truthful 
   assert.match(coder, /Never say a file was changed/);
   assert.match(coder, /approvals/);
   const research = agentModeContext("research", "so");
-  assert.match(research, /successfully fetched sources/);
-  assert.match(research, /never invent a source/);
+  assert.match(research, /search results, snippets, and model knowledge as leads only/);
+  assert.match(research, /do not claim an unread page was verified/);
+  assert.match(research, /receipt-backed citations/);
   assert.match(research, /Somali/);
   assert.match(agentModeContext("chat", "en"), /general assistance/);
 });

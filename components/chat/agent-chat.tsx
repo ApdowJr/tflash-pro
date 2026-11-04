@@ -9,7 +9,7 @@ import { Client } from "eve/client";
 import { activeTurn, interactions, turn } from "eve/events";
 import { useEveAgent } from "eve/react";
 import { AlertCircleIcon, CheckIcon, CopyIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Conversation,
   ConversationContent,
@@ -21,7 +21,6 @@ import {
   PromptInputProvider,
   usePromptInputController,
 } from "@/components/ai-elements/prompt-input";
-import { Shimmer } from "@/components/ai-elements/shimmer";
 import { Button } from "@/components/ui/button";
 import { WEB_CHAT_AGENT } from "@/app/eve-agent";
 import { ChatComposer } from "@/components/chat/chat-composer";
@@ -50,10 +49,24 @@ import { attachedText } from "@/lib/documents/contracts";
 import { HEADER_MAX_STEPS } from "@/lib/usage-limits";
 import { latestAgentPlan } from "@/lib/agent-workspace";
 import { latestTurn } from "@/lib/activity";
+import { projectCoderWorkspace } from "@/lib/coder-workspace-projection";
+import { projectResearchWorkspace } from "@/lib/research-workspace";
 import { MAX_STREAM_RECONNECTS, streamReconnectDelay } from "@/lib/stream-recovery";
-import { agentModeContext, agentModeStorageKey, parseAgentMode, type AgentMode } from "@/lib/agent-modes";
+import { HEADER_AGENT_MODE, agentModeStorageKey, parseAgentMode, type AgentMode } from "@/lib/agent-modes";
 
 const DEFAULT_AGENT_NAME = "Tflash";
+
+// Specialized workspaces are useful only in their own mode. Keep their UI and
+// projection code out of the general Chat path, and preserve the grid while a
+// mode chunk loads instead of mounting an unstyled placeholder.
+const CoderWorkspace = lazy(async () => ({ default: (await import("@/components/coder/coder-workspace")).CoderWorkspace }));
+const ResearchWorkspace = lazy(async () => ({ default: (await import("@/components/research/research-workspace")).ResearchWorkspace }));
+
+function WorkspaceLoading({ label, mobileVisible }: { readonly label: "Coder" | "Research"; readonly mobileVisible: boolean }) {
+  return <section aria-label={`${label} workspace`} className={`min-h-0 min-w-0 flex-col border-t bg-muted/10 xl:flex xl:border-t-0 xl:border-l ${mobileVisible ? "flex flex-1" : "hidden"}`}>
+    <p className="m-auto p-6 text-xs text-muted-foreground" role="status">Loading {label} workspace…</p>
+  </section>;
+}
 
 type ReadySession = { readonly id: string; readonly resume: boolean; readonly proof?: string };
 type PreparationError = "chatStorageSetupRequired" | "chatStorageUnavailable" | "chatPreparationFailed" | "chatSignInRequired" | "chatOwnershipUnavailable" | "chatCreationUncertain" | "chatCreationStorageUnavailable";
@@ -61,10 +74,11 @@ type CreatedSession = { readonly id: string; readonly proof?: string; readonly m
 class CreationNotStartedError extends Error {}
 
 /** Start sessions server-side so every login method receives a bound owner. */
-export function AgentChat({ account, sessionId, sessionless = false }: {
+export function AgentChat({ account, sessionId, sessionless = false, initialMode = "chat" }: {
   readonly account: Account;
   readonly sessionId?: string;
   readonly sessionless?: boolean;
+  readonly initialMode?: AgentMode;
 }) {
   const { hydrated, eveHeaders, settings, registerChatProof, t } = useAppSettings();
   const accountIdentity = JSON.stringify([account.kind, account.id]);
@@ -112,7 +126,7 @@ export function AgentChat({ account, sessionId, sessionless = false }: {
       const timeout = window.setTimeout(() => controller.abort(), 65_000);
       createRef.current = (async () => {
         const pending = fetch("/api/chats", {
-          method: "POST", headers: { ...eveHeaders(), "content-type": "application/json", "x-tflash-expected-user-id": account.id, "x-tflash-expected-account-kind": account.kind }, body: "{}", signal: controller.signal,
+          method: "POST", headers: { ...eveHeaders(), [HEADER_AGENT_MODE]: initialMode, "content-type": "application/json", "x-tflash-expected-user-id": account.id, "x-tflash-expected-account-kind": account.kind }, body: "{}", signal: controller.signal,
         });
         void pending.then((response) => {
           if (controller.signal.aborted && response.body) void response.body.cancel().catch(() => {});
@@ -179,7 +193,7 @@ export function AgentChat({ account, sessionId, sessionless = false }: {
   };
   return (
     <PromptInputProvider>
-      <ChatSession key={JSON.stringify([accountIdentity, ready?.id ?? null])} account={account} sessionId={ready?.id}
+      <ChatSession key={JSON.stringify([accountIdentity, ready?.id ?? null])} account={account} initialMode={initialMode} sessionId={ready?.id}
         resume={ready?.resume ?? false} ownerProof={ready?.proof} sessionless={sessionless}
         preparationError={preparationError ? t(preparationError) : undefined} canRetry={!sessionId && preparationError !== "chatCreationUncertain"} onRetry={retry}
         creationReview={preparationError === "chatCreationUncertain"} onReviewedRetry={reviewedRetry} />
@@ -187,8 +201,9 @@ export function AgentChat({ account, sessionId, sessionless = false }: {
   );
 }
 
-function ChatSession({ account, sessionId, resume, ownerProof, sessionless, preparationError, canRetry, onRetry, creationReview, onReviewedRetry }: {
+function ChatSession({ account, sessionId, resume, ownerProof, sessionless, preparationError, canRetry, onRetry, creationReview, onReviewedRetry, initialMode = "chat" }: {
   readonly account: Account;
+  readonly initialMode?: AgentMode;
   readonly sessionId?: string;
   readonly resume: boolean;
   readonly ownerProof?: string;
@@ -221,7 +236,8 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   const [settingsInstance, setSettingsInstance] = useState(0);
   const [modelsOpen, setModelsOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [agentMode, setAgentMode] = useState<AgentMode>("chat");
+  const [workspaceMobileView, setWorkspaceMobileView] = useState<"chat" | "workspace">("chat");
+  const [agentMode, setAgentMode] = useState<AgentMode>(initialMode);
   const [modeLoadedFor, setModeLoadedFor] = useState<string>();
   const hasSubmittedMessage = useRef(false);
   const submissionPending = useRef<symbol | undefined>(undefined);
@@ -245,10 +261,12 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   useEffect(() => {
     if (!sessionId) return;
     const key = agentModeStorageKey(account.kind, account.id, sessionId);
-    try { setAgentMode(parseAgentMode(window.localStorage.getItem(key))); }
-    catch { setAgentMode("chat"); }
+    try {
+      const stored = window.localStorage.getItem(key);
+      setAgentMode(stored === null && !resume ? initialMode : parseAgentMode(stored));
+    } catch { setAgentMode(resume ? "chat" : initialMode); }
     setModeLoadedFor(sessionId);
-  }, [account.id, account.kind, sessionId]);
+  }, [account.id, account.kind, initialMode, resume, sessionId]);
 
   useEffect(() => {
     if (!sessionId || modeLoadedFor !== sessionId) return;
@@ -263,7 +281,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
 
   const agent = useEveAgent({
     agent: WEB_CHAT_AGENT,
-    headers: () => ({ ...eveHeaders(), [HEADER_MAX_STEPS]: String(workspace.snapshot().maxSteps), ...(ownerProof ? { [OWNER_PROOF_HEADER]: ownerProof } : {}) }),
+    headers: () => ({ ...eveHeaders(), [HEADER_AGENT_MODE]: agentMode, [HEADER_MAX_STEPS]: String(workspace.snapshot().maxSteps), ...(ownerProof ? { [OWNER_PROOF_HEADER]: ownerProof } : {}) }),
     prewarm: false,
     initialSession: sessionId ? { sessionId, streamIndex: 0 } : undefined,
     resume,
@@ -286,6 +304,8 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   // Reuse projections across unrelated UI updates without retaining a stale
   // review when a new transcript or turn event arrives.
   const currentPlan = useMemo(() => latestAgentPlan(agent.messages), [agent.messages]);
+  const coderProjection = useMemo(() => agentMode === "coder" ? projectCoderWorkspace(agent.messages) : undefined, [agent.messages, agentMode]);
+  const researchProjection = useMemo(() => agentMode === "research" ? projectResearchWorkspace(agent.messages) : undefined, [agent.messages, agentMode]);
   const isBusy = agent.status === "busy";
   const isResuming = agent.status === "resuming";
   const isEmpty = agent.messages.length === 0;
@@ -352,11 +372,13 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
     return () => window.clearTimeout(timer);
   }, [retryDelay, reconnecting, cancelling, reconnect]);
   const sessionInteractions = interactions(agent.view);
+  const sessionInteractionsRef = useRef(sessionInteractions);
+  sessionInteractionsRef.current = sessionInteractions;
   const openInputs = sessionInteractions.filter((input) => input.status === "open" && input.request.kind !== "sign-in");
   const openInputsRef = useRef(openInputs); openInputsRef.current = openInputs;
-  const questionsFor = (callId: string) => sessionInteractions.filter((input) =>
+  const questionsFor = useCallback((callId: string) => sessionInteractionsRef.current.filter((input) =>
     (input.request.kind === "question" || input.request.kind === "budget") && input.call?.callId === callId,
-  );
+  ), []);
   const hasOpenInput = sessionInteractions.some((input) => input.status === "open");
   const runState: AgentRunState = isResuming ? "resuming" : disconnected ? "interrupted" : errorMessage || agent.error ? "failed" :
     hasOpenInput ? "waiting" : isBusy ? "working" : turnOutcome === "cancelled" ? "cancelled" : "idle";
@@ -370,6 +392,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   }, [isBusy, disconnected, isResuming, reconnecting, cancellationRequestActive]);
   const hasConversationContent = sessionless || !isEmpty || errorMessage !== undefined;
   const showConversationLayout = isResuming || hasConversationContent;
+  const modeLocked = resume || !isEmpty;
   const activeSessionId = sessionId ?? agent.session?.sessionId;
   const sharedDispatch = useSharedDispatchRecovery(account.kind, account.id, activeSessionId);
   const sharedBlocked = sharedDispatch.unavailable || sharedDispatch.warnings.length > 0;
@@ -400,8 +423,8 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   const responseIdentityRef = useRef(responseIdentity); responseIdentityRef.current = responseIdentity;
   const responseMounted = useRef(true);
   useEffect(() => { responseMounted.current = true; return () => { responseMounted.current = false; }; }, []);
-  const canRespond = (interactionId: string) => baseCanRespond(interactionId) && !inputBlocked && !stopBlocked && !sharedBlocked;
-  const respondToInput = async (responses: readonly AgentInputResponse[]) => {
+  const canRespond = useCallback((interactionId: string) => baseCanRespondRef.current(interactionId) && !inputBlocked && !stopBlocked && !sharedBlocked, [inputBlocked, sharedBlocked, stopBlocked]);
+  const respondToInputImplementation = async (responses: readonly AgentInputResponse[]) => {
     if (responses.length !== 1 || !baseCanRespondRef.current(responses[0].interactionId) || inputRecovery.checkBlocked(true) || stopRecovery.checkBlocked() || sharedDispatch.checkBlocked()) throw new Error("Response requires review.");
     const marker = await inputRecovery.begin(responses[0].interactionId);
     if (!responseMounted.current || responseIdentityRef.current !== responseIdentity || !baseCanRespondRef.current(responses[0].interactionId) || stopRecovery.checkBlocked() || sharedDispatch.checkBlocked()) {
@@ -415,12 +438,26 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
         if (!responseMounted.current || responseIdentityRef.current !== responseIdentity || !baseCanRespondRef.current(responses[0].interactionId) || !inputRecovery.isPresent(marker) || stopRecovery.checkBlocked() || sharedDispatch.checkBlocked()) {
           inputRecovery.discard(marker); throw new Error("Conversation changed.");
         }
-        return agent.respond(responses, { clientContext: turnContext() + workspaceContext(workspace.snapshot(), sessionId) + agentModeContext(agentMode, settings.language) });
+        return agent.respond(responses, { clientContext: turnContext() + workspaceContext(workspace.snapshot(), sessionId) });
       });
       await waitWithAbort(pending, AbortSignal.timeout(30_000));
     } finally { inputRecovery.done(marker); }
   };
-  const startNewChat = () => window.location.assign("/");
+  const respondToInputRef = useRef(respondToInputImplementation);
+  respondToInputRef.current = respondToInputImplementation;
+  const respondToInput = useCallback((responses: readonly AgentInputResponse[]) => respondToInputRef.current(responses), []);
+  const startNewChat = () => window.location.assign(`/?mode=${agentMode}`);
+  const changeAgentMode = (nextMode: AgentMode) => {
+    setSidebarOpen(false);
+    if (nextMode === agentMode) return;
+    // A started conversation never changes identity or mixes working modes.
+    if (modeLocked) {
+      window.location.assign(`/?mode=${nextMode}`);
+      return;
+    }
+    setAgentMode(nextMode);
+    History.prototype.replaceState.call(window.history, window.history.state, "", `/?mode=${nextMode}`);
+  };
 
   const openSettings = useCallback(
     (tab: "providers" | "connections" | "preferences" | "workspace" = "providers", providerId?: string) => {
@@ -461,7 +498,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId]);
+  }, [sessionId, agentMode]);
 
   const exportChat = () => {
     const markdown = [
@@ -556,7 +593,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
       hasSubmittedMessage.current = true;
       replaceSessionRoute(sessionId);
       const options = {
-        clientContext: turnContext() + workspaceContext(workspace.snapshot(), sessionId) + agentModeContext(agentMode, settings.language),
+        clientContext: turnContext() + workspaceContext(workspace.snapshot(), sessionId),
         ...(isBusy ? { turnPolicy: "steer" as const } : {}),
       };
 
@@ -623,13 +660,19 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
     }
   };
 
+  const runWorkspaceCommand = (text: string) => {
+    void handleSubmit({ text, files: [] }).catch((error: unknown) => {
+      if (responseMounted.current) setCancellationError(toErrorMessage(error));
+    });
+  };
+
   return (
     <div className="flex h-dvh overflow-hidden bg-background text-foreground">
       <Sidebar
         account={account}
         activeChatId={activeSessionId}
         mode={agentMode}
-        onModeChange={(nextMode) => { setAgentMode(nextMode); setSidebarOpen(false); }}
+        onModeChange={changeAgentMode}
         onClose={() => setSidebarOpen(false)}
         onNewChat={startNewChat}
         onOpenProjects={() => openSettings("workspace")}
@@ -646,6 +689,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
           onOpenSettings={() => openSettings("providers")}
           onOpenSidebar={() => setSidebarOpen(true)}
           sidebarOpen={sidebarOpen}
+          mode={agentMode}
           title={showConversationLayout ? title : undefined}
         />
 
@@ -689,8 +733,21 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
         {inputRecovery.unavailable && hasOpenInput ? <p role="alert" className="mx-auto w-full max-w-2xl px-4 py-2 text-xs text-destructive">{t("inputResponseStorageUnavailable")}</p> : null}
         {inputRecovery.warnings.map(warning => <InputResponseNotice key={warning.key} warning={warning} busy={inputRecovery.active.includes(warning.key) || inputRecovery.preparing} review={inputRecovery.review} />)}
         {runState === "cancelled" ? <p role="status" className="mx-auto w-full max-w-2xl px-4 py-2 text-xs text-muted-foreground sm:px-6">{t("turnStoppedHint")}</p> : null}
-        {currentPlan ? <div className="shrink-0 px-4 py-2 sm:px-6"><AgentPlanCard compact plan={currentPlan} runState={unknownDispatch || inputBlocked || stopBlocked || sharedBlocked ? "interrupted" : runState} onContinue={() => handleSubmit({ text: t("continueTaskPrompt"), files: [] })} /></div> : null}
+        {currentPlan && agentMode === "chat" ? <div className="shrink-0 px-4 py-2 sm:px-6"><AgentPlanCard compact plan={currentPlan} runState={unknownDispatch || inputBlocked || stopBlocked || sharedBlocked ? "interrupted" : runState} onContinue={() => handleSubmit({ text: t("continueTaskPrompt"), files: [] })} /></div> : null}
 
+        {agentMode !== "chat" ? <div aria-label={`${agentMode === "coder" ? "Coder" : "Research"} layout`} data-workspace-layout className="flex shrink-0 gap-1 border-b bg-background px-3 py-1.5 xl:hidden" role="tablist">
+          {(["chat", "workspace"] as const).map((view) => <button
+            aria-selected={workspaceMobileView === view}
+            className={`min-h-9 flex-1 rounded-md text-xs font-medium capitalize focus-visible:outline-2 focus-visible:outline-ring ${workspaceMobileView === view ? "bg-accent text-foreground" : "text-muted-foreground"}`}
+            key={view}
+            onClick={() => setWorkspaceMobileView(view)}
+            role="tab"
+            type="button"
+          >{view}</button>)}
+        </div> : null}
+
+        <div className={agentMode !== "chat" ? "flex min-h-0 flex-1 flex-col xl:grid xl:grid-cols-[minmax(340px,0.85fr)_minmax(500px,1.15fr)]" : "flex min-h-0 flex-1 flex-col"}>
+        <section aria-label="Conversation" className={`min-h-0 min-w-0 flex-1 flex-col ${agentMode !== "chat" && workspaceMobileView === "workspace" ? "hidden xl:flex" : "flex"}`}>
         {showConversationLayout ? (
           <Conversation
             className="min-h-0 flex-1"
@@ -734,7 +791,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
           </Conversation>
         ) : (
           <div className="tflash-scroll min-h-0 flex-1 overflow-y-auto">
-            <EmptyState name={account.name} mode={agentMode} onModeChange={setAgentMode} onOpenProjects={() => openSettings("workspace")} />
+            <EmptyState name={account.name} mode={agentMode} onModeChange={changeAgentMode} onOpenProjects={() => openSettings("workspace")} />
           </div>
         )}
 
@@ -763,6 +820,28 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
             </p>
           </div>
         </div>
+        </section>
+        {agentMode === "coder" && coderProjection ? <Suspense fallback={<WorkspaceLoading label="Coder" mobileVisible={workspaceMobileView === "workspace"} />}><CoderWorkspace
+          disabled={isResuming || disconnected || unknownDispatch || inputBlocked || stopBlocked || sharedBlocked || hasOpenInput || !sessionId}
+          isBusy={isBusy}
+          mobileVisible={workspaceMobileView === "workspace"}
+          onCommand={runWorkspaceCommand}
+          onReviewApprovals={() => setWorkspaceMobileView("chat")}
+          pendingApprovals={openInputs.filter((input) => input.request.kind === "approval").length}
+          plan={currentPlan}
+          projection={coderProjection}
+        /></Suspense> : null}
+        {agentMode === "research" && researchProjection ? <Suspense fallback={<WorkspaceLoading label="Research" mobileVisible={workspaceMobileView === "workspace"} />}><ResearchWorkspace
+          disabled={isResuming || disconnected || unknownDispatch || inputBlocked || stopBlocked || sharedBlocked || hasOpenInput || !sessionId}
+          isBusy={isBusy}
+          mobileVisible={workspaceMobileView === "workspace"}
+          onCommand={runWorkspaceCommand}
+          onReviewApprovals={() => setWorkspaceMobileView("chat")}
+          pendingApprovals={openInputs.filter((input) => input.request.kind === "approval").length}
+          plan={currentPlan}
+          projection={researchProjection}
+        /></Suspense> : null}
+        </div>
       </main>
 
       <ModelPicker
@@ -787,7 +866,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   );
 }
 
-function MessageActions({
+const MessageActions = memo(function MessageActions({
   message,
   isStreaming,
 }: {
@@ -795,10 +874,10 @@ function MessageActions({
   readonly isStreaming: boolean;
 }) {
   // Do not include reasoning, attachments, tool arguments or tool output.
-  const text = message.parts
+  const text = useMemo(() => message.parts
     .filter((part) => part.type === "text")
     .map((part) => part.text ?? "")
-    .join("\n\n");
+    .join("\n\n"), [message.parts]);
   if (!text.trim()) return null;
   return (
     <div className="tf-reveal mt-1 flex w-fit items-center gap-1 rounded-md bg-background/85 opacity-0 backdrop-blur transition-opacity focus-within:opacity-100 group-hover/msg:opacity-100">
@@ -806,7 +885,7 @@ function MessageActions({
       <VoiceOutputButton disabled={isStreaming} text={text} />
     </div>
   );
-}
+});
 
 function CopyMessageButton({ text }: { readonly text: string }) {
   const { t } = useAppSettings();
@@ -878,7 +957,7 @@ function PendingThinking() {
       <MessageContent>
         <div className="flex w-full items-center gap-2 text-muted-foreground text-sm">
           <span aria-hidden="true" className="size-1.5 animate-pulse rounded-full bg-brand" />
-          <Shimmer duration={1}>{t("thinking")}</Shimmer>
+          <span>{t("thinking")}</span>
         </div>
       </MessageContent>
     </Message>

@@ -44,7 +44,8 @@ test("the root route is public for visitors and unchanged for accounts", () => {
   const page = read("app/page.tsx");
   assert.match(page, /currentPrincipal\(\)/);
   assert.match(page, /<LandingPage \/>/);
-  assert.match(page, /<AuthenticatedAgentChat principal=\{principal\} \/>/);
+  assert.match(page, /<AuthenticatedAgentChat[^>]*principal=\{principal\}[^>]*\/>/);
+  assert.match(page, /initialMode=\{parseAgentMode\(requestedMode\)\}/);
   assert.match(page, /export const dynamic = "force-dynamic"/);
 });
 

@@ -118,7 +118,7 @@ test("Somali dictation requires an explicit start, appends final words once, and
   const sent = [];
   render(composer(async (message) => sent.push(message)));
   const user = userEvent.setup();
-  const textarea = await screen.findByPlaceholderText("Wax walba weydii Tflash…");
+  const textarea = await screen.findByPlaceholderText("Su'aal weydii ama fayl soo geli…");
   await user.type(textarea, "Qoraal hore");
   const trigger = screen.getByRole("button", { name: "Cod ku qor" });
   await user.click(trigger);
@@ -173,11 +173,11 @@ test("dictation appends to the latest draft and drops stale callbacks after clos
     recognition.results([["first", true]]);
     recognition.results([["first", true], ["second", true]]);
   });
-  assert.equal(screen.getByPlaceholderText("Ask Tflash anything…").value, "New draft first second");
+  assert.equal(screen.getByPlaceholderText("Ask a question or bring in a file…").value, "New draft first second");
   await user.click(within(dialog).getByRole("button", { name: "Done" }));
   assert.equal(recognition.aborted, 1);
   await React.act(async () => staleResult({ results: [{ 0: { transcript: "stale words" }, isFinal: true }] }));
-  assert.equal(screen.getByPlaceholderText("Ask Tflash anything…").value, "New draft first second");
+  assert.equal(screen.getByPlaceholderText("Ask a question or bring in a file…").value, "New draft first second");
 });
 
 test("microphone errors and unsupported browsers are visible, with no silent retry", async () => {
