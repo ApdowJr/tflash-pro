@@ -19,7 +19,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAppSettings } from "@/components/settings/app-settings";
 import { useEffect } from "react";
-import { useEffect } from "react";
 import type { AgentMode } from "@/lib/agent-modes";
 
 export function TopBar({
