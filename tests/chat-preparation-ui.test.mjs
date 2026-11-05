@@ -790,7 +790,7 @@ test("Somali starter suggestions and composer are translated and preserve a draf
   await user.type(input,'Qoraalkayga');
   await user.click(screen.getByRole('button',{name:/Sharax sida API-yadu u shaqeeyaan/}));
   assert.match(input.value,/^Qoraalkayga Sharax sida API-yadu/);
-  assert.ok(screen.getByText('Qoraalkaaga ayuu ku daraa; si toos ah uma diro.'));
+  assert.equal(screen.queryByText('Qoraalkaaga ayuu ku daraa; si toos ah uma diro.'), null, 'the compact welcome screen omits the extra helper sentence');
   assert.equal(sends.length,0);
 });
 
