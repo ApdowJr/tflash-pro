@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef } from "react";
+import { useCallback, useRef, useState } from "react";
 import { DocumentImportButton } from "./documents";
 import { VoiceInputButton } from "./voice-input";
 import { BracesIcon, FileIcon, FileSearchIcon, MessageSquareTextIcon, PlusIcon, SquareIcon, XIcon } from "lucide-react";
@@ -40,6 +40,7 @@ export function ChatComposer({
 }) {
   const { t, settings } = useAppSettings();
   const controller = usePromptInputController();
+  const [documentPending, setDocumentPending] = useState(false);
   const openDocumentImport = useRef<() => void>(() => {});
   const setDocumentImportOpener = useCallback((open: () => void) => { openDocumentImport.current = open; }, []);
 
@@ -93,6 +94,7 @@ export function ChatComposer({
       <PromptInput
         className="tflash-composer overflow-visible rounded-2xl border-border bg-card shadow-[var(--shell-shadow)] focus-within:border-primary/45! focus-within:ring-2 focus-within:ring-primary/10"
         onSubmit={onSubmit}
+        onSubmitCapture={(event) => { if (documentPending) { event.preventDefault(); event.stopPropagation(); } }}
       >
         <ComposerAttachments />
         <PromptInputTextarea
@@ -110,11 +112,11 @@ export function ChatComposer({
             {t("enterToSend")}
           </span>
         </PromptInputFooter>
-        <DocumentImportButton disabled={isResuming} hideTrigger onRequestImportReady={setDocumentImportOpener} />
+        <DocumentImportButton disabled={isResuming} hideTrigger onPendingChange={setDocumentPending} onRequestImportReady={setDocumentImportOpener} />
         <ComposerAction
           hasInputText={controller.textInput.value.trim().length > 0}
           isBusy={isBusy}
-          isResuming={isResuming}
+          isResuming={isResuming || documentPending}
           cancelling={cancelling}
           onCancel={onCancel}
         />
