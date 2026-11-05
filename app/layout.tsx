@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { ConnectivityBanner } from "@/components/app/connectivity-banner";
 import { ThemeInitializer } from "@/components/theme-initializer";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { publicSiteUrl } from "@/lib/public-origin";
 import "@fontsource-variable/dm-sans";
 import "@fontsource/dm-serif-display/400.css";
 import "@fontsource/dm-serif-display/400-italic.css";
@@ -12,10 +13,8 @@ import "./globals.css";
 const DESCRIPTION =
   "A bilingual AI workspace for chat, research and finished work — Somali and English.";
 
-const SITE_URL = process.env.APP_URL?.trim().replace(/\/+$/, "") || "http://localhost:3000";
-
 export const metadata: Metadata = {
-  metadataBase: new URL(SITE_URL),
+  metadataBase: new URL(publicSiteUrl()),
   title: {
     default: "Tflash",
     template: "%s · Tflash",
