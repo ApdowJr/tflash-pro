@@ -7,6 +7,7 @@ import {
   MoonIcon,
   MoreHorizontalIcon,
   Settings2Icon,
+  SparklesIcon,
   SunIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -92,6 +93,10 @@ export function TopBar({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-52">
+          <DropdownMenuItem className="text-[13px]" onSelect={onOpenModels}>
+            <SparklesIcon className="size-3.5" />
+            {t("chooseModel")}
+          </DropdownMenuItem>
           <DropdownMenuItem className="text-[13px]" onSelect={onNewChat}>
             <MessageSquarePlusIcon className="size-3.5" />
             {t("newChat")}

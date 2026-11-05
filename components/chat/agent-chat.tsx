@@ -808,6 +808,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
             ) : !sessionId ? <p className="mb-2 text-muted-foreground text-xs" role="status">{t("chatPreparing")}</p> : null}
             <ProjectPicker sessionId={sessionId} disabled={isBusy || isResuming} />
             <ChatComposer
+              onOpenModels={() => setModelsOpen(true)}
               mode={agentMode}
               isBusy={isBusy}
               isResuming={isResuming || disconnected || unknownDispatch || inputBlocked || stopBlocked || sharedBlocked || !sessionId}
