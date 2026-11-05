@@ -195,7 +195,7 @@ export function VoiceInputButton({ disabled }: { readonly disabled: boolean }) {
       <DialogTrigger asChild>
         <PromptInputButton
           aria-label={t("voiceInput")}
-          className="tf-touch-target size-8 rounded-full text-muted-foreground hover:text-foreground sm:size-7"
+          className="tf-touch-target absolute right-2 bottom-2 size-8 rounded-full bg-primary text-primary-foreground hover:opacity-90 sm:right-2.5 sm:bottom-2.5 sm:size-8"
           disabled={disabled}
           size="icon-sm"
           tooltip={t("voiceInput")}
