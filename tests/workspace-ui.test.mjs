@@ -1036,19 +1036,17 @@ test("sidebar history and message search stay within the selected conversation m
   assert.equal(screen.queryByText("Compare sources"), null);
 });
 
-test("choosing a mode on the launch screen does not insert or submit a draft", async () => {
+test("compact launch screen prompt starters preserve a draft and never submit it", async () => {
   seed();
   fakeFetch();
-  const selected = [];
   let sends = 0;
   render(app(h(TooltipProvider, null, h(PromptInputProvider, null,
-    h(EmptyState, { name: "Ayaan", mode: "chat", onModeChange: (mode) => selected.push(mode), onOpenProjects() {} }),
+    h(EmptyState, { name: "Ayaan", mode: "chat" }),
     h(ChatComposer, { mode: "chat", isBusy: false, isResuming: false, onCancel() {}, onSubmit: async () => { sends++; } }),
   ))));
-  const modes = screen.getByRole("group", { name: "New conversation mode" });
-  await userEvent.setup().click(within(modes).getByRole("button", { name: /Coder/ }));
-  assert.deepEqual(selected, ["coder"]);
-  assert.equal(screen.getByRole("textbox", { name: "Message Tflash" }).value, "");
+  const input = screen.getByRole("textbox", { name: "Message Tflash" });
+  await userEvent.setup().click(screen.getByRole("button", { name: /Explain how APIs work, simply/ }));
+  assert.equal(input.value, "Explain how APIs work, simply");
   assert.equal(sends, 0);
 });
 
