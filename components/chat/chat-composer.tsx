@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import { DocumentImportButton } from "./documents";
 import { VoiceInputButton } from "./voice-input";
-import { BracesIcon, FileIcon, FileSearchIcon, MessageSquareTextIcon, PlusIcon, SquareIcon, XIcon } from "lucide-react";
+import { BracesIcon, ChevronDownIcon, FileIcon, FileSearchIcon, MessageSquareTextIcon, PlusIcon, SparklesIcon, SquareIcon, XIcon } from "lucide-react";
 import {
   PromptInput,
   PromptInputButton,
@@ -18,6 +18,7 @@ import {
 import { useAppSettings } from "@/components/settings/app-settings";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { AGENT_MODES, type AgentMode } from "@/lib/agent-modes";
+import { defaultProvider, findModel, getProvider } from "@/lib/providers/catalog";
 
 /**
  * The composer is the one element people touch every turn, so it gets the
@@ -29,6 +30,7 @@ export function ChatComposer({
   cancelling = false,
   onCancel,
   onSubmit,
+  onOpenModels,
   mode = "chat",
 }: {
   readonly isBusy: boolean;
@@ -36,6 +38,8 @@ export function ChatComposer({
   readonly cancelling?: boolean;
   readonly onCancel: () => void;
   readonly onSubmit: (message: PromptInputMessage) => Promise<void>;
+  /** Opens the model picker; omitted when the caller has no picker to show. */
+  readonly onOpenModels?: () => void;
   readonly mode?: AgentMode;
 }) {
   const { t, settings } = useAppSettings();
@@ -105,8 +109,9 @@ export function ChatComposer({
           placeholder={t(mode === "coder" ? "coderPlaceholder" : mode === "research" ? "researchPlaceholder" : "chatPlaceholder")}
         />
         <PromptInputFooter className={`flex-wrap border-t-0 px-2.5 pt-1.5 pb-2.5 ${isBusy && (controller.textInput.value.trim() || controller.attachments.files.length) ? "pr-24" : "pr-14"}`}>
-          <PromptInputTools className="gap-1">
+          <PromptInputTools className="min-w-0 gap-1">
             <ComposerAttachButton onImportDocument={() => openDocumentImport.current()} />
+            <ComposerModelButton onOpen={onOpenModels} />
           </PromptInputTools>
           <span className="hidden pr-1 text-[11px] text-muted-foreground/60 md:inline">
             {t("enterToSend")}
@@ -176,6 +181,34 @@ function ComposerAttachments() {
         </span>
       ))}
     </div>
+  );
+}
+
+/**
+ * The current provider/model, one tap away from the picker. The composer is
+ * where a turn starts, so this is the place a model change is actually
+ * discoverable; the full picker still owns provider switching and keys.
+ */
+function ComposerModelButton({ onOpen }: { readonly onOpen?: () => void }) {
+  const { t, selection } = useAppSettings();
+  if (!onOpen) return null;
+  const provider = getProvider(selection.providerId) ?? defaultProvider();
+  const model = findModel(provider, selection.modelId);
+  const label = model?.name ?? selection.modelId;
+  return (
+    <PromptInputButton
+      aria-label={`${t("modelPickerHint")}: ${provider.name} · ${label}`}
+      className="tf-touch-target h-8 max-w-[9rem] min-w-0 rounded-full px-2 text-[11px] font-medium text-muted-foreground hover:text-foreground sm:max-w-[13rem] sm:h-7"
+      onClick={onOpen}
+      size="sm"
+      title={`${t("chooseModel")} · ${provider.name}`}
+      tooltip={t("modelPickerHint")}
+      type="button"
+    >
+      <SparklesIcon aria-hidden="true" className="size-3.5 shrink-0" />
+      <span className="truncate">{label}</span>
+      <ChevronDownIcon aria-hidden="true" className="size-3 shrink-0 opacity-70" />
+    </PromptInputButton>
   );
 }
 

@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-11-05 — model picker entry points
+
+The picker dialog existed and the top bar already listened for a
+`tflash:open-model-picker` event, but nothing in the interface dispatched it,
+so the only visible path to a model change was Settings → Providers.
+
+### Added
+
+- A model chip in the composer footer showing the active provider/model; one
+  tap opens the existing picker. It renders only when the caller supplies the
+  picker, so embedded composers are unchanged.
+- A **Choose a model** item in the top bar's more menu, before New chat.
+
+### Changed
+
+- `ChatComposer` accepts an optional `onOpenModels` prop; the chat shell wires
+  it to the same picker state the top bar already used.
+- The top bar test now asserts the menu entry opens the picker instead of
+  asserting the control was absent.
+
 ## 2026-11-05 — defect fixes
 
 ### Fixed

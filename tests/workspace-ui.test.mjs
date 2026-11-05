@@ -49,6 +49,7 @@ const { browserSupabase } = await import("../lib/supabase/browser.ts");
 const { PromptInputProvider } = await import("../components/ai-elements/prompt-input.tsx");
 const { usePromptInputController } = await import("../components/ai-elements/prompt-input.tsx");
 const { TooltipProvider } = await import("../components/ui/tooltip.tsx");
+const { defaultProvider, findModel } = await import("../lib/providers/catalog.ts");
 
 const realFetch = globalThis.fetch;
 const h = React.createElement;
@@ -983,7 +984,7 @@ test("connection accordions expose their panel relationship and mobile focus tar
 });
 
 
-test("top bar controls expose mobile-sized touch targets and visible keyboard focus without a model selector", async () => {
+test("top bar controls expose mobile-sized touch targets, focus rings and a model entry point", async () => {
   seed();
   let openedModels = 0;
   render(app(h(TopBar, {
@@ -999,15 +1000,42 @@ test("top bar controls expose mobile-sized touch targets and visible keyboard fo
   const header = screen.getByRole("banner");
   const menu = within(header).getByRole("button", { name: /open menu/i });
   const more = within(header).getByRole("button", { name: /more actions/i });
-  assert.equal(within(header).queryByRole("button", { name: /choose (a )?model/i }), null);
   for (const button of [menu, more]) {
     assert.ok(button.className.includes("min-h-11"), "control should be at least 44px tall");
     assert.ok(button.className.includes("focus-visible:ring-2"), "control should show keyboard focus");
   }
+  const user = userEvent.setup();
+  await user.click(more);
+  await user.click(await screen.findByRole("menuitem", { name: /choose a model/i }));
+  assert.equal(openedModels, 1, "the more menu should open the model picker");
   await React.act(async () => {
     window.dispatchEvent(new Event("tflash:open-model-picker"));
   });
-  assert.equal(openedModels, 1, "composer model event should open the existing picker");
+  assert.equal(openedModels, 2, "the programmatic event should still open the existing picker");
+});
+
+test("the composer shows the current model and opens the picker from it", async () => {
+  seed();
+  let opened = 0;
+  render(app(h(TooltipProvider, null, h(PromptInputProvider, null, h(ChatComposer, {
+    isBusy: false, isResuming: false, onCancel() {}, onSubmit: async () => {}, onOpenModels() { opened++; },
+  })))));
+  const provider = defaultProvider();
+  const expected = findModel(provider, provider.defaultModel)?.name ?? provider.defaultModel;
+  const chip = screen.getByRole("button", { name: /^Switch provider and model/ });
+  assert.ok(chip.getAttribute("aria-label").includes(provider.name), "the chip should name the active provider");
+  assert.ok(chip.textContent.includes(expected), "the chip should show the active model");
+  assert.ok(chip.className.includes("tf-touch-target"), "the chip keeps the coarse-pointer 44px touch target");
+  await userEvent.click(chip);
+  assert.equal(opened, 1, "clicking the chip opens the picker");
+});
+
+test("the composer renders no model chip when the caller has no picker", () => {
+  seed();
+  render(app(h(TooltipProvider, null, h(PromptInputProvider, null, h(ChatComposer, {
+    isBusy: false, isResuming: false, onCancel() {}, onSubmit: async () => {},
+  })))));
+  assert.equal(screen.queryByRole("button", { name: /switch provider and model/i }), null);
 });
 
 
