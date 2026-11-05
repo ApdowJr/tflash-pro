@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { DocumentImportButton } from "./documents";
 import { VoiceInputButton } from "./voice-input";
-import { BracesIcon, CpuIcon, FileIcon, FileSearchIcon, MessageSquareTextIcon, PaperclipIcon, SquareIcon, XIcon } from "lucide-react";
+import { BracesIcon, FileIcon, FileSearchIcon, MessageSquareTextIcon, PaperclipIcon, SquareIcon, XIcon } from "lucide-react";
 import {
   PromptInput,
   PromptInputButton,
@@ -16,6 +16,7 @@ import {
   usePromptInputController,
 } from "@/components/ai-elements/prompt-input";
 import { useAppSettings } from "@/components/settings/app-settings";
+import { getProvider } from "@/lib/providers/catalog";
 import { AGENT_MODES, type AgentMode } from "@/lib/agent-modes";
 
 /**
@@ -179,18 +180,27 @@ function ComposerAttachments() {
 }
 
 function ComposerModelButton() {
-  const { t } = useAppSettings();
+  const { t, settings, modelsFor } = useAppSettings();
+  const provider = getProvider(settings.providerId);
+  const selectedModel = modelsFor(settings.providerId).find((model) => model.id === settings.modelId);
+  const modelLabel = selectedModel?.name ?? settings.modelId;
   return (
     <PromptInputButton
-      aria-label={t("chooseModel")}
-      className="tf-touch-target h-8 gap-1.5 rounded-full px-2.5 text-muted-foreground hover:text-foreground sm:h-7"
+      aria-label={`${t("chooseModel")}: ${provider?.name ?? settings.providerId} · ${modelLabel}`}
+      className="tf-touch-target h-8 max-w-[min(48vw,15rem)] gap-1.5 rounded-full px-2 text-muted-foreground hover:text-foreground sm:h-7"
       onClick={() => window.dispatchEvent(new Event("tflash:open-model-picker"))}
       size="sm"
-      tooltip={t("chooseModel")}
+      tooltip={`${provider?.name ?? settings.providerId} · ${modelLabel}`}
       type="button"
     >
-      <CpuIcon className="size-3.5" />
-      <span className="text-[11px] font-medium">{t("chooseModel")}</span>
+      <span
+        aria-hidden="true"
+        className="inline-flex size-5 shrink-0 items-center justify-center rounded-full text-[8px] font-bold text-white"
+        style={{ backgroundColor: provider?.accent ?? "#64748b" }}
+      >
+        {provider?.short ?? "AI"}
+      </span>
+      <span className="truncate text-[11px] font-medium">{modelLabel}</span>
     </PromptInputButton>
   );
 }
