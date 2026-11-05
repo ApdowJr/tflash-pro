@@ -4,19 +4,8 @@ import { MicIcon, MicOffIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PromptInputButton, usePromptInputController } from "@/components/ai-elements/prompt-input";
 import { useAppSettings } from "@/components/settings/app-settings";
-import type { Language, TranslationKey } from "@/components/settings/i18n";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import { recognitionConstructor, speechLocale, type BrowserRecognition } from "@/lib/browser-speech";
-import { VoiceLanguageSelect } from "./voice-language";
+import type { TranslationKey } from "@/components/settings/i18n";
+import { recognitionConstructor, type BrowserRecognition } from "@/lib/browser-speech";
 
 type MicStatus = "idle" | "starting" | "listening" | "stopping";
 type RecognitionSession = {
@@ -43,22 +32,14 @@ function recognitionError(error: string): TranslationKey {
   }
 }
 
-/** Dictation only edits the draft; it never sends a turn or stores audio. */
+/** One-tap dictation. It only edits the draft; it never sends a turn or stores audio. */
 export function VoiceInputButton({ disabled }: { readonly disabled: boolean }) {
-  const { t, settings } = useAppSettings();
+  const { t } = useAppSettings();
   const { textInput } = usePromptInputController();
-  const hasDraftText = textInput.value.trim().length > 0;
-  const [open, setOpen] = useState(false);
-  const [language, setLanguage] = useState<Language>(settings.language);
-  const [available, setAvailable] = useState(false);
   const [status, setStatus] = useState<MicStatus>("idle");
   const [error, setError] = useState<TranslationKey>();
-  const [interim, setInterim] = useState("");
-  const [hasFinal, setHasFinal] = useState(false);
   const active = useRef<RecognitionSession | null>(null);
 
-  // Detach first: even a queued callback from an aborted session must not
-  // insert words into a later conversation or draft.
   const abortActive = useCallback(() => {
     const session = active.current;
     active.current = null;
@@ -73,46 +54,15 @@ export function VoiceInputButton({ disabled }: { readonly disabled: boolean }) {
 
   useEffect(() => () => abortActive(), [abortActive]);
   useEffect(() => {
-    if (disabled && active.current) {
-      abortActive();
-      setStatus("idle");
-      setInterim("");
-    }
+    if (!disabled || !active.current) return;
+    abortActive();
+    setStatus("idle");
   }, [disabled, abortActive]);
-  useEffect(() => {
-    if (!open) return;
-    const stopWhenHidden = () => {
-      if (document.visibilityState !== "hidden" || !active.current) return;
-      abortActive();
-      setStatus("idle");
-      setInterim("");
-      setError("voiceHidden");
-    };
-    document.addEventListener("visibilitychange", stopWhenHidden);
-    return () => document.removeEventListener("visibilitychange", stopWhenHidden);
-  }, [open, abortActive]);
-
-  function changeOpen(next: boolean) {
-    if (next) {
-      setLanguage(settings.language);
-      setAvailable(Boolean(recognitionConstructor()));
-      setError(undefined);
-      setHasFinal(false);
-      setInterim("");
-      setStatus("idle");
-    } else {
-      abortActive();
-      setStatus("idle");
-      setInterim("");
-    }
-    setOpen(next);
-  }
 
   function start() {
     if (disabled || active.current) return;
     const Constructor = recognitionConstructor();
     if (!Constructor) {
-      setAvailable(false);
       setError("voiceInputUnsupported");
       return;
     }
@@ -120,13 +70,14 @@ export function VoiceInputButton({ disabled }: { readonly disabled: boolean }) {
       setError("voiceSecureRequired");
       return;
     }
+
     setError(undefined);
-    setHasFinal(false);
-    setInterim("");
     try {
       const recognition = new Constructor();
       const session: RecognitionSession = { recognition, committed: new Set(), hasFinal: false };
-      recognition.lang = speechLocale(language);
+      // Web Speech has no standard cross-browser spoken-language auto-detection.
+      // An empty lang lets the browser use its configured default language.
+      recognition.lang = "";
       recognition.continuous = true;
       recognition.interimResults = true;
       recognition.onstart = () => {
@@ -134,36 +85,25 @@ export function VoiceInputButton({ disabled }: { readonly disabled: boolean }) {
       };
       recognition.onresult = (event) => {
         if (active.current !== session) return;
-        const partial: string[] = [];
         for (let index = 0; index < event.results.length; index += 1) {
           const result = event.results[index];
           const transcript = result?.[0]?.transcript?.trim();
-          if (!transcript) continue;
-          if (result.isFinal) {
-            if (!session.committed.has(index)) {
-              session.committed.add(index);
-              session.hasFinal = true;
-              textInput.append(transcript);
-              setHasFinal(true);
-            }
-          } else {
-            partial.push(transcript);
-          }
+          if (!transcript || !result.isFinal || session.committed.has(index)) continue;
+          session.committed.add(index);
+          session.hasFinal = true;
+          textInput.append(transcript);
         }
-        setInterim(partial.join(" ").slice(0, 1000));
       };
       recognition.onerror = (event) => {
         if (active.current !== session) return;
         abortActive();
         setStatus("idle");
-        setInterim("");
         setError(recognitionError(event.error));
       };
       recognition.onend = () => {
         if (active.current !== session) return;
         active.current = null;
         setStatus("idle");
-        setInterim("");
         if (!session.hasFinal) setError("voiceNoSpeech");
       };
       active.current = session;
@@ -181,7 +121,7 @@ export function VoiceInputButton({ disabled }: { readonly disabled: boolean }) {
     if (!session || status === "stopping") return;
     setStatus("stopping");
     try {
-      // stop(), unlike abort(), gives the browser a chance to return final words.
+      // stop() lets the browser return any final words before ending capture.
       session.recognition.stop();
     } catch {
       abortActive();
@@ -192,47 +132,28 @@ export function VoiceInputButton({ disabled }: { readonly disabled: boolean }) {
 
   const working = status !== "idle";
   return (
-    <Dialog open={open} onOpenChange={changeOpen}>
-      <DialogTrigger asChild>
-        <PromptInputButton
-          aria-label={t("voiceInput")}
-          className={`tf-touch-target absolute right-2 bottom-2 size-8 rounded-full bg-primary text-primary-foreground hover:opacity-90 sm:right-2.5 sm:bottom-2.5 sm:size-8 ${hasDraftText ? "hidden" : ""}`}
-          disabled={disabled}
-          size="icon-sm"
-          tooltip={t("voiceInput")}
-          type="button"
+    <>
+      <PromptInputButton
+        aria-label={t(working ? "voiceStop" : "voiceInput")}
+        className={`tf-touch-target absolute right-2 bottom-2 size-8 rounded-full transition-colors sm:right-2.5 sm:bottom-2.5 sm:size-8 ${working ? "bg-destructive text-destructive-foreground" : "bg-primary text-primary-foreground hover:opacity-90"}`}
+        disabled={disabled || status === "stopping"}
+        onClick={working ? stop : start}
+        size="icon-sm"
+        tooltip={t(working ? "voiceStop" : "voiceInput")}
+        type="button"
+      >
+        {working ? <MicOffIcon className="size-3.5" /> : <MicIcon className="size-3.5" />}
+      </PromptInputButton>
+      {error ? (
+        <span
+          className="absolute right-2 bottom-full mb-2 max-w-[min(22rem,85vw)] rounded-lg border border-destructive/30 bg-card px-3 py-2 text-xs text-destructive shadow-sm"
+          role="alert"
         >
-          <MicIcon className="size-3.5" />
-        </PromptInputButton>
-      </DialogTrigger>
-      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-md" closeLabel={t("dismiss")} onClick={(event) => event.stopPropagation()}>
-        <DialogHeader>
-          <DialogTitle>{t("voiceInput")}</DialogTitle>
-          <DialogDescription>{t("voiceInputHint")}</DialogDescription>
-        </DialogHeader>
-        <VoiceLanguageSelect value={language} onChange={setLanguage} disabled={working} />
-        {!available ? <p className="text-sm text-muted-foreground">{t("voiceInputUnsupported")}</p> : null}
-        {error ? <p className="rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive" role="alert">{t(error)}</p> : null}
-        {working ? (
-          <div className="rounded-md border bg-muted/50 px-3 py-2 text-sm" role="status">
-            <span className="font-medium">{t(status === "starting" ? "voiceStarting" : status === "stopping" ? "voiceFinishing" : "voiceListening")}</span>
-            {interim ? <p className="mt-1 line-clamp-3 break-words text-muted-foreground"><span className="sr-only">{t("voiceInterim")}: </span>{interim}</p> : null}
-          </div>
-        ) : hasFinal ? <p className="text-sm text-muted-foreground" role="status">{t("voiceAdded")}</p> : null}
-        <p className="text-xs text-muted-foreground">{t("voiceCloseHint")}</p>
-        <DialogFooter>
-          <Button className="min-h-11" onClick={() => changeOpen(false)} type="button" variant="outline">{t("voiceDone")}</Button>
-          {working ? (
-            <Button className="min-h-11" disabled={status === "stopping"} onClick={stop} type="button" variant="secondary">
-              <MicOffIcon className="size-4" />{t("voiceStop")}
-            </Button>
-          ) : (
-            <Button className="min-h-11" disabled={!available || disabled} onClick={start} type="button">
-              <MicIcon className="size-4" />{t("voiceStart")}
-            </Button>
-          )}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+          {t(error)}
+        </span>
+      ) : null}
+      {status === "listening" ? <span className="sr-only" role="status">{t("voiceListening")}</span> : null}
+      {status === "starting" ? <span className="sr-only" role="status">{t("voiceStarting")}</span> : null}
+    </>
   );
 }
