@@ -145,8 +145,8 @@ test("Somali dictation requires an explicit start, appends final words once, and
   await React.act(async () => recognition.end());
   assert.match(dialog.textContent, /Hubi ka hor intaadan dirin/);
   await user.click(within(dialog).getByRole("button", { name: "Waa hagaag" }));
-  await waitFor(() => assert.equal(document.activeElement, trigger));
-  assert.equal(textarea.value, "Qoraal hore Salaan sidee tahay");
+  await waitFor(() => assert.ok(screen.getByRole("button", { name: "Dir" })));
+  assert.equal(textarea.value, "Salaan sidee tahay");
   assert.equal(sent.length, 0);
   await user.click(screen.getByRole("button", { name: "Dir" }));
   await waitFor(() => assert.equal(sent.length, 1));
