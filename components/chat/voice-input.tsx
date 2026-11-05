@@ -54,6 +54,16 @@ export function VoiceInputButton({ disabled }: { readonly disabled: boolean }) {
 
   useEffect(() => () => abortActive(), [abortActive]);
   useEffect(() => {
+    const stopWhenHidden = () => {
+      if (document.visibilityState !== "hidden" || !active.current) return;
+      abortActive();
+      setStatus("idle");
+      setError("voiceHidden");
+    };
+    document.addEventListener("visibilitychange", stopWhenHidden);
+    return () => document.removeEventListener("visibilitychange", stopWhenHidden);
+  }, [abortActive]);
+  useEffect(() => {
     if (!disabled || !active.current) return;
     abortActive();
     setStatus("idle");
