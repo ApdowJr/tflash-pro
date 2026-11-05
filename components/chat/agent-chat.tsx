@@ -791,7 +791,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
           </Conversation>
         ) : (
           <div className="tflash-scroll min-h-0 flex-1 overflow-y-auto">
-            <EmptyState name={account.name} mode={agentMode} onModeChange={changeAgentMode} onOpenProjects={() => openSettings("workspace")} />
+            <EmptyState name={account.name} mode={agentMode} />
           </div>
         )}
 
