@@ -72,3 +72,37 @@ test("the landing page is bilingual, accessible and honest about limits", () => 
   assert.equal(landing.includes("aria-pressed"), true);
   assert.equal(landing.includes("localStorage"), true);
 });
+
+test("public metadata uses APP_URL, then the Vercel host, never a made-up domain", async () => {
+  const { publicSiteUrl } = await import("../lib/public-origin.ts");
+  const previous = { app: process.env.APP_URL, vercel: process.env.VERCEL_URL };
+  try {
+    process.env.APP_URL = "https://tflash.example.test/base/";
+    delete process.env.VERCEL_URL;
+    assert.equal(publicSiteUrl(), "https://tflash.example.test/base");
+
+    delete process.env.APP_URL;
+    process.env.VERCEL_URL = "tflash-git-preview.vercel.app";
+    assert.equal(publicSiteUrl(), "https://tflash-git-preview.vercel.app");
+
+    // An operator typo must not fail the build or emit a broken canonical URL.
+    process.env.APP_URL = "not a url";
+    assert.equal(publicSiteUrl(), "https://tflash-git-preview.vercel.app");
+    process.env.APP_URL = "javascript:alert(1)";
+    assert.equal(publicSiteUrl(), "https://tflash-git-preview.vercel.app");
+    process.env.APP_URL = "https://user:secret@tflash.example.test";
+    assert.equal(publicSiteUrl(), "https://tflash-git-preview.vercel.app");
+
+    delete process.env.VERCEL_URL;
+    assert.equal(publicSiteUrl(), "http://localhost:3000");
+  } finally {
+    if (previous.app === undefined) delete process.env.APP_URL; else process.env.APP_URL = previous.app;
+    if (previous.vercel === undefined) delete process.env.VERCEL_URL; else process.env.VERCEL_URL = previous.vercel;
+  }
+});
+
+test("the root layout derives metadataBase from the shared public origin", () => {
+  const layout = read("app/layout.tsx");
+  assert.match(layout, /metadataBase: new URL\(publicSiteUrl\(\)\)/);
+  assert.equal(layout.includes("http://localhost:3000"), false, "the layout must not hard-code a localhost canonical URL");
+});

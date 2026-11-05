@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-11-05 — defect fixes
+
+### Fixed
+
+- `waitWithAbort` could wait forever: deadline signals built with
+  `AbortSignal.timeout()` use unref'ed timers, so when nothing else held the
+  event loop the process drained before the deadline fired and the pending wait
+  never settled. Five catalog-reliability tests were cancelled by that hang.
+  The wait now keeps the event loop referenced until it settles or aborts and
+  clears that handle on either path.
+- Canonical links, Open Graph images and Twitter cards fell back to
+  `http://localhost:3000` whenever `APP_URL` was unset, including on a Vercel
+  deployment where the README documents `VERCEL_URL` as sufficient. The origin
+  now resolves through `lib/public-origin.ts` with the same precedence as the
+  internal Eve origin (`APP_URL`, then `VERCEL_URL`, then localhost), rejects
+  non-HTTP(S) and credential-bearing values instead of failing the build, and
+  keeps an optional base path for subdirectory deployments.
+
+### Added
+
+- Regression tests for the public metadata origin and for the layout no longer
+  hard-coding a localhost canonical URL.
+
 ## 2026-10-30 — public landing page and polish
 
 `/` is now public. A signed-out visitor sees a bilingual landing page instead of
