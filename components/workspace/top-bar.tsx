@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAppSettings } from "@/components/settings/app-settings";
 import { useEffect } from "react";
+import { useEffect } from "react";
 import type { AgentMode } from "@/lib/agent-modes";
 
 export function TopBar({
@@ -68,19 +69,6 @@ export function TopBar({
         <span className="shrink-0 rounded-md border bg-card px-2 py-1 text-[10px] font-semibold text-muted-foreground">{modeLabel}</span>
         {title ? <p className="truncate text-[13px] font-medium text-foreground">{title}</p> : null}
       </div>
-
-      <button
-        aria-label={`${t("chooseModel")}: ${modelName}${provider ? ` · ${provider.name}` : ""}`}
-        className="group flex h-11 min-h-11 min-w-0 max-w-[48vw] shrink items-center gap-2 rounded-lg border bg-card px-2.5 text-[12px] transition-colors hover:border-foreground/20 hover:bg-accent/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:max-w-[20rem] sm:px-3"
-        onClick={onOpenModels}
-        title={t("modelPickerHint")}
-        type="button"
-      >
-        <span aria-hidden="true" className={cn("size-1.5 shrink-0 rounded-full", connected ? "bg-emerald-500" : "bg-muted-foreground/40")} />
-        <span className="min-w-0 truncate font-medium text-foreground">{modelName}</span>
-        {provider ? <span className="hidden truncate text-muted-foreground md:inline">{provider.name}</span> : null}
-        <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
-      </button>
 
       <button
         aria-label={`${t("theme")}: ${t(nextTheme)}`}
