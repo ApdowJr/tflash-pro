@@ -234,9 +234,7 @@ function ComposerAction({
           <SquareIcon className="size-3 fill-current" />
         </PromptInputButton>
       ) : null}
-      {!isBusy && !hasInputText ? (
-        <VoiceInputButton disabled={isResuming || cancelling} />
-      ) : null}
+      {!isBusy ? <VoiceInputButton disabled={isResuming || cancelling} /> : null}
       {(!isBusy || canSubmit) ? (
         <PromptInputSubmit
           aria-label={t("send")}
