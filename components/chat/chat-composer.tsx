@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { DocumentImportButton } from "./documents";
 import { VoiceInputButton } from "./voice-input";
-import { BracesIcon, CpuIcon, FileIcon, FileSearchIcon, MessageSquareTextIcon, PaperclipIcon, SquareIcon, XIcon } from "lucide-react";
+import { BracesIcon, FileIcon, FileSearchIcon, MessageSquareTextIcon, PlusIcon, SquareIcon, XIcon } from "lucide-react";
 import {
   PromptInput,
   PromptInputButton,
@@ -16,6 +16,7 @@ import {
   usePromptInputController,
 } from "@/components/ai-elements/prompt-input";
 import { useAppSettings } from "@/components/settings/app-settings";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { AGENT_MODES, type AgentMode } from "@/lib/agent-modes";
 
 /**
@@ -38,8 +39,10 @@ export function ChatComposer({
   readonly mode?: AgentMode;
 }) {
   const { t, settings } = useAppSettings();
-  const [documentPending, setDocumentPending] = useState(false);
   const controller = usePromptInputController();
+  const [documentPending, setDocumentPending] = useState(false);
+  const openDocumentImport = useRef<() => void>(() => {});
+  const setDocumentImportOpener = useCallback((open: () => void) => { openDocumentImport.current = open; }, []);
 
   return (
     <>
@@ -103,15 +106,13 @@ export function ChatComposer({
         />
         <PromptInputFooter className={`flex-wrap border-t-0 px-2.5 pt-1.5 pb-2.5 ${isBusy && (controller.textInput.value.trim() || controller.attachments.files.length) ? "pr-24" : "pr-14"}`}>
           <PromptInputTools className="gap-1">
-            <ComposerAttachButton />
-            <ComposerModelButton />
-            <DocumentImportButton disabled={isResuming} onPendingChange={setDocumentPending} />
-            <VoiceInputButton disabled={isResuming} />
+            <ComposerAttachButton onImportDocument={() => openDocumentImport.current()} />
           </PromptInputTools>
           <span className="hidden pr-1 text-[11px] text-muted-foreground/60 md:inline">
             {t("enterToSend")}
           </span>
         </PromptInputFooter>
+        <DocumentImportButton disabled={isResuming} hideTrigger onPendingChange={setDocumentPending} onRequestImportReady={setDocumentImportOpener} />
         <ComposerAction
           hasInputText={controller.textInput.value.trim().length > 0}
           isBusy={isBusy}
@@ -178,37 +179,27 @@ function ComposerAttachments() {
   );
 }
 
-function ComposerModelButton() {
-  const { t } = useAppSettings();
-  return (
-    <PromptInputButton
-      aria-label={t("chooseModel")}
-      className="tf-touch-target h-8 gap-1.5 rounded-full px-2.5 text-muted-foreground hover:text-foreground sm:h-7"
-      onClick={() => window.dispatchEvent(new Event("tflash:open-model-picker"))}
-      size="sm"
-      tooltip={t("chooseModel")}
-      type="button"
-    >
-      <CpuIcon className="size-3.5" />
-      <span className="text-[11px] font-medium">{t("chooseModel")}</span>
-    </PromptInputButton>
-  );
-}
-
-function ComposerAttachButton() {
+function ComposerAttachButton({ onImportDocument }: { readonly onImportDocument: () => void }) {
   const { t } = useAppSettings();
   const attachments = usePromptInputAttachments();
   return (
-    <PromptInputButton
-      aria-label={t("attach")}
-      className="tf-touch-target size-8 rounded-full text-muted-foreground hover:text-foreground sm:size-7"
-      onClick={() => attachments.openFileDialog()}
-      size="icon-sm"
-      tooltip={t("attach")}
-      type="button"
-    >
-      <PaperclipIcon className="size-3.5" />
-    </PromptInputButton>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <PromptInputButton
+          aria-label={t("attach")}
+          className="tf-touch-target size-8 rounded-full text-muted-foreground hover:text-foreground sm:size-7"
+          size="icon-sm"
+          tooltip={t("attach")}
+          type="button"
+        >
+          <PlusIcon className="size-5" />
+        </PromptInputButton>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" side="top">
+        <DropdownMenuItem onSelect={() => attachments.openFileDialog()}>{t("attach")}</DropdownMenuItem>
+        <DropdownMenuItem onSelect={onImportDocument}>{t("importDocument")}</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -243,10 +234,11 @@ function ComposerAction({
           <SquareIcon className="size-3 fill-current" />
         </PromptInputButton>
       ) : null}
-      {!isBusy || canSubmit ? (
+      {!isBusy ? <VoiceInputButton disabled={isResuming || cancelling} /> : null}
+      {(!isBusy || canSubmit) ? (
         <PromptInputSubmit
           aria-label={t("send")}
-          className="tf-touch-target right-2 bottom-2 size-8 bg-foreground text-background transition-opacity hover:opacity-90 disabled:opacity-40 sm:right-2.5 sm:bottom-2.5 sm:size-8"
+          className="tf-touch-target right-2 bottom-2 size-8 bg-primary text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40 sm:right-2.5 sm:bottom-2.5 sm:size-8"
           disabled={isResuming || cancelling || !canSubmit}
         />
       ) : null}

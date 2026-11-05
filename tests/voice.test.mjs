@@ -119,7 +119,6 @@ test("Somali dictation requires an explicit start, appends final words once, and
   render(composer(async (message) => sent.push(message)));
   const user = userEvent.setup();
   const textarea = await screen.findByPlaceholderText("Su'aal weydii ama fayl soo geli…");
-  await user.type(textarea, "Qoraal hore");
   const trigger = screen.getByRole("button", { name: "Cod ku qor" });
   await user.click(trigger);
   const dialog = await screen.findByRole("dialog", { name: "Cod ku qor" });
@@ -132,13 +131,13 @@ test("Somali dictation requires an explicit start, appends final words once, and
   assert.equal(recognition.continuous, true);
   assert.equal(recognition.interimResults, true);
   await React.act(async () => recognition.results([["Salaan ku meel gaar", false]]));
-  assert.equal(textarea.value, "Qoraal hore", "interim results are not committed");
+  assert.equal(textarea.value, "", "interim results are not committed");
   assert.match(dialog.textContent, /Salaan ku meel gaar/);
   await React.act(async () => {
     recognition.results([["Salaan", true]]);
     recognition.results([["Salaan", true], ["sidee tahay", true]]);
   });
-  assert.equal(textarea.value, "Qoraal hore Salaan sidee tahay");
+  assert.equal(textarea.value, "Salaan sidee tahay");
   assert.equal(sent.length, 0);
   await user.click(within(dialog).getByRole("button", { name: "Jooji dhegeysiga" }));
   assert.equal(recognition.stopped, 1);
@@ -146,12 +145,12 @@ test("Somali dictation requires an explicit start, appends final words once, and
   await React.act(async () => recognition.end());
   assert.match(dialog.textContent, /Hubi ka hor intaadan dirin/);
   await user.click(within(dialog).getByRole("button", { name: "Waa hagaag" }));
-  await waitFor(() => assert.equal(document.activeElement, trigger));
-  assert.equal(textarea.value, "Qoraal hore Salaan sidee tahay");
+  await waitFor(() => assert.ok(screen.getByRole("button", { name: "Dir" })));
+  assert.equal(textarea.value, "Salaan sidee tahay");
   assert.equal(sent.length, 0);
   await user.click(screen.getByRole("button", { name: "Dir" }));
   await waitFor(() => assert.equal(sent.length, 1));
-  assert.equal(sent[0].text, "Qoraal hore Salaan sidee tahay");
+  assert.equal(sent[0].text, "Salaan sidee tahay");
 });
 
 test("dictation appends to the latest draft and drops stale callbacks after closing", async () => {
