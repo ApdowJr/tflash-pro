@@ -24,8 +24,6 @@ export function EmptyState({
 }: {
   readonly name: string;
   readonly mode: AgentMode;
-  readonly onModeChange: (mode: AgentMode) => void;
-  readonly onOpenProjects: () => void;
 }) {
   const { t, settings } = useAppSettings();
   const controller = usePromptInputController();
