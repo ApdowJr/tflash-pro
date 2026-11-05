@@ -17,7 +17,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { cn } from "@/lib/utils";
 import { useAppSettings } from "@/components/settings/app-settings";
 import { useEffect } from "react";
 import type { AgentMode } from "@/lib/agent-modes";
