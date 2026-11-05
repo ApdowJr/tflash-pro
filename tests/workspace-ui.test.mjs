@@ -983,8 +983,9 @@ test("connection accordions expose their panel relationship and mobile focus tar
 });
 
 
-test("top bar controls expose mobile-sized touch targets and visible keyboard focus", () => {
+test("top bar controls expose mobile-sized touch targets and visible keyboard focus without a model selector", async () => {
   seed();
+  let openedModels = 0;
   render(app(h(TopBar, {
     title: "Test chat",
     canExport: true,
@@ -993,16 +994,20 @@ test("top bar controls expose mobile-sized touch targets and visible keyboard fo
     onOpenSidebar() {},
     sidebarOpen: false,
     onOpenSettings() {},
-    onOpenModels() {},
+    onOpenModels() { openedModels++; },
   })));
   const header = screen.getByRole("banner");
   const menu = within(header).getByRole("button", { name: /open menu/i });
-  const model = within(header).getByRole("button", { name: /choose (a )?model/i });
   const more = within(header).getByRole("button", { name: /more actions/i });
-  for (const button of [menu, model, more]) {
+  assert.equal(within(header).queryByRole("button", { name: /choose (a )?model/i }), null);
+  for (const button of [menu, more]) {
     assert.ok(button.className.includes("min-h-11"), "control should be at least 44px tall");
     assert.ok(button.className.includes("focus-visible:ring-2"), "control should show keyboard focus");
   }
+  await React.act(async () => {
+    window.dispatchEvent(new Event("tflash:open-model-picker"));
+  });
+  assert.equal(openedModels, 1, "composer model event should open the existing picker");
 });
 
 
