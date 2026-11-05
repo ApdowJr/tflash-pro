@@ -92,13 +92,18 @@ export function DocumentExportButtons({
 export function DocumentImportButton({
   disabled = false,
   onPendingChange,
+  hideTrigger = false,
+  onRequestImportReady,
 }: {
   disabled?: boolean;
   onPendingChange?: (pending: boolean) => void;
+  hideTrigger?: boolean;
+  onRequestImportReady?: (open: () => void) => void;
 }) {
   const { t, accountId, accountKind } = useAppSettings();
   const attachments = usePromptInputAttachments();
   const input = useRef<HTMLInputElement>(null);
+  useEffect(() => { onRequestImportReady?.(() => input.current?.click()); }, [onRequestImportReady]);
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
   const [partial, setPartial] = useState(false);
@@ -168,16 +173,18 @@ export function DocumentImportButton({
           if (file) void read(file);
         }}
       />
-      <PromptInputButton
-        className="tf-touch-target size-11 min-h-11 min-w-11 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-        aria-label={t("importDocument")}
-        tooltip={t("importDocumentHint")}
-        disabled={disabled || pending}
-        onClick={() => input.current?.click()}
-        type="button"
-      >
-        <BookOpenIcon className="size-4" />
-      </PromptInputButton>
+      {!hideTrigger ? (
+        <PromptInputButton
+          className="tf-touch-target size-11 min-h-11 min-w-11 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          aria-label={t("importDocument")}
+          tooltip={t("importDocumentHint")}
+          disabled={disabled || pending}
+          onClick={() => input.current?.click()}
+          type="button"
+        >
+          <BookOpenIcon className="size-4" />
+        </PromptInputButton>
+      ) : null}
       {pending ? (
         <span role="status" className="max-w-48 break-words text-[11px]">
           {t("documentReading")}
