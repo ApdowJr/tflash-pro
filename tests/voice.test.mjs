@@ -112,71 +112,61 @@ afterEach(() => {
   delete globalThis.__voiceAgent;
 });
 
-test("Somali dictation requires an explicit start, appends final words once, and never sends automatically", async () => {
+test("one tap starts dictation immediately, appends final words once, and never sends automatically", async () => {
   seed("so");
   const recognizers = mockRecognition();
   const sent = [];
   render(composer(async (message) => sent.push(message)));
   const user = userEvent.setup();
   const textarea = await screen.findByPlaceholderText("Su'aal weydii ama fayl soo geli…");
-  const trigger = screen.getByRole("button", { name: "Cod ku qor" });
-  await user.click(trigger);
-  const dialog = await screen.findByRole("dialog", { name: "Cod ku qor" });
-  assert.match(dialog.textContent, /Browser-ku codka wuxuu u diri karaa/);
-  assert.equal(within(dialog).getByLabelText("Luqadda hadalka").value, "so");
-  assert.equal(recognizers.length, 0, "opening the dialog must not start the microphone");
-  await user.click(within(dialog).getByRole("button", { name: "Bilow dhegeysiga" }));
+  const mic = screen.getByRole("button", { name: "Cod ku qor" });
+  await user.click(mic);
   const recognition = recognizers[0];
-  assert.equal(recognition.lang, "so-SO");
+  assert.ok(recognition, "microphone tap starts recognition without another prompt");
+  assert.equal(recognition.started, 1);
+  assert.equal(recognition.lang, "", "browser default locale is used without a language picker");
   assert.equal(recognition.continuous, true);
   assert.equal(recognition.interimResults, true);
-  await React.act(async () => recognition.results([["Salaan ku meel gaar", false]]));
-  assert.equal(textarea.value, "", "interim results are not committed");
-  assert.match(dialog.textContent, /Salaan ku meel gaar/);
   await React.act(async () => {
     recognition.results([["Salaan", true]]);
     recognition.results([["Salaan", true], ["sidee tahay", true]]);
   });
   assert.equal(textarea.value, "Salaan sidee tahay");
-  assert.equal(sent.length, 0);
-  await user.click(within(dialog).getByRole("button", { name: "Jooji dhegeysiga" }));
+  assert.equal(sent.length, 0, "dictation must never send automatically");
+  const stop = screen.getByRole("button", { name: "Jooji dhegeysiga" });
+  await user.click(stop);
   assert.equal(recognition.stopped, 1);
-  assert.match(dialog.textContent, /Qoraalka ayaa la dhammaystirayaa/);
   await React.act(async () => recognition.end());
-  assert.match(dialog.textContent, /Hubi ka hor intaadan dirin/);
-  await user.click(within(dialog).getByRole("button", { name: "Waa hagaag" }));
-  await waitFor(() => assert.ok(screen.getByRole("button", { name: "Dir" })));
+  assert.ok(screen.getByRole("button", { name: "Dir" }));
   assert.equal(textarea.value, "Salaan sidee tahay");
-  assert.equal(sent.length, 0);
   await user.click(screen.getByRole("button", { name: "Dir" }));
   await waitFor(() => assert.equal(sent.length, 1));
   assert.equal(sent[0].text, "Salaan sidee tahay");
 });
 
-test("dictation appends to the latest draft and drops stale callbacks after closing", async () => {
+test("composer shows mic when empty and send only after text is entered", async () => {
+  seed();
+  render(composer());
+  const user = userEvent.setup();
+  assert.ok(screen.getByRole("button", { name: "Voice input" }));
+  assert.equal(screen.queryByRole("button", { name: "Send" }), null);
+  const textarea = screen.getByPlaceholderText("Ask a question or bring in a file…");
+  await user.type(textarea, "Hello");
+  assert.ok(screen.getByRole("button", { name: "Send" }));
+  assert.equal(screen.queryByRole("button", { name: "Voice input" }), null);
+});
+
+test("dictation drops stale callbacks after the composer unmounts", async () => {
   seed();
   const recognizers = mockRecognition({ prefixed: true });
-  let controller;
-  function Probe() { controller = usePromptInputController(); return null; }
-  render(composer(async () => {}, h(Probe)));
+  const view = render(composer());
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "Voice input" }));
-  const dialog = await screen.findByRole("dialog", { name: "Voice input" });
-  await user.selectOptions(within(dialog).getByLabelText("Speech language"), "so");
-  await user.click(within(dialog).getByRole("button", { name: "Start listening" }));
   const recognition = recognizers[0];
-  assert.equal(recognition.lang, "so-SO");
   const staleResult = recognition.onresult;
-  await React.act(async () => {
-    controller.textInput.setInput("New draft");
-    recognition.results([["first", true]]);
-    recognition.results([["first", true], ["second", true]]);
-  });
-  assert.equal(screen.getByPlaceholderText("Ask a question or bring in a file…").value, "New draft first second");
-  await user.click(within(dialog).getByRole("button", { name: "Done" }));
+  view.unmount();
   assert.equal(recognition.aborted, 1);
   await React.act(async () => staleResult({ results: [{ 0: { transcript: "stale words" }, isFinal: true }] }));
-  assert.equal(screen.getByPlaceholderText("Ask a question or bring in a file…").value, "New draft first second");
 });
 
 test("microphone errors and unsupported browsers are visible, with no silent retry", async () => {
@@ -185,36 +175,29 @@ test("microphone errors and unsupported browsers are visible, with no silent ret
   render(composer());
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "Voice input" }));
-  let dialog = await screen.findByRole("dialog", { name: "Voice input" });
-  await user.click(within(dialog).getByRole("button", { name: "Start listening" }));
   await React.act(async () => recognizers[0].fail("not-allowed"));
-  assert.match(within(dialog).getByRole("alert").textContent, /access was denied/);
+  assert.match(screen.getByRole("alert").textContent, /access was denied/);
   assert.equal(recognizers[0].aborted, 1);
   assert.equal(recognizers.length, 1);
-  await user.click(within(dialog).getByRole("button", { name: "Start listening" }));
+  await user.click(screen.getByRole("button", { name: "Voice input" }));
   await React.act(async () => recognizers[1].fail("language-not-supported"));
-  assert.match(within(dialog).getByRole("alert").textContent, /does not support the selected language/);
-  await user.click(within(dialog).getByRole("button", { name: "Done" }));
+  assert.match(screen.getByRole("alert").textContent, /does not support the selected language/);
   delete window.SpeechRecognition;
   await user.click(screen.getByRole("button", { name: "Voice input" }));
-  dialog = await screen.findByRole("dialog", { name: "Voice input" });
-  assert.match(dialog.textContent, /not available in this browser/);
-  assert.equal(within(dialog).getByRole("button", { name: "Start listening" }).disabled, true);
+  assert.match(screen.getByRole("alert").textContent, /not available in this browser/);
 });
 
-test("closing or unmounting aborts capture; insecure contexts do not start it", async () => {
+test("insecure contexts do not start dictation; unmounting aborts capture", async () => {
   seed();
   const recognizers = mockRecognition();
   Object.defineProperty(window, "isSecureContext", { configurable: true, value: false });
   const view = render(composer());
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "Voice input" }));
-  const dialog = await screen.findByRole("dialog", { name: "Voice input" });
-  await user.click(within(dialog).getByRole("button", { name: "Start listening" }));
-  assert.match(within(dialog).getByRole("alert").textContent, /secure connection/);
+  assert.match(screen.getByRole("alert").textContent, /secure connection/);
   assert.equal(recognizers.length, 0);
   Object.defineProperty(window, "isSecureContext", { configurable: true, value: true });
-  await user.click(within(dialog).getByRole("button", { name: "Start listening" }));
+  await user.click(screen.getByRole("button", { name: "Voice input" }));
   assert.equal(recognizers.length, 1);
   view.unmount();
   assert.equal(recognizers[0].aborted, 1);
@@ -226,17 +209,14 @@ test("late start callbacks do not undo stop, and hiding the page aborts capture"
   render(composer());
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "Voice input" }));
-  const dialog = await screen.findByRole("dialog", { name: "Voice input" });
-  await user.click(within(dialog).getByRole("button", { name: "Start listening" }));
   const recognition = recognizers[0];
-  assert.match(dialog.textContent, /Starting microphone/);
-  await user.click(within(dialog).getByRole("button", { name: "Stop listening" }));
+  assert.ok(screen.getByRole("status"));
+  await user.click(screen.getByRole("button", { name: "Stop listening" }));
   await React.act(async () => recognition.onstart());
-  assert.match(dialog.textContent, /Finishing transcription/);
   Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
   await React.act(async () => document.dispatchEvent(new Event("visibilitychange")));
   assert.equal(recognition.aborted, 1);
-  assert.match(within(dialog).getByRole("alert").textContent, /page was hidden/);
+  assert.match(screen.getByRole("alert").textContent, /page was hidden/);
 });
 
 test("read aloud refuses an unmatched Somali voice and updates when voices load", async () => {
