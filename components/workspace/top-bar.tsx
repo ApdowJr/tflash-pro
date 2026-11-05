@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  ChevronDownIcon,
   DownloadIcon,
   MenuIcon,
   MessageSquarePlusIcon,
@@ -18,9 +17,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { getProvider } from "@/lib/providers/catalog";
 import { cn } from "@/lib/utils";
 import { useAppSettings } from "@/components/settings/app-settings";
+import { useEffect } from "react";
 import type { AgentMode } from "@/lib/agent-modes";
 
 export function TopBar({
@@ -44,10 +43,12 @@ export function TopBar({
   readonly onOpenModels: () => void;
   readonly mode?: AgentMode;
 }) {
-  const { t, settings, update, selection, isConnected, modelsFor } = useAppSettings();
-  const provider = getProvider(selection.providerId);
-  const modelName = modelsFor(selection.providerId).find((model) => model.id === selection.modelId)?.name ?? selection.modelId;
-  const connected = isConnected(selection.providerId);
+  const { t, settings, update } = useAppSettings();
+  useEffect(() => {
+    const openModelPicker = () => onOpenModels();
+    window.addEventListener("tflash:open-model-picker", openModelPicker);
+    return () => window.removeEventListener("tflash:open-model-picker", openModelPicker);
+  }, [onOpenModels]);
   const nextTheme = settings.theme === "dark" ? "light" : "dark";
   const modeLabel = t(mode === "coder" ? "modeCoder" : mode === "research" ? "modeResearch" : "modeChat");
 
