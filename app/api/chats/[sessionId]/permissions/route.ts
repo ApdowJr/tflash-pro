@@ -3,6 +3,7 @@ import { readBoundedJson } from "@/lib/bounded-json";
 import { ownedChat } from "@/lib/security/owned-chat";
 import { homepageOrigin } from "@/lib/permission-scope";
 import { changeWebGrant, listWebGrants, permissionEpoch } from "@/lib/permission-store";
+import { apiRoute } from "@/lib/http/api-route";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const headers = { "cache-control": "no-store" };
@@ -14,7 +15,7 @@ async function ownerFor(req: Request, ctx: Context) {
   const o = await ownedChat(req, sessionId);
   return o ? { kind: o.kind, id: o.userId, sessionId } : null;
 }
-export async function GET(req: Request, ctx: Context) {
+async function handleGet(req: Request, ctx: Context) {
   const o = await ownerFor(req, ctx);
   if (!o) return reply({ error: "Conversation not available.", changeNotStarted: true }, 404);
   try {
@@ -59,9 +60,13 @@ async function change(req: Request, ctx: Context, revoke: boolean) {
     );
   }
 }
-export async function POST(req: Request, ctx: Context) {
+async function handlePost(req: Request, ctx: Context) {
   return change(req, ctx, false);
 }
-export async function DELETE(req: Request, ctx: Context) {
+async function handleDelete(req: Request, ctx: Context) {
   return change(req, ctx, true);
 }
+
+export const GET = apiRoute("chats:permissions", handleGet);
+export const POST = apiRoute("chats:permissions", handlePost);
+export const DELETE = apiRoute("chats:permissions", handleDelete);

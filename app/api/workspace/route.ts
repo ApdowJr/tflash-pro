@@ -3,6 +3,7 @@ import { readVercelWorkspace, vercelWorkspaceEnabled, writeVercelWorkspace } fro
 import { currentPrincipal } from "@/lib/identity";
 import { serverSupabase } from "@/lib/supabase/server";
 import { workspaceSchema } from "@/lib/workspace";
+import { apiRoute } from "@/lib/http/api-route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,7 +27,7 @@ function nextUpdatedAt(expectedUpdatedAt: string | null): string {
   return new Date(Math.max(Date.now(), previous + 1)).toISOString();
 }
 
-export async function GET(request: Request): Promise<Response> {
+async function handleGet(request: Request): Promise<Response> {
   const principal = await currentPrincipal();
   if (!principal) return Response.json({ error: "Sign in to continue." }, { status: 401, headers: noStore });
   if (accountMismatch(request, principal)) return conflictResponse();
@@ -52,7 +53,7 @@ export async function GET(request: Request): Promise<Response> {
   return Response.json({ storage: "cloud", workspace: parsed.data, updatedAt: data.updated_at }, { headers: noStore });
 }
 
-export async function PUT(request: Request): Promise<Response> {
+async function handlePut(request: Request): Promise<Response> {
   if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
     return Response.json({ error: "Expected JSON." }, { status: 415, headers: noStore });
   }
@@ -112,3 +113,6 @@ export async function PUT(request: Request): Promise<Response> {
   }
   return Response.json({ ok: true, storage: "cloud", updatedAt }, { headers: noStore });
 }
+
+export const GET = apiRoute("workspace", handleGet);
+export const PUT = apiRoute("workspace", handlePut);

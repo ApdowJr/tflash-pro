@@ -127,13 +127,13 @@ test("project fallback is not reported as a verified/configured integration", as
   delete process.env.GITHUB_MCP_TOKEN;
   delete process.env.GITHUB_PERSONAL_ACCESS_TOKEN;
   try {
-    const response = await status.GET();
+    const response = await status.GET(new Request("https://app.example.test/api/integrations"));
     const body = await response.json();
     const github = body.integrations.find((item) => item.id === "github");
     assert.equal(github.mode, "project-connect");
     assert.equal(github.configured, false);
     process.env.CONNECT_GITHUB_CONNECTOR = "github/test-connector";
-    const explicit = (await (await status.GET()).json()).integrations.find((item) => item.id === "github");
+    const explicit = (await (await status.GET(new Request("https://app.example.test/api/integrations"))).json()).integrations.find((item) => item.id === "github");
     assert.equal(explicit.mode, "connect");
     assert.equal(explicit.configured, true); // present, not live-verified
   } finally {
@@ -244,7 +244,7 @@ test("automatic OAuth is available without operator secrets, while GitHub needs 
   const previousId = process.env.GITHUB_OAUTH_CLIENT_ID;
   delete process.env.GITHUB_OAUTH_CLIENT_ID;
   try {
-    const body = await (await status.GET()).json();
+    const body = await (await status.GET(new Request("https://app.example.test/api/integrations"))).json();
     for (const item of body.integrations) {
       assert.equal(item.oauthAvailable, item.id !== "github", item.id);
       assert.equal(item.configured, false, "OAuth availability alone is not an authorized connection");

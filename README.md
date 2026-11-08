@@ -6,7 +6,7 @@ Tflash is an Eve + Next.js workspace with streaming chat, per-turn model selecti
 
 ## Get started
 
-Use **Node.js 24** and the pinned pnpm version through Corepack:
+Use **Node.js 24.22.2** (pinned in `.nvmrc`) and the pinned pnpm version through Corepack:
 
 ```bash
 corepack pnpm install --frozen-lockfile

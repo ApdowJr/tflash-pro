@@ -112,6 +112,31 @@ test("the route wrapper echoes a safe request id and hides internal failures", a
   assert.notEqual(hostile.headers.get(REQUEST_ID_HEADER), "<script>");
 });
 
+test("the route wrapper preserves Next dynamic params, cookies, redirects and body-less responses", async () => {
+  const context = { params: Promise.resolve({ sessionId: "session-42" }) };
+  const dynamic = apiRoute("test:dynamic", async (request, ctx) => {
+    assert.equal(request.headers.get("x-test"), "kept");
+    assert.equal((await ctx.params).sessionId, "session-42");
+    const response = new Response(null, { status: 302, headers: { location: "/s/session-42" } });
+    response.headers.append("set-cookie", "a=1; Path=/; HttpOnly");
+    response.headers.append("set-cookie", "b=2; Path=/; HttpOnly");
+    return response;
+  });
+  const redirected = await dynamic(new Request("https://x.test/api/chats/session-42", { headers: { "x-test": "kept" } }), context);
+  assert.equal(redirected.status, 302);
+  assert.equal(redirected.headers.get("location"), "/s/session-42");
+  assert.equal(redirected.headers.get("cache-control"), "no-store");
+  assert.equal(redirected.headers.get("x-content-type-options"), "nosniff");
+  assert.equal(redirected.headers.getSetCookie().length, 2);
+  assert.match(redirected.headers.get(REQUEST_ID_HEADER) ?? "", /^[a-zA-Z0-9_-]{8,64}$/);
+
+  const empty = apiRoute("test:empty", () => new Response(null, { status: 204 }));
+  const noContent = await empty(new Request("https://x.test/api/test"));
+  assert.equal(noContent.status, 204);
+  assert.equal(noContent.body, null);
+  assert.equal(noContent.headers.get("cache-control"), "no-store");
+});
+
 test("rate limits open a fixed window, then reject with retry metadata", () => {
   resetRateLimits();
   const rule = { bucket: "unit", limit: 2, windowMs: 1_000 };

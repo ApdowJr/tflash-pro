@@ -64,7 +64,13 @@ function settled(part: MessagePart): boolean {
 
 function commandState(part: MessagePart, output: Record<string, unknown> | undefined): string {
   if (output?.status === "running") return "running";
-  if (part.state === "completed" || part.state === "output-available") return "completed";
+  if (part.state === "completed" || part.state === "output-available") {
+    // Eve rc.6 can settle a nonzero shell exit as completed with errorText.
+    if (output?.status === "completed" && typeof output.exitCode === "number" && output.exitCode !== 0) return "failed";
+    if (typeof part.errorText === "string" && part.errorText.length > 0) return "failed";
+    if (typeof part.error?.message === "string" && part.error.message.length > 0) return "failed";
+    return "completed";
+  }
   if (part.state === "failed" || part.state === "output-error") return "failed";
   if (part.state === "rejected" || part.state === "output-denied") return "rejected";
   if (part.state === "cancelled") return "cancelled";
@@ -96,6 +102,14 @@ export function projectCoderWorkspace(messages: readonly Message[]): CoderWorksp
   let diagnostics: CoderDiagnostic[] = [];
   const documents = new Map<string, CoderWorkspaceRead>();
   const commands: CoderCommand[] = [];
+  const invalidateDocument = (value: string) => {
+    documents.delete(value);
+    try { documents.delete(normalizeWorkspacePath(value)); } catch { /* absolute/home paths are not editor documents */ }
+    const root = snapshot?.workspaceRoot;
+    if (root && value.startsWith(`${root}/`)) {
+      try { documents.delete(normalizeWorkspacePath(value.slice(root.length + 1))); } catch { /* not an editor-visible path */ }
+    }
+  };
 
   messages.forEach((message, messageIndex) => {
     if (message.role !== "assistant") return;
@@ -139,7 +153,12 @@ export function projectCoderWorkspace(messages: readonly Message[]): CoderWorksp
         }
       } else if (name === "coder_patch" || name === "code__apply_patch") {
         snapshotStale = true;
+        // rc.6 edit_file returns { path, replacements }; older apply_patch
+        // results may still carry files/diagnostics. Invalidate cached reads
+        // either way so the editor never shows pre-edit content as current.
         diagnostics = diagnosticsFrom(part.output);
+        const editedPath = record(part.output)?.path;
+        if (typeof editedPath === "string") invalidateDocument(editedPath);
         const files = record(part.output)?.files;
         if (Array.isArray(files)) {
           for (const value of files) {

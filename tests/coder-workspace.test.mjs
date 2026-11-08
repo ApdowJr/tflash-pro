@@ -132,6 +132,39 @@ test("Coder projection uses only settled tool output and tracks stale snapshots"
   assert.equal(afterPatch.diagnostics[0].message, "Broken");
 });
 
+test("rc.6 coder_patch output invalidates relative and workspace-absolute cached reads", () => {
+  const read = readResult();
+  const base = [{ role: "assistant", parts: [
+    { type: "tool", name: "coder_workspace_snapshot", callId: "s", state: "completed", output: snapshotResult() },
+    { type: "tool", name: "coder_workspace_read", callId: "r", state: "completed", output: read },
+  ] }];
+  for (const path of ["src/a.ts", "/workspace/src/a.ts", "./src/a.ts"]) {
+    const projected = projectCoderWorkspace([...base, { role: "assistant", parts: [
+      { type: "tool", name: "coder_patch", callId: "p", state: "completed", output: { path, replacements: 1 } },
+    ] }]);
+    assert.equal(projected.snapshotStale, true);
+    assert.equal(projected.documents["src/a.ts"], undefined, path);
+    assert.deepEqual(projected.diagnostics, []);
+  }
+  const failed = projectCoderWorkspace([...base, { role: "assistant", parts: [
+    { type: "tool", name: "coder_patch", callId: "p", state: "failed", error: { message: "ambiguous" }, output: { path: "src/a.ts", replacements: 1 } },
+  ] }]);
+  assert.equal(failed.documents["src/a.ts"].content, read.content);
+});
+
+test("a completed shell call with errorText or nonzero exit is a failed command", () => {
+  const part = { type: "tool", name: "bash", callId: "b", state: "completed", input: { command: "pnpm test" } };
+  for (const extra of [
+    { output: { status: "completed", exitCode: 2, stdout: "", stderr: "failed", truncated: false } },
+    { output: { status: "completed", exitCode: 0, stdout: "", stderr: "", truncated: false }, error: { message: "exit code: 2" } },
+    { output: { status: "completed", exitCode: 0, stdout: "", stderr: "", truncated: false }, errorText: "exit code: 2" },
+  ]) {
+    const projected = projectCoderWorkspace([{ role: "assistant", parts: [{ ...part, ...extra }] }]);
+    assert.equal(projected.commands[0].state, "failed");
+    assert.equal(projected.commands[0].isTest, true);
+  }
+});
+
 test("the first model turn memoizes mode even if later request metadata differs", async () => {
   let memoized;
   const ctx = {

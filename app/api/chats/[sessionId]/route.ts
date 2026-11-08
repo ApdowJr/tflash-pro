@@ -4,6 +4,7 @@ import { ownedChat } from "@/lib/security/owned-chat";
 import { internalEveHeaders, internalOrigin } from "@/lib/security/internal-origin";
 import { readBoundedJson } from "@/lib/bounded-json";
 import { waitWithAbort } from "@/lib/abortable";
+import { apiRoute } from "@/lib/http/api-route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,7 +18,7 @@ function mismatchedAccount(request: Request, owned: { userId: string; kind: stri
   return (id !== null && id !== owned.userId) || (kind !== null && kind !== owned.kind);
 }
 
-export async function PATCH(request: Request, context: RouteContext): Promise<Response> {
+async function handlePatch(request: Request, context: RouteContext): Promise<Response> {
   if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
     return Response.json({ error: "Expected JSON." }, { status: 415 });
   }
@@ -57,7 +58,7 @@ export async function PATCH(request: Request, context: RouteContext): Promise<Re
   return Response.json({ ok: true, title: data.title });
 }
 
-export async function DELETE(request: Request, context: RouteContext): Promise<Response> {
+async function handleDelete(request: Request, context: RouteContext): Promise<Response> {
   if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
     return Response.json({ error: "Expected JSON." }, { status: 415 });
   }
@@ -93,3 +94,6 @@ export async function DELETE(request: Request, context: RouteContext): Promise<R
     ? Response.json({ error: "Could not remove conversation." }, { status: 503 })
     : Response.json({ ok: true });
 }
+
+export const PATCH = apiRoute("chats:detail", handlePatch);
+export const DELETE = apiRoute("chats:detail", handleDelete);

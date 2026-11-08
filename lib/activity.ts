@@ -47,6 +47,8 @@ export function activityRows(
         stateName === "failed" ? "output-error" : "outcome-unknown";
       const partial = value.partial === true || stateName === "streaming";
       const output = value.output;
+      const errorText = typeof value.errorText === "string" ? value.errorText : record(value.error)?.message;
+      if (state === "output-available" && !partial && typeof errorText === "string" && errorText.length > 0) state = "output-error";
       // A bash tool can return a process receipt; it is not proof that the
       // command completed successfully.
       if (tool === "bash" && state === "output-available" && !partial) state = bashResultState(output);

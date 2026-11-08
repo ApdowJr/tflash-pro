@@ -9,6 +9,7 @@ import { jsonError } from "@/lib/http/api-response";
  * - a hard boundary, so an unexpected throw becomes a JSON 500 instead of a
  *   framework HTML error page or a leaked stack trace
  * - one structured log line with status and duration, with credentials redacted
+ * - no-store/nosniff on every response, including redirects and OAuth callbacks
  *
  * The handler still owns its status codes and body shape. Errors that occur
  * before a response exists are the wrapper's responsibility.
@@ -16,24 +17,23 @@ import { jsonError } from "@/lib/http/api-response";
 
 export const REQUEST_ID_HEADER = "x-request-id";
 
-export type ApiRouteContext = {
-  readonly requestId: string;
-  readonly logger: ReturnType<typeof createLogger>;
-  readonly startedAt: number;
-};
-
 type Handler<Args extends readonly unknown[]> = (
   request: Request,
-  context: ApiRouteContext,
   ...args: Args
 ) => Promise<Response> | Response;
 
 function withHeaders(response: Response, requestId: string): Response {
-  // A body already read (or a body-less 204) is still re-wrappable; headers are
-  // copied so route-specific values such as content-type survive untouched.
-  const patched = new Response(response.body, response);
-  patched.headers.set(REQUEST_ID_HEADER, requestId);
-  return patched;
+  // Preserve status, body, content type, and Set-Cookie (including multiple
+  // cookies) while adding the boundary headers. Body-less 204/304 responses
+  // must not be reconstructed with a body.
+  const headers = new Headers(response.headers);
+  headers.set(REQUEST_ID_HEADER, requestId);
+  headers.set("cache-control", "no-store");
+  headers.set("x-content-type-options", "nosniff");
+  if (response.status === 204 || response.status === 205 || response.status === 304) {
+    return new Response(null, { status: response.status, statusText: response.statusText, headers });
+  }
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
 /**
@@ -48,9 +48,10 @@ export function apiRoute<Args extends readonly unknown[]>(
   return async (request, ...args) => {
     const requestId = normalizeRequestId(request.headers.get(REQUEST_ID_HEADER)) ?? newRequestId();
     const startedAt = Date.now();
-    const context: ApiRouteContext = { requestId, logger, startedAt };
     try {
-      const response = await handler(request, context, ...args);
+      // Next passes its own dynamic route context ({ params }) as the second
+      // argument. Never displace it with wrapper metadata.
+      const response = await handler(request, ...args);
       const durationMs = Date.now() - startedAt;
       const level = response.status >= 500 ? "error" : response.status >= 400 ? "warn" : "info";
       logger[level]("request", {

@@ -1937,6 +1937,21 @@ test("collapsed shell tool labels show failed, partial and unknown outcomes with
   assert.ok(await screen.findByText(/Exited with code 2/));
 });
 
+test("a settled Eve tool with errorText is failed even when its state is completed", async () => {
+  const { AgentMessage } = await import("../components/chat/agent-message.tsx");
+  seed(); fakeFetch();
+  const message = { id: "settled-error", role: "assistant", parts: [{
+    type: "tool", callId: "failed-check", stepIndex: 0, kind: "tool", name: "bash", label: "bash",
+    state: "completed", input: { command: "pnpm test" },
+    output: { status: "completed", exitCode: 0, stdout: "", stderr: "", truncated: false },
+    error: { code: "TOOL_ERROR", message: "exit code: 2" },
+  }] };
+  render(app(h(AgentMessage, { message, isStreaming: false, canRespond: () => false, questionsFor: () => [], onInputResponses() {} })));
+  const header = await screen.findByRole("button", { name: /bash/ });
+  assert.match(header.textContent, /Failed/);
+  assert.doesNotMatch(header.textContent, /Completed/);
+});
+
 test("shell status labels are translated in Somali", async () => {
   const { AgentMessage } = await import("../components/chat/agent-message.tsx");
   seed({language:'so'}); fakeFetch();

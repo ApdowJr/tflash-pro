@@ -8,15 +8,18 @@ import { internalEveHeaders, internalOrigin } from "@/lib/security/internal-orig
 import { guardRateLimit } from "@/lib/security/rate-limits";
 import { waitWithAbort } from "@/lib/abortable";
 import { HEADER_AGENT_MODE, parseAgentMode } from "@/lib/agent-modes";
+import { createLogger } from "@/lib/observability/logger";
+import { apiRoute } from "@/lib/http/api-route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const noStore = { "cache-control": "no-store" };
+const logger = createLogger("chats");
 
 /** Do not expose database details or silently fall back to another account. */
 function chatStorageFailure(error: { code?: string; message?: string }, creationNotStarted = false): Response {
   const missingSchema = ["42P01", "42703", "PGRST204", "PGRST205"].includes(error.code ?? "");
-  console.error("[tflash] chat storage unavailable", error.code ?? "unknown", error.message ?? "unknown");
+  logger.error("chat storage unavailable", { code: error.code ?? "unknown", error: error.message ?? "unknown" });
   return Response.json({
     code: missingSchema ? "CHAT_STORAGE_SETUP_REQUIRED" : "CHAT_STORAGE_UNAVAILABLE",
     ...(creationNotStarted ? { creationNotStarted: true } : {}),
@@ -26,7 +29,7 @@ function chatStorageFailure(error: { code?: string; message?: string }, creation
   }, { status: 503, headers: noStore });
 }
 
-export async function GET(request?: Request): Promise<Response> {
+async function handleGet(request: Request): Promise<Response> {
   const principal = await currentPrincipal();
   if (!principal) return Response.json({ error: "Sign in to continue." }, { status: 401 });
   // New clients bind the response to the identity that initiated the request.
@@ -59,7 +62,7 @@ export async function GET(request?: Request): Promise<Response> {
   return Response.json({ chats, storage: "account" }, { headers: noStore });
 }
 
-export async function POST(request: Request): Promise<Response> {
+async function handlePost(request: Request): Promise<Response> {
   if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
     return Response.json({ error: "Expected JSON." }, { status: 415 });
   }
@@ -107,7 +110,7 @@ export async function POST(request: Request): Promise<Response> {
     }, () => {});
     const response = await waitWithAbort(pending, signal);
     if (!response.ok) {
-      console.error("[tflash] eve session creation failed", response.status);
+      logger.error("eve session creation failed", { status: response.status });
       return Response.json({ error: "Could not start a conversation. Please try again." }, { status: 503 });
     }
     const body = (await waitWithAbort(response.json(), signal)) as { sessionId?: unknown };
@@ -127,7 +130,10 @@ export async function POST(request: Request): Promise<Response> {
     if (error) return chatStorageFailure(error);
     return Response.json({ sessionId }, { status: 201, headers: noStore });
   } catch (error) {
-    console.error("[tflash] session creation unavailable", error instanceof Error ? error.message : "unknown error");
+    logger.error("session creation unavailable", { error });
     return Response.json({ error: "Conversation service is unavailable.", ...(!creationStarted ? { creationNotStarted: true } : {}) }, { status: 503, headers: noStore });
   }
 }
+
+export const GET = apiRoute("chats", handleGet);
+export const POST = apiRoute("chats", handlePost);

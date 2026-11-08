@@ -5,6 +5,9 @@ import { selectionFromAttributes } from "@/lib/providers/selection";
 
 /** The channel stores the validated provider selection in session auth. */
 export default defineAgent({
+  // Opt in to every default tool explicitly. Eve rc.6 adds write/edit defaults
+  // without approval; Coder writes stay behind the authored, approved tools.
+  defaultTools: false,
   model: defineDynamic(async (ctx) => {
     const auth = ctx.session.auth.current ?? ctx.session.auth.initiator;
     const selection = selectionFromAttributes(auth?.attributes);

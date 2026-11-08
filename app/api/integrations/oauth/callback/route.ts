@@ -5,13 +5,14 @@ import { sealIntegrationToken } from "@/lib/integrations/credentials";
 import { exchangeCode, openOAuthState } from "@/lib/integrations/oauth";
 import { OAUTH_HANDOFF_COOKIE, OAUTH_HANDOFF_TTL_MS } from "@/lib/integrations/wire";
 import { backToApp, callbackUrl, constantTimeEqual, flowCookie, flowCookieName, readCookie } from "../http";
+import { apiRoute } from "@/lib/http/api-route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const REFRESHABLE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const STATIC_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-export async function GET(request: Request): Promise<Response> {
+async function handleGet(request: Request): Promise<Response> {
   const principal = await currentPrincipal();
   if (!principal) return Response.json({ error: "Sign in to continue." }, { status: 401 });
   const params = new URL(request.url).searchParams;
@@ -57,3 +58,5 @@ export async function GET(request: Request): Promise<Response> {
     return finish(backToApp(request, { integration: state.integrationId, oauth: exchangeAttempted ? "exchange_uncertain" : "misconfigured" }, state.returnTo));
   }
 }
+
+export const GET = apiRoute("integrations:oauth:callback", handleGet);

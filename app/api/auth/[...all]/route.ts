@@ -1,7 +1,10 @@
 import { toNextJsHandler } from "better-auth/next-js";
 import { auth, authConfigured, missingAuthEnv } from "@/lib/auth";
+import { apiRoute } from "@/lib/http/api-route";
+import { createLogger } from "@/lib/observability/logger";
 
 const handler = toNextJsHandler(auth);
+const logger = createLogger("auth");
 
 /**
  * Accounts are optional. When the deployment has no auth credentials the
@@ -29,7 +32,7 @@ function guarded(
       return await method(request);
     } catch (error) {
       // Misconfiguration should read like misconfiguration, not like a crash.
-      console.error("[auth] request failed:", error);
+      logger.error("auth request failed", { error });
       return Response.json(
         {
           error: "auth_unavailable",
@@ -41,5 +44,5 @@ function guarded(
   };
 }
 
-export const GET = guarded(handler.GET);
-export const POST = guarded(handler.POST);
+export const GET = apiRoute("auth", guarded(handler.GET));
+export const POST = apiRoute("auth", guarded(handler.POST));
