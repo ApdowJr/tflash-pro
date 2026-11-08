@@ -205,7 +205,7 @@ function AgentMessagePart({
         toolPart.state === "approval-responded" ? (toolPart.approval?.approved === true ? "activityApproved" : toolPart.approval?.approved === false ? "activityDenied" : "activityPending") :
         toolPart.state === "input-streaming" ? "activityPreparing" :
         toolPart.state === "input-available" || (toolPart.state === "output-available" && toolPart.partial) ? "activityRunning" :
-        toolPart.state === "output-denied" ? "activityDenied" : toolPart.state === "output-error" || bashState === "output-error" ? "activityFailed" :
+        toolPart.state === "output-denied" ? "activityDenied" : toolPart.state === "output-error" || bashState === "output-error" || (toolPart.state === "output-available" && !toolPart.partial && Boolean(toolPart.errorText)) ? "activityFailed" :
         bashState === "background-unknown" ? "activityBackgroundUnknown" : bashState === "outcome-unknown" ? "activityOutcomeUnknown" : undefined;
       return (
         <>
@@ -510,7 +510,7 @@ function toToolPresentationPart(part: EveToolPart): ToolPresentationPart {
       : interaction?.outcome === "declined"
         ? { approved: false }
         : undefined,
-    errorText: part.state === "failed" ? part.error?.message : undefined,
+    errorText: part.state === "failed" || part.state === "completed" ? part.error?.message : undefined,
     input: part.state === "streaming" ? part.inputText : part.input,
     output: part.state === "completed" ? part.output : undefined,
     partial: part.state === "streaming" || (part as unknown as { partial?: unknown }).partial === true,

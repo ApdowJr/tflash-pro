@@ -3,6 +3,7 @@ import { readBoundedJson } from "@/lib/bounded-json";
 import { ownedChat } from "@/lib/security/owned-chat";
 import { taskDefinitionSchema } from "@/lib/tracked-task";
 import { getTask, setTask, settleTask } from "@/lib/tracked-task-store";
+import { apiRoute } from "@/lib/http/api-route";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const headers = { "cache-control": "no-store" };
@@ -14,7 +15,7 @@ async function ownerFor(req: Request, ctx: Context) {
   const o = await ownedChat(req, sessionId);
   return o ? { kind: o.kind, id: o.userId, sessionId } : null;
 }
-export async function GET(req: Request, ctx: Context) {
+async function handleGet(req: Request, ctx: Context) {
   const o = await ownerFor(req, ctx);
   if (!o) return reply({ error: "Conversation not available.", changeNotStarted: true }, 404);
   try {
@@ -23,7 +24,7 @@ export async function GET(req: Request, ctx: Context) {
     return reply({ error: "Task storage unavailable." }, 503);
   }
 }
-export async function PUT(req: Request, ctx: Context) {
+async function handlePut(req: Request, ctx: Context) {
   if (req.headers.get("origin") !== new URL(req.url).origin)
     return reply({ error: "Same-origin request required.", changeNotStarted: true }, 403);
   if (
@@ -46,7 +47,7 @@ export async function PUT(req: Request, ctx: Context) {
     return reply({ error: "Task storage unavailable." }, 503);
   }
 }
-export async function DELETE(req: Request, ctx: Context) {
+async function handleDelete(req: Request, ctx: Context) {
   if (req.headers.get("origin") !== new URL(req.url).origin)
     return reply({ error: "Same-origin request required.", changeNotStarted: true }, 403);
   const o = await ownerFor(req, ctx);
@@ -65,3 +66,7 @@ export async function DELETE(req: Request, ctx: Context) {
     return reply({ error: "Task storage unavailable." }, 503);
   }
 }
+
+export const GET = apiRoute("chats:task", handleGet);
+export const PUT = apiRoute("chats:task", handlePut);
+export const DELETE = apiRoute("chats:task", handleDelete);

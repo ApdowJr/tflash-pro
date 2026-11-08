@@ -1,6 +1,6 @@
-# Eve 1.0.0-rc.1 — Zod security backport
+# Eve 1.0.0-rc.6 — Zod security backport
 
-This is a **source backport**, not an advisory exclusion, runtime monkey-patch or framework upgrade. It was regenerated against the exact Eve 1.0.0-rc.1 bundle after confirming that it still embeds vulnerable Zod 4.5.4 and retains the reviewed parser/codegen anchors. pnpm's `patchedDependencies` applies `eve@1.0.0-rc.1.patch`; the lockfile pins its hash. No postinstall rewriting is used.
+This is a **source backport**, not an advisory exclusion, runtime monkey-patch or framework upgrade. It was regenerated against the exact Eve 1.0.0-rc.6 bundle after confirming that it still embeds vulnerable Zod 4.5.4 and retains the reviewed parser/codegen anchors. pnpm's `patchedDependencies` applies `eve@1.0.0-rc.6.patch`; the lockfile pins its hash. No postinstall rewriting is used.
 
 ## Provenance and scope
 
@@ -14,10 +14,10 @@ The generated patch is large because the original shared chunk is minified. Revi
 
 ## Reproduce (maintainers only)
 
-From the repository root, using Node 24:
+From the repository root, using Node 24.22.2:
 
 ```sh
-corepack pnpm patch eve@1.0.0-rc.1 --ignore-existing --edit-dir /tmp/tflash-eve-backport
+corepack pnpm patch eve@1.0.0-rc.6 --ignore-existing --edit-dir /tmp/tflash-eve-backport
 node scripts/build-eve-zod-backport.mjs /tmp/tflash-eve-backport
 corepack pnpm patch-commit /tmp/tflash-eve-backport
 corepack pnpm install --frozen-lockfile

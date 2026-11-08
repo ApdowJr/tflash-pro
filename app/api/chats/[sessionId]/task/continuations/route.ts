@@ -3,6 +3,7 @@ import { readBoundedJson } from "@/lib/bounded-json";
 import { ownedChat } from "@/lib/security/owned-chat";
 import { continuationMutation, pendingContinuation, reviewedContinuations } from "@/lib/continuation-store";
 import { parseContinuationSnapshot } from "@/lib/continuation-snapshot";
+import { apiRoute } from "@/lib/http/api-route";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const reply = (body: object, status = 200) => Response.json(body, { status, headers: { "cache-control": "no-store" } });
@@ -12,7 +13,7 @@ async function owner(req: Request, ctx: Context) {
   const o = await ownedChat(req, sessionId);
   return o ? { kind: o.kind, id: o.userId, sessionId } : null;
 }
-export async function GET(req: Request, ctx: Context) {
+async function handleGet(req: Request, ctx: Context) {
   const o = await owner(req, ctx);
   if (!o) return reply({ error: "Conversation not available.", continuationNotStarted: true }, 404);
   try {
@@ -29,7 +30,7 @@ const input = z.discriminatedUnion("action", [
   z.object({ action: z.literal("hold"), attemptId: z.uuid(), expectedRevision: z.uuid(), note: z.string().trim().min(10).max(1000) }).strict(),
   z.object({ action: z.literal("resolve"), attemptId: z.uuid(), expectedRevision: z.uuid(), reviewed: z.literal(true), note: z.string().trim().min(10).max(1000) }).strict(),
 ]);
-export async function POST(req: Request, ctx: Context) {
+async function handlePost(req: Request, ctx: Context) {
   if (req.headers.get("origin") !== new URL(req.url).origin) return reply({ error: "Same-origin request required.", continuationNotStarted: true }, 403);
   if (!req.headers.get("content-type")?.toLowerCase().startsWith("application/json")) return reply({ error: "Expected JSON.", continuationNotStarted: true }, 415);
   const o = await owner(req, ctx);
@@ -43,3 +44,6 @@ export async function POST(req: Request, ctx: Context) {
     return ok ? reply({ ok: true }) : reply({ error: "Continuation changed; refresh and review.", continuationNotStarted: true }, 409);
   } catch { return reply({ error: "Continuation state unconfirmed. Refresh and review before trying again." }, 503); }
 }
+
+export const GET = apiRoute("chats:task:continuations", handleGet);
+export const POST = apiRoute("chats:task:continuations", handlePost);

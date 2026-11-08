@@ -2,6 +2,7 @@ import { expectedPrincipalMatches } from "@/lib/security/expected-principal";
 import { currentPrincipal } from "@/lib/identity";
 import { openJson } from "@/lib/secrets";
 import { OAUTH_HANDOFF_COOKIE, OAUTH_HANDOFF_TTL_MS } from "@/lib/integrations/wire";
+import { apiRoute } from "@/lib/http/api-route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,7 +36,7 @@ function readCookie(request: Request, name: string): string | undefined {
  * The cookie is deleted on read: the sealed record then lives in the browser's
  * own settings, exactly like a token the developer pasted.
  */
-export async function GET(request: Request): Promise<Response> {
+async function handleGet(request: Request): Promise<Response> {
   const principal = await currentPrincipal();
   if (!principal) return Response.json({ connected: false }, { status: 401 });
   if (!expectedPrincipalMatches(request, principal)) return Response.json({ connected: false }, { status: 409, headers: { "cache-control": "no-store" } });
@@ -76,3 +77,5 @@ export async function GET(request: Request): Promise<Response> {
     { headers: { "cache-control": "no-store", "set-cookie": clear } },
   );
 }
+
+export const GET = apiRoute("integrations:oauth:result", handleGet);

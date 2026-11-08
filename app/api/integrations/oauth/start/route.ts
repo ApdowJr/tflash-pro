@@ -5,11 +5,12 @@ import { getIntegration } from "@/lib/integrations/catalog";
 import { buildAuthorizeUrl, newCodeVerifier, oauthConfigured, oauthProviderFor, registerOAuthClient, sealOAuthState } from "@/lib/integrations/oauth";
 import { OAUTH_STATE_TTL_MS } from "@/lib/integrations/wire";
 import { backToApp, callbackUrl, flowCookie } from "../http";
+import { apiRoute } from "@/lib/http/api-route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET(request: Request): Promise<Response> {
+async function handleGet(request: Request): Promise<Response> {
   const principal = await currentPrincipal();
   if (!principal) return Response.json({ error: "Sign in to continue." }, { status: 401 });
   const params = new URL(request.url).searchParams;
@@ -43,3 +44,5 @@ export async function GET(request: Request): Promise<Response> {
     return backToApp(request, { integration: integration.id, oauth: registrationAttempted ? "registration_uncertain" : "misconfigured" }, returnTo);
   }
 }
+
+export const GET = apiRoute("integrations:oauth:start", handleGet);

@@ -1,4 +1,4 @@
-// Maintainer-only generator for `pnpm patch eve@1.0.0-rc.1 --edit-dir <dir>`.
+// Maintainer-only generator for `pnpm patch eve@1.0.0-rc.6 --edit-dir <dir>`.
 // Not a postinstall hook. pnpm applies the committed, lockfile-hashed patch.
 import { readFile, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -9,12 +9,12 @@ if (!directory)
   throw new Error(
     "Usage: node scripts/build-eve-zod-backport.mjs <pnpm-patch-directory>",
   );
-const packageVersion = "1.0.0-rc.1";
-const chunk = "dist/src/compiled/_chunks/client/core-BsvaaMUJ.js";
+const packageVersion = "1.0.0-rc.6";
+const chunk = "dist/src/compiled/_chunks/client/core-BBvrU4Ut.js";
 const helper = "dist/src/compiled/_chunks/client/tflash-zod-size-guard.js";
 const hash = (text) => createHash("sha256").update(text).digest("hex");
 const originalSha256 =
-  "4940e7a6ca0ca3a2e6295a76fe9d742f8c94ceb27f9356f471711196520c7145";
+  "aa937792f67e833e085147675f27f063ceec73e27268c19553ab9abf7bf969b9";
 const pkg = JSON.parse(
   await readFile(path.join(directory, "package.json"), "utf8"),
 );

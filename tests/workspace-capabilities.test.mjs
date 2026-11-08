@@ -132,6 +132,9 @@ test("bash activity does not equate a failed or background command with success"
   assert.equal(row({ status: "completed", exitCode: 0 }), "output-available");
   assert.equal(row({ status: "completed", exitCode: 1 }), "output-error");
   assert.equal(row({ status: "running", pid: 123 }), "background-unknown");
+  const withError = (error) => activityRows([{ role: "assistant", parts: [{ ...part, output: { status: "completed", exitCode: 0 }, ...error }] }])[0].state;
+  assert.equal(withError({ errorText: "exit code: 2" }), "output-error");
+  assert.equal(withError({ error: { message: "exit code: 2" } }), "output-error");
   assert.equal(row(undefined), "outcome-unknown");
   const messages = [{ role: "assistant", parts: [{ ...part, output: { status: "completed", exitCode: 0 } }] }];
   const settled = (output) => [{ type: "task.settled", data: { callId: "a", status: "completed", output } }];

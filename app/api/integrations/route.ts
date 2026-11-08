@@ -3,6 +3,7 @@ import { currentPrincipal } from "@/lib/identity";
 import { INTEGRATIONS, integrationEnvKeys } from "@/lib/integrations/catalog";
 import { resolveIntegrationAuth, type ServerAuthMode } from "@/lib/integrations/connection";
 import { oauthConfigured, oauthProviderFor } from "@/lib/integrations/oauth";
+import { apiRoute } from "@/lib/http/api-route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,7 +37,7 @@ export type IntegrationsStatusResponse = {
   readonly serverTime: number;
 };
 
-export async function GET(request?: Request): Promise<Response> {
+async function handleGet(request: Request): Promise<Response> {
   const principal = await currentPrincipal();
   if (!principal) return Response.json({ error: "Sign in to continue." }, { status: 401 });
   if (!expectedPrincipalMatches(request, principal)) return Response.json({ error: "Account changed. Reload to continue." }, { status: 409, headers: { "cache-control": "no-store" } });
@@ -70,3 +71,5 @@ export async function GET(request?: Request): Promise<Response> {
   };
   return Response.json(body, { headers: { "cache-control": "no-store" } });
 }
+
+export const GET = apiRoute("integrations", handleGet);

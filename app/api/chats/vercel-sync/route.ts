@@ -3,6 +3,7 @@ import { currentPrincipal } from "@/lib/identity";
 import { readBoundedJson } from "@/lib/bounded-json";
 import { verifyChatOwnership } from "@/lib/security/chat-ownership";
 import { importVercelHistory, listVercelHistory, vercelHistoryEnabled } from "@/lib/vercel-history-store";
+import { apiRoute } from "@/lib/http/api-route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,7 +13,7 @@ const entry = z.object({
   updatedAt:z.number().int().min(0).max(4102444800000), proof:z.string().min(1).max(128),
 }).strict();
 
-export async function POST(request: Request) {
+async function handlePost(request: Request) {
   if (request.headers.get("origin") !== new URL(request.url).origin) return Response.json({ error:"Same-origin request required." },{status:403,headers});
   if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) return Response.json({ error:"Expected JSON." },{status:415,headers});
   const principal=await currentPrincipal();
@@ -32,3 +33,5 @@ export async function POST(request: Request) {
     return Response.json({storage:"account",chats:await listVercelHistory(principal.id)},{headers});
   } catch { return Response.json({error:"Could not sync conversations; local data was kept."},{status:503,headers}); }
 }
+
+export const POST = apiRoute("chats:vercel-sync", handlePost);

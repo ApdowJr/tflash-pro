@@ -5,6 +5,7 @@ import { searchEveStream } from "@/lib/chat-search-stream";
 import { OWNER_PROOF_HEADER } from "@/lib/security/chat-ownership";
 import { ownedChat } from "@/lib/security/owned-chat";
 import { internalEveHeaders, internalOrigin } from "@/lib/security/internal-origin";
+import { apiRoute } from "@/lib/http/api-route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,7 +28,7 @@ async function readQuery(request: Request): Promise<string | undefined> {
   return trimmed.length >= MIN_MESSAGE_QUERY_LENGTH && trimmed.length <= MAX_MESSAGE_QUERY_LENGTH ? trimmed : undefined;
 }
 
-export async function POST(request: Request, context: { params: Promise<{ sessionId: string }> }): Promise<Response> {
+async function handlePost(request: Request, context: { params: Promise<{ sessionId: string }> }): Promise<Response> {
   const origin = request.headers.get("origin");
   if (origin && origin !== new URL(request.url).origin) return reply({ error: "Invalid origin." }, 403);
   if (request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/json") return reply({ error: "Expected JSON." }, 415);
@@ -68,3 +69,5 @@ export async function POST(request: Request, context: { params: Promise<{ sessio
     activeSearches--;
   }
 }
+
+export const POST = apiRoute("chats:search", handlePost);

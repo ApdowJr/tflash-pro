@@ -5,8 +5,8 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-const packageVersion = "1.0.0-rc.1";
-const chunk = "dist/src/compiled/_chunks/client/core-BsvaaMUJ.js";
+const packageVersion = "1.0.0-rc.6";
+const chunk = "dist/src/compiled/_chunks/client/core-BBvrU4Ut.js";
 const helper = "dist/src/compiled/_chunks/client/tflash-zod-size-guard.js";
 const commit = "a0ebf970f2d752e5f58527cd2942ff48be4f46bd";
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");

@@ -3,6 +3,7 @@ import { openIntegrationTokenForRefresh, sealIntegrationToken } from "@/lib/inte
 import { getIntegration } from "@/lib/integrations/catalog";
 import { refreshOAuthToken } from "@/lib/integrations/oauth";
 import { readBoundedJson } from "@/lib/bounded-json";
+import { apiRoute } from "@/lib/http/api-route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,7 +17,7 @@ const REFRESHABLE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
  * talks to the provider, and returns a *new* sealed record. No plaintext token
  * ever crosses the wire in either direction.
  */
-export async function POST(request: Request): Promise<Response> {
+async function handlePost(request: Request): Promise<Response> {
   const principal = await currentPrincipal();
   if (!principal) return Response.json({ ok: false, message: "Sign in to continue." }, { status: 401 });
   if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) return Response.json({ ok: false, message: "Expected JSON." }, { status: 415 });
@@ -84,3 +85,5 @@ export async function POST(request: Request): Promise<Response> {
     { headers: { "cache-control": "no-store" } },
   );
 }
+
+export const POST = apiRoute("integrations:oauth:refresh", handlePost);
