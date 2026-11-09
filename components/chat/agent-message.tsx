@@ -2,7 +2,7 @@
 
 import type { EveMessage, EveMessagePart, EveToolPart } from "eve/react";
 import { signInEnding } from "eve/events";
-import { memo, useRef, useState, type FormEvent } from "react";
+import { memo, useEffect, useRef, useState, type FormEvent } from "react";
 import { bashResultState } from "@/lib/activity";
 import { planOutputSchema, artifactOutputSchema } from "@/lib/agent-workspace";
 import { AgentPlanCard, AgentArtifactCard } from "./agent-workspace";
@@ -41,6 +41,7 @@ import {
 } from "@/components/ui/questionnaire";
 import { cn } from "@/lib/utils";
 import { useAppSettings } from "@/components/settings/app-settings";
+import { Textarea } from "@/components/ui/textarea";
 
 export type AgentInputResponse = {
   readonly interactionId: string;
@@ -73,17 +74,37 @@ type ToolPresentationPart = {
 
 export const AgentMessage = memo(function AgentMessage({
   canRespond,
+  editing = false,
   isStreaming,
   message,
+  onCancelEdit,
   onInputResponses,
+  onSaveEdit,
   questionsFor,
 }: {
   readonly canRespond: (interactionId: string) => boolean;
+  readonly editing?: boolean;
   readonly isStreaming: boolean;
   readonly message: EveMessage;
+  readonly onCancelEdit?: () => void;
   readonly onInputResponses: (responses: readonly AgentInputResponse[]) => void | Promise<void>;
+  readonly onSaveEdit?: (text: string) => Promise<void>;
   readonly questionsFor: (callId: string) => readonly EveInteraction[];
 }) {
+  const { t } = useAppSettings();
+  const initialUserText = message.role === "user"
+    ? message.parts
+        .filter((part): part is Extract<EveMessagePart, { type: "text" }> => part.type === "text")
+        .map((part) => part.text)
+        .join("\n\n")
+    : "";
+  const [editDraft, setEditDraft] = useState(initialUserText);
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  useEffect(() => {
+    if (editing) setEditDraft(initialUserText);
+  }, [editing, initialUserText]);
+
   const lastTextIndex = message.parts.reduce(
     (last, part, index) => (part.type === "text" ? index : last),
     -1,
@@ -91,6 +112,51 @@ export const AgentMessage = memo(function AgentMessage({
   const hasAssistantText =
     message.role === "assistant" &&
     message.parts.some((part) => part.type === "text" && part.text.length > 0);
+
+  if (editing && message.role === "user" && onSaveEdit) {
+    const trimmed = editDraft.trim();
+    const submitEdit = async () => {
+      if (!trimmed || savingEdit) return;
+      setSavingEdit(true);
+      try {
+        await onSaveEdit(trimmed);
+      } finally {
+        setSavingEdit(false);
+      }
+    };
+    return (
+      <Message data-optimistic={message.metadata?.optimistic ? "true" : undefined} from="user">
+        <MessageContent className="w-full max-w-xl">
+          <div className="space-y-2 rounded-xl border bg-background p-2.5 text-foreground">
+            <Textarea
+              aria-label={t("editingMessage")}
+              className="min-h-20 resize-y border-0 bg-transparent p-1 text-sm shadow-none focus-visible:ring-0"
+              disabled={savingEdit}
+              onChange={(event) => setEditDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  onCancelEdit?.();
+                } else if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void submitEdit();
+                }
+              }}
+              value={editDraft}
+            />
+            <div className="flex items-center justify-end gap-1.5">
+              <Button disabled={savingEdit} onClick={() => onCancelEdit?.()} size="sm" type="button" variant="ghost">
+                {t("cancel")}
+              </Button>
+              <Button disabled={savingEdit || !trimmed} onClick={() => void submitEdit()} size="sm" type="button">
+                {t("saveAndResend")}
+              </Button>
+            </div>
+          </div>
+        </MessageContent>
+      </Message>
+    );
+  }
 
   return (
     <Message
@@ -268,6 +334,7 @@ function QuestionRequest({
   readonly interaction: EveInteraction;
   readonly onInputResponses: (responses: readonly AgentInputResponse[]) => void | Promise<void>;
 }) {
+  const { t } = useAppSettings();
   const [draft, setDraft] = useState("");
   const [submittedOption, setSubmittedOption] = useState<string>();
   const options = interaction.request.options ?? [];
@@ -322,12 +389,12 @@ function QuestionRequest({
           ))}
           {acceptsFreeform ? (
             <QuestionnaireInput
-              aria-label="Answer"
+              aria-label={t("questionAnswerSubmit")}
               className={cn(inputResponse?.text !== undefined && "disabled:opacity-100")}
               defaultValue={inputResponse?.text ?? draft}
               onChange={event => setDraft(event.target.value)}
               disabled={disabled}
-              placeholder="Type your answer…"
+              placeholder={t("questionAnswerPlaceholder")}
             />
           ) : null}
         </QuestionnaireChoices>
@@ -335,7 +402,7 @@ function QuestionRequest({
       </QuestionnaireItem>
       {disabled ? null : (
         <QuestionnaireActions>
-          <QuestionnaireSubmit size="sm">Answer</QuestionnaireSubmit>
+          <QuestionnaireSubmit size="sm">{t("questionAnswerSubmit")}</QuestionnaireSubmit>
         </QuestionnaireActions>
       )}
     </Questionnaire>
@@ -343,7 +410,8 @@ function QuestionRequest({
 }
 
 function AttachmentPart({ part }: { readonly part: EveFilePart }) {
-  const label = part.filename ?? "Attachment";
+  const { t } = useAppSettings();
+  const label = part.filename ?? t("attachmentLabel");
   const detail = [part.mediaType, formatBytes(part.size)].filter(Boolean).join(" - ");
   const isImage = part.mediaType.startsWith("image/") && part.url !== undefined;
   const Icon = isImage ? ImageIcon : FileIcon;
@@ -374,8 +442,9 @@ function AttachmentPart({ part }: { readonly part: EveFilePart }) {
 }
 
 function AuthorizationPrompt({ part }: { readonly part: Extract<EveMessagePart, { type: "interaction" }> }) {
+  const { t } = useAppSettings();
   const challenge = part.request.signIn;
-  const displayName = challenge?.displayName ?? challenge?.name ?? "service";
+  const displayName = challenge?.displayName ?? challenge?.name ?? t("authDefaultService");
   const ending = part.status === "settled" && part.outcome ? signInEnding(part.outcome) : undefined;
   const isAuthorized = ending === "connected";
   const isCompleted = part.status === "settled";
@@ -383,16 +452,16 @@ function AuthorizationPrompt({ part }: { readonly part: Extract<EveMessagePart, 
   const instructions = challenge?.instructions;
   const shouldShowInstructions = instructions !== undefined && instructions !== part.request.prompt;
   const signInUrl = challenge?.url ?? part.request.link?.url;
-  const signInLabel = part.request.link?.label ?? `Sign in with ${displayName}`;
+  const signInLabel = part.request.link?.label ?? `${t("authSignInWith")} ${displayName}`;
   const title = isAuthorized
-    ? `${displayName} connected`
+    ? `${displayName} ${t("authConnectedSuffix")}`
     : isCompleted
-      ? `${displayName} authorization ${ending ?? "ended"}`
-      : part.request.title ?? `Connect ${displayName}`;
+      ? `${displayName} ${t("authAuthSuffix")} ${ending ?? t("authEndedFallback")}`
+      : part.request.title ?? `${t("authConnectPrefix")} ${displayName}`;
   const description = isAuthorized
-    ? `${displayName} connected.`
+    ? `${displayName} ${t("authConnectedSuffix")}.`
     : isCompleted
-      ? `${displayName} authorization ${ending ?? "ended"}${part.reason ? ` (${part.reason})` : ""}.`
+      ? `${displayName} ${t("authAuthSuffix")} ${ending ?? t("authEndedFallback")}${part.reason ? ` (${part.reason})` : ""}.`
       : part.request.prompt;
 
   return (
@@ -407,7 +476,7 @@ function AuthorizationPrompt({ part }: { readonly part: Extract<EveMessagePart, 
           {shouldShowInstructions ? <p className="text-pretty text-muted-foreground text-[12px] leading-relaxed">{instructions}</p> : null}
           {part.status === "open" && challenge?.userCode ? (
             <div className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="text-muted-foreground">Code</span>
+              <span className="text-muted-foreground">{t("authCodeLabel")}</span>
               <code className="rounded-md bg-background px-2 py-1 font-mono">{challenge.userCode}</code>
             </div>
           ) : null}
@@ -554,7 +623,7 @@ export function InputRequestActions({
   const options = inputRequest.request.options ?? [];
   const selectedOption = options.find((option) => option.id === inputResponse?.optionId);
   const settledApproval = inputRequest.status === "settled"
-    ? inputRequest.outcome === "accepted" ? "Approved" : inputRequest.outcome === "declined" ? "Denied" : undefined
+    ? inputRequest.outcome === "accepted" ? t("approvedLabel") : inputRequest.outcome === "declined" ? t("deniedLabel") : undefined
     : undefined;
 
   return (
@@ -567,7 +636,7 @@ export function InputRequestActions({
       </details>
       {!inputResponse && !settledApproval ? <p className="text-muted-foreground text-xs">{t("approvalScope")}</p> : null}
       {inputResponse || settledApproval ? (
-        <p className="font-medium text-sm">Responded: {selectedOption?.label ?? inputResponse?.text ?? inputResponse?.optionId ?? settledApproval}</p>
+        <p className="font-medium text-sm">{t("respondedPrefix")} {selectedOption?.label ?? inputResponse?.text ?? inputResponse?.optionId ?? settledApproval}</p>
       ) : (
         <div className="flex flex-wrap gap-2">
           {options.map((option) => (

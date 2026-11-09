@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import type { Language } from "@/components/settings/i18n";
 
 /**
  * Last-resort boundary: it replaces the root layout, so it must render its own
@@ -14,12 +15,22 @@ export default function GlobalError({
   readonly error: Error & { digest?: string };
   readonly reset: () => void;
 }) {
+  const [language, setLanguage] = useState<Language>("en");
+
   useEffect(() => {
     console.error("[tflash] root error", error.digest ?? "no-digest", error.message);
   }, [error]);
 
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem("tflash:language") === "so") setLanguage("so");
+    } catch { /* ignore */ }
+  }, []);
+
+  const so = language === "so";
+
   return (
-    <html lang="en">
+    <html lang={language}>
       <body
         style={{
           margin: 0,
@@ -38,11 +49,12 @@ export default function GlobalError({
             Tflash
           </p>
           <h1 style={{ fontSize: "1.4rem", margin: "0.4rem 0 0.6rem" }}>
-            The app could not start
+            {so ? "App-ku ma bilaaban karin" : "The app could not start"}
           </h1>
           <p style={{ margin: "0 0 1.25rem", fontSize: "0.9rem", opacity: 0.75 }}>
-            A critical error stopped the page from loading entirely. Reload to try again; if the
-            message repeats, the deployment needs attention.
+            {so
+              ? "Khalad culus ayaa joojiyay in boggu soo baxo. Dib u soo celi si aad mar kale isku daydo; haddii khaladku soo noqnoqdo, hubi dejinta adeegga."
+              : "A critical error stopped the page from loading entirely. Reload to try again; if the message repeats, the deployment needs attention."}
           </p>
           <button
             onClick={reset}
@@ -56,7 +68,7 @@ export default function GlobalError({
             }}
             type="button"
           >
-            Reload · Dib u soo celi
+            {so ? "Dib u soo celi" : "Reload"}
           </button>
           {error.digest ? (
             <p style={{ marginTop: "1rem", fontSize: "0.7rem", opacity: 0.5, fontFamily: "ui-monospace, monospace" }}>

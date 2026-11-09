@@ -14,6 +14,8 @@ export function ThemeInitializer() {
         document.documentElement.dataset.theme = resolved;
         document.documentElement.style.colorScheme = resolved;
       }
+      const language = window.localStorage.getItem("tflash:language");
+      if (language === "so" || language === "en") document.documentElement.lang = language;
     } catch {
       // Browser storage can be unavailable.
     }

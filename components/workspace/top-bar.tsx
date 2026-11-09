@@ -6,6 +6,8 @@ import {
   MessageSquarePlusIcon,
   MoonIcon,
   MoreHorizontalIcon,
+  PanelLeftCloseIcon,
+  PanelLeftOpenIcon,
   Settings2Icon,
   SparklesIcon,
   SunIcon,
@@ -29,6 +31,8 @@ export function TopBar({
   onNewChat,
   onOpenSidebar,
   sidebarOpen,
+  desktopCollapsed = false,
+  onToggleDesktopSidebar,
   onOpenSettings,
   onOpenModels,
   mode = "chat",
@@ -39,6 +43,8 @@ export function TopBar({
   readonly onNewChat: () => void;
   readonly onOpenSidebar: () => void;
   readonly sidebarOpen: boolean;
+  readonly desktopCollapsed?: boolean;
+  readonly onToggleDesktopSidebar?: () => void;
   readonly onOpenSettings: () => void;
   readonly onOpenModels: () => void;
   readonly mode?: AgentMode;
@@ -64,6 +70,20 @@ export function TopBar({
       >
         <MenuIcon className="size-4" />
       </button>
+
+      {onToggleDesktopSidebar ? (
+        <button
+          aria-controls="conversation-sidebar"
+          aria-expanded={!desktopCollapsed}
+          aria-label={t(desktopCollapsed ? "showSidebar" : "hideSidebar")}
+          className="-ml-1 hidden size-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:flex"
+          onClick={onToggleDesktopSidebar}
+          title={`${t(desktopCollapsed ? "showSidebar" : "hideSidebar")} (⌘B)`}
+          type="button"
+        >
+          {desktopCollapsed ? <PanelLeftOpenIcon className="size-4" /> : <PanelLeftCloseIcon className="size-4" />}
+        </button>
+      ) : null}
 
       <div className="flex min-w-0 flex-1 items-center gap-2.5">
         <span className="shrink-0 rounded-md border bg-card px-2 py-1 text-[10px] font-semibold text-muted-foreground">{modeLabel}</span>

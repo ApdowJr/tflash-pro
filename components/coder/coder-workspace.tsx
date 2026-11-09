@@ -1,7 +1,16 @@
 "use client";
 
 import { AgentPlanCard } from "@/components/chat/agent-workspace";
+import { useOptionalAppSettings } from "@/components/settings/app-settings";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import type { AgentPlan } from "@/lib/agent-workspace";
 import {
   languageForPath,
@@ -16,6 +25,7 @@ import {
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  CopyIcon,
   FileCode2Icon,
   FilePlus2Icon,
   FilesIcon,
@@ -23,11 +33,13 @@ import {
   GitCompareArrowsIcon,
   ListTodoIcon,
   LoaderCircleIcon,
+  Maximize2Icon,
+  Minimize2Icon,
   RefreshCwIcon,
   SearchIcon,
   SquareTerminalIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type WorkspaceTab = "code" | "changes" | "terminal" | "plan";
 type Draft = { content: string; baseSha256: string | null; sent: boolean };
@@ -108,8 +120,8 @@ function DirectoryItem({ node, depth, selectedPath, onSelect }: {
   </li>;
 }
 
-function DiffView({ diff }: { readonly diff: string }) {
-  return <pre aria-label="Workspace diff" className="min-h-0 flex-1 overflow-auto rounded-md border bg-muted/25 p-3 font-mono text-[11px] leading-5">
+function DiffView({ diff, label }: { readonly diff: string; readonly label: string }) {
+  return <pre aria-label={label} className="min-h-0 flex-1 overflow-auto rounded-md border bg-muted/25 p-3 font-mono text-[11px] leading-5">
     {diff.split("\n").map((line, index) => <span
       className={cn("block whitespace-pre", line.startsWith("+") && !line.startsWith("+++") && "bg-emerald-500/10 text-emerald-800 dark:text-emerald-300", line.startsWith("-") && !line.startsWith("---") && "bg-red-500/10 text-red-800 dark:text-red-300", line.startsWith("@@") && "text-brand")}
       key={`${index}:${line.slice(0, 30)}`}
@@ -118,19 +130,20 @@ function DiffView({ diff }: { readonly diff: string }) {
 }
 
 function CommandResult({ command, defaultOpen }: { readonly command: CoderCommand; readonly defaultOpen: boolean }) {
+  const { t } = useOptionalAppSettings();
   const succeeded = command.state === "completed" && command.exitCode === 0;
   return <details className="rounded-md border bg-card" open={defaultOpen}>
     <summary className="flex cursor-pointer list-none flex-wrap items-center gap-2 px-3 py-2.5">
       <span className={cn("size-1.5 shrink-0 rounded-full", succeeded ? "bg-emerald-500" : command.state === "completed" ? "bg-red-500" : "bg-amber-500")} />
       <code className="min-w-0 flex-1 break-all text-[11px]">{command.command}</code>
-      {command.isTest ? <span className="rounded bg-brand/10 px-1.5 py-0.5 text-[10px] text-brand">check</span> : null}
-      <span className="text-[10px] text-muted-foreground">{command.exitCode !== undefined ? `exit ${command.exitCode}` : command.state}</span>
+      {command.isTest ? <span className="rounded bg-brand/10 px-1.5 py-0.5 text-[10px] text-brand">{t("coderCheckBadge")}</span> : null}
+      <span className="text-[10px] text-muted-foreground">{command.exitCode !== undefined ? `${t("coderExitPrefix")} ${command.exitCode}` : command.state}</span>
     </summary>
     <div className="border-t p-3">
       {command.error ? <p className="mb-2 text-xs text-destructive" role="alert">{command.error}</p> : null}
-      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-5">{command.stdout || command.stderr || (command.state === "pending" ? "Waiting for a real command result…" : "No output")}</pre>
+      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-5">{command.stdout || command.stderr || (command.state === "pending" ? t("coderWaitingCommand") : t("coderNoOutput"))}</pre>
       {command.stderr && command.stdout ? <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words border-t pt-2 font-mono text-[11px] leading-5 text-destructive">{command.stderr}</pre> : null}
-      {command.truncated ? <p className="mt-2 text-[10px] text-muted-foreground">Output was truncated by the shell tool.</p> : null}
+      {command.truncated ? <p className="mt-2 text-[10px] text-muted-foreground">{t("coderOutputTruncated")}</p> : null}
     </div>
   </details>;
 }
@@ -149,6 +162,8 @@ export function CoderWorkspace({
   disabled = false,
   mobileVisible = false,
   pendingApprovals = 0,
+  expanded = false,
+  onToggleExpand,
   onCommand,
   onReviewApprovals,
 }: {
@@ -158,9 +173,12 @@ export function CoderWorkspace({
   readonly disabled?: boolean;
   readonly mobileVisible?: boolean;
   readonly pendingApprovals?: number;
+  readonly expanded?: boolean;
+  readonly onToggleExpand?: () => void;
   readonly onCommand: (text: string) => void;
   readonly onReviewApprovals: () => void;
 }) {
+  const { t, language } = useOptionalAppSettings();
   const [tab, setTab] = useState<WorkspaceTab>("code");
   const [selectedPath, setSelectedPath] = useState<string>();
   const [query, setQuery] = useState("");
@@ -170,6 +188,9 @@ export function CoderWorkspace({
   const [newFileError, setNewFileError] = useState("");
   const [repositoryUrl, setRepositoryUrl] = useState("");
   const [repositoryError, setRepositoryError] = useState("");
+  const [discardDialogOpen, setDiscardDialogOpen] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
+  const gutterRef = useRef<HTMLDivElement>(null);
   const snapshot = projection.snapshot;
   const documents = projection.documents;
   const document = selectedPath ? documents[selectedPath] : undefined;
@@ -181,6 +202,14 @@ export function CoderWorkspace({
   const allPaths = useMemo(() => [...new Set([...(snapshot?.files.map((file) => file.path) ?? []), ...Object.keys(documents), ...localPaths])], [snapshot, documents, localPaths.join("|")]);
   const visiblePaths = useMemo(() => allPaths.filter((path) => path.toLowerCase().includes(query.trim().toLowerCase())), [allPaths, query]);
   const tree = useMemo(() => fileTree(visiblePaths), [visiblePaths]);
+  const editorValue = draft?.content ?? document?.content ?? "";
+  const lineCount = useMemo(() => Math.max(1, editorValue.split("\n").length), [editorValue]);
+
+  useEffect(() => {
+    if (copyStatus === "idle") return;
+    const timer = window.setTimeout(() => setCopyStatus("idle"), 2000);
+    return () => window.clearTimeout(timer);
+  }, [copyStatus]);
 
   // A verified write replaces the corresponding local draft. Conflicting
   // drafts stay visible and must be explicitly discarded by the user.
@@ -218,12 +247,12 @@ export function CoderWorkspace({
   function createDraft() {
     try {
       const path = normalizeWorkspacePath(newFilePath.trim());
-      if (allPaths.includes(path) || documents[path]) throw new Error("That file already exists. Open it instead.");
+      if (allPaths.includes(path) || documents[path]) throw new Error(t("coderFileExists"));
       setSelectedPath(path);
       setDrafts((current) => ({ ...current, [path]: { content: "", baseSha256: null, sent: false } }));
       setNewFileOpen(false); setNewFilePath(""); setNewFileError("");
     } catch (error) {
-      setNewFileError(error instanceof Error ? error.message : "Enter a valid file path.");
+      setNewFileError(error instanceof Error ? error.message : t("coderInvalidPath"));
     }
   }
 
@@ -234,7 +263,7 @@ export function CoderWorkspace({
       setRepositoryError("");
       onCommand(`Clone this repository into the empty Coder sandbox. Call coder_repository_clone once with ${JSON.stringify({ url })}. Do not use bash as a substitute and do not push or change the remote repository.`);
     } catch (error) {
-      setRepositoryError(error instanceof Error ? error.message : "Enter a valid public repository URL.");
+      setRepositoryError(error instanceof Error ? error.message : t("coderInvalidRepoUrl"));
     }
   }
 
@@ -254,39 +283,54 @@ export function CoderWorkspace({
     setDrafts((current) => ({ ...current, [selectedPath]: { ...draft, sent: true } }));
   }
 
+  async function copyFileContent() {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable");
+      await navigator.clipboard.writeText(editorValue);
+      setCopyStatus("copied");
+    } catch {
+      setCopyStatus("failed");
+    }
+  }
+
   const changesCount = snapshot?.repository.changes.length ?? 0;
   const testCount = projection.commands.filter((command) => command.isTest).length;
   const tabs = [
-    { id: "code" as const, label: "Code", icon: FilesIcon },
-    { id: "changes" as const, label: `Changes${changesCount ? ` ${changesCount}` : ""}`, icon: GitCompareArrowsIcon },
-    { id: "terminal" as const, label: `Terminal${testCount ? ` · ${testCount} checks` : ""}`, icon: SquareTerminalIcon },
-    { id: "plan" as const, label: "Plan", icon: ListTodoIcon },
+    { id: "code" as const, label: t("coderTabCode"), icon: FilesIcon },
+    { id: "changes" as const, label: `${t("coderTabChanges")}${changesCount ? ` ${changesCount}` : ""}`, icon: GitCompareArrowsIcon },
+    { id: "terminal" as const, label: `${t("coderTabTerminal")}${testCount ? ` · ${testCount} ${t("coderTabChecksSuffix")}` : ""}`, icon: SquareTerminalIcon },
+    { id: "plan" as const, label: t("coderTabPlan"), icon: ListTodoIcon },
   ];
 
-  return <section aria-label="Coder workspace" data-coder-workspace className={cn(
-    "min-h-0 min-w-0 flex-col border-t bg-muted/10 xl:flex xl:border-t-0 xl:border-l",
+  const editAriaLabel = language === "so" ? `Wax ka beddel ${selectedPath}` : `Edit ${selectedPath}`;
+
+  return <section aria-label={t("coderWorkspaceLabel")} data-coder-workspace className={cn(
+    "min-h-0 min-w-0 flex-col border-t bg-muted/10 lg:flex lg:border-t-0 lg:border-l",
     mobileVisible ? "flex flex-1" : "hidden",
   )}>
     <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b bg-background px-3 py-2">
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <h2 className="text-sm font-semibold">Workspace</h2>
-          {projection.snapshotStale ? <span className="text-[10px] text-amber-700 dark:text-amber-300">refresh available</span> : null}
+          <h2 className="text-sm font-semibold">{t("coderWorkspaceTitle")}</h2>
+          {projection.snapshotStale ? <span className="text-[10px] text-amber-700 dark:text-amber-300">{t("coderRefreshAvailable")}</span> : null}
         </div>
         <p className="truncate text-[10px] text-muted-foreground" title={snapshot?.workspaceRoot}>
-          {snapshot ? snapshot.workspaceRoot : "No sandbox observation yet"}
+          {snapshot ? snapshot.workspaceRoot : t("coderNoSandboxYet")}
         </p>
       </div>
       {snapshot?.repository.isRepository ? <span className="flex max-w-40 items-center gap-1 rounded-md border px-2 py-1 text-[10px] text-muted-foreground">
-        <GitBranchIcon className="size-3 shrink-0" /><span className="truncate">{snapshot.repository.branch ?? "detached HEAD"}</span>
+        <GitBranchIcon className="size-3 shrink-0" /><span className="truncate">{snapshot.repository.branch ?? t("coderDetachedHead")}</span>
       </span> : null}
-      {pendingApprovals > 0 ? <Button className="h-8 text-[11px]" onClick={onReviewApprovals} size="sm" type="button" variant="outline">{pendingApprovals} approval{pendingApprovals === 1 ? "" : "s"}</Button> : null}
-      <Button aria-label="Refresh workspace" className="size-8" disabled={readOnly} onClick={syncWorkspace} size="icon" title="Ask Coder for a fresh sandbox observation" type="button" variant="ghost">
+      {pendingApprovals > 0 ? <Button className="h-8 text-[11px]" onClick={onReviewApprovals} size="sm" type="button" variant="outline">{pendingApprovals} {pendingApprovals === 1 ? t("coderApprovalSingular") : t("coderApprovalPlural")}</Button> : null}
+      <Button aria-label={t("coderRefreshWorkspace")} className="size-8" disabled={readOnly} onClick={syncWorkspace} size="icon" title={t("coderRefreshTitle")} type="button" variant="ghost">
         <RefreshCwIcon className={cn("size-4", isBusy && "animate-spin")} />
       </Button>
+      {onToggleExpand ? <Button aria-label={t(expanded ? "restoreSplitPane" : "expandWorkspace")} aria-pressed={expanded} className="hidden size-8 lg:inline-flex" onClick={onToggleExpand} size="icon" title={t(expanded ? "restoreSplitPane" : "expandWorkspace")} type="button" variant="ghost">
+        {expanded ? <Minimize2Icon className="size-4" /> : <Maximize2Icon className="size-4" />}
+      </Button> : null}
     </header>
 
-    <div aria-label="Workspace views" className="flex shrink-0 gap-1 overflow-x-auto border-b bg-background px-2 py-1.5" role="tablist">
+    <div aria-label={t("coderWorkspaceViews")} className="flex shrink-0 gap-1 overflow-x-auto border-b bg-background px-2 py-1.5" role="tablist">
       {tabs.map(({ id, label, icon: Icon }) => <button
         aria-selected={tab === id}
         className={cn("flex min-h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-[11px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring", tab === id && "bg-accent text-foreground")}
@@ -318,9 +362,9 @@ export function CoderWorkspace({
     {!snapshot && (tab === "code" || tab === "changes") ? <div className="flex flex-1 items-center justify-center p-6">
       <div className="max-w-sm text-center">
         <FilesIcon className="mx-auto mb-3 size-6 text-muted-foreground" />
-        <h3 className="text-sm font-medium">Inspect the real sandbox</h3>
-        <p className="mt-1.5 text-pretty text-xs leading-5 text-muted-foreground">Coder starts with an isolated workspace, not an automatic copy of your GitHub repository. Load its actual files and Git state before editing.</p>
-        <Button className="mt-4" disabled={readOnly} onClick={syncWorkspace} size="sm" type="button">Inspect sandbox</Button>
+        <h3 className="text-sm font-medium">{t("coderInspectSandboxTitle")}</h3>
+        <p className="mt-1.5 text-pretty text-xs leading-5 text-muted-foreground">{t("coderInspectSandboxBody")}</p>
+        <Button className="mt-4" disabled={readOnly} onClick={syncWorkspace} size="sm" type="button">{t("coderInspectSandboxAction")}</Button>
       </div>
     </div> : null}
 
@@ -328,45 +372,64 @@ export function CoderWorkspace({
       <aside className="flex min-h-0 min-w-0 flex-col border-r bg-background/60">
         <div className="flex items-center gap-1 border-b p-2">
           <label className="relative min-w-0 flex-1">
-            <span className="sr-only">Filter workspace files</span>
+            <span className="sr-only">{t("coderFilterFilesLabel")}</span>
             <SearchIcon className="absolute top-2 left-2 size-3 text-muted-foreground" />
-            <input className="h-7 w-full rounded border bg-background pr-1 pl-6 text-[16px] outline-none sm:text-[11px] focus:ring-1 focus:ring-ring" onChange={(event) => setQuery(event.target.value)} placeholder="Filter files" value={query} />
+            <input className="h-7 w-full rounded border bg-background pr-1 pl-6 text-[16px] outline-none sm:text-[11px] focus:ring-1 focus:ring-ring" onChange={(event) => setQuery(event.target.value)} placeholder={t("coderFilterFilesPlaceholder")} value={query} />
           </label>
-          <Button aria-label="New file draft" className="size-7" onClick={() => setNewFileOpen((value) => !value)} size="icon" type="button" variant="ghost"><FilePlus2Icon className="size-3.5" /></Button>
+          <Button aria-label={t("coderNewFileDraft")} className="size-7" onClick={() => setNewFileOpen((value) => !value)} size="icon" type="button" variant="ghost"><FilePlus2Icon className="size-3.5" /></Button>
         </div>
         {newFileOpen ? <div className="space-y-1 border-b p-2">
-          <input aria-label="New file path" className="h-8 w-full rounded border bg-background px-2 font-mono text-[16px] sm:text-[11px]" onChange={(event) => setNewFilePath(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") createDraft(); }} placeholder="src/example.ts" value={newFilePath} />
-          <Button className="h-7 w-full text-[11px]" onClick={createDraft} size="sm" type="button" variant="outline">Create local draft</Button>
+          <input aria-label={t("coderNewFilePath")} className="h-8 w-full rounded border bg-background px-2 font-mono text-[16px] sm:text-[11px]" onChange={(event) => setNewFilePath(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") createDraft(); }} placeholder="src/example.ts" value={newFilePath} />
+          <Button className="h-7 w-full text-[11px]" onClick={createDraft} size="sm" type="button" variant="outline">{t("coderCreateDraft")}</Button>
           {newFileError ? <p className="text-[10px] text-destructive" role="alert">{newFileError}</p> : null}
         </div> : null}
-        <nav aria-label="Workspace files" className="tflash-scroll min-h-0 flex-1 overflow-auto p-1.5">
-          {visiblePaths.length ? <ul className="space-y-0.5"><TreeItems node={tree} depth={0} selectedPath={selectedPath} onSelect={selectFile} /></ul> : <p className="p-3 text-xs text-muted-foreground">No matching files.</p>}
+        <nav aria-label={t("coderWorkspaceFiles")} className="tflash-scroll min-h-0 flex-1 overflow-auto p-1.5">
+          {visiblePaths.length ? <ul className="space-y-0.5"><TreeItems node={tree} depth={0} selectedPath={selectedPath} onSelect={selectFile} /></ul> : <p className="p-3 text-xs text-muted-foreground">{t("coderNoMatchingFiles")}</p>}
         </nav>
-        {snapshot.filesTruncated ? <p className="border-t p-2 text-[10px] text-muted-foreground">File list is bounded; ask Coder to open a specific path.</p> : null}
+        {snapshot.filesTruncated ? <p className="border-t p-2 text-[10px] text-muted-foreground">{t("coderFileListBounded")}</p> : null}
       </aside>
 
       <div className="flex min-h-0 min-w-0 flex-col bg-background">
-        {!selectedPath ? <div className="flex flex-1 items-center justify-center p-5 text-center text-xs text-muted-foreground">Select a file to inspect or edit it with Coder.</div> : <>
+        {!selectedPath ? <div className="flex flex-1 items-center justify-center p-5 text-center text-xs text-muted-foreground">{t("coderSelectFile")}</div> : <>
           <div className="flex min-h-10 shrink-0 items-center gap-2 border-b px-3 py-1.5">
-            <div className="min-w-0 flex-1"><p className="truncate font-mono text-[11px]">{selectedPath}</p><p className="text-[9px] text-muted-foreground">{languageForPath(selectedPath)}{document ? ` · ${document.totalLines} lines` : " · not loaded"}</p></div>
-            {dirty ? <span className={cn("shrink-0 text-[10px]", outdated ? "text-destructive" : "text-amber-700 dark:text-amber-300")}>{outdated ? "workspace changed" : draft.sent && isBusy ? "awaiting application" : draft.sent ? "not applied" : "unsent draft"}</span> : null}
-            {document && !dirty ? <CheckIcon aria-label="Editor matches observed file" className="size-3.5 text-emerald-600" /> : null}
+            <div className="min-w-0 flex-1"><p className="truncate font-mono text-[11px]">{selectedPath}</p><p className="text-[9px] text-muted-foreground">{languageForPath(selectedPath)}{document ? ` · ${document.totalLines} ${t("coderLinesLabel")}` : ` · ${t("coderNotLoaded")}`}</p></div>
+            {dirty ? <span className={cn("shrink-0 text-[10px]", outdated ? "text-destructive" : "text-amber-700 dark:text-amber-300")}>{outdated ? t("coderWorkspaceChanged") : draft.sent && isBusy ? t("coderAwaitingApplication") : draft.sent ? t("coderNotApplied") : t("coderUnsentDraft")}</span> : null}
+            {document && !dirty ? <CheckIcon aria-label={t("coderMatchesObserved")} className="size-3.5 text-emerald-600" /> : null}
+            {(document && !document.truncated) || draft ? (
+              <Button aria-label={t("coderCopyFile")} className="size-7 shrink-0" onClick={() => void copyFileContent()} size="icon" title={t(copyStatus === "copied" ? "copied" : "coderCopyFile")} type="button" variant="ghost">
+                {copyStatus === "copied" ? <CheckIcon className="size-3.5 text-emerald-600" /> : <CopyIcon className="size-3.5" />}
+              </Button>
+            ) : null}
           </div>
-          {!document && !draft ? <div className="flex flex-1 items-center justify-center p-5"><div className="text-center"><p className="text-xs text-muted-foreground">This file is listed but its contents have not been loaded.</p><Button className="mt-3" disabled={readOnly} onClick={() => loadFile()} size="sm" type="button" variant="outline">Load with Coder</Button></div></div> : null}
-          {document?.truncated ? <div className="flex flex-1 items-center justify-center p-5 text-center"><div><AlertTriangleIcon className="mx-auto mb-2 size-5 text-amber-600" /><p className="max-w-sm text-xs leading-5 text-muted-foreground">This file exceeds the 200,000 byte editor limit. The preview is truncated and writing is disabled.</p></div></div> : null}
+          {!document && !draft ? <div className="flex flex-1 items-center justify-center p-5"><div className="text-center"><p className="text-xs text-muted-foreground">{t("coderNotLoadedYet")}</p><Button className="mt-3" disabled={readOnly} onClick={() => loadFile()} size="sm" type="button" variant="outline">{t("coderLoadWithCoder")}</Button></div></div> : null}
+          {document?.truncated ? <div className="flex flex-1 items-center justify-center p-5 text-center"><div><AlertTriangleIcon className="mx-auto mb-2 size-5 text-amber-600" /><p className="max-w-sm text-xs leading-5 text-muted-foreground">{t("coderTruncatedFile")}</p></div></div> : null}
           {(document && !document.truncated) || draft ? <>
-            {outdated ? <div className="flex flex-wrap items-center gap-2 border-b bg-destructive/5 px-3 py-2 text-[11px] text-destructive" role="alert"><span className="min-w-0 flex-1">The observed file changed. Your draft was not applied.</span><Button className="h-7 text-[10px]" onClick={() => { if (window.confirm("Discard this local draft and load the observed file?")) setDrafts((current) => { const next = { ...current }; delete next[selectedPath]; return next; }); }} size="sm" type="button" variant="outline">Discard draft</Button></div> : null}
-            <textarea
-              aria-label={`Edit ${selectedPath}`}
-              className="tflash-scroll min-h-0 flex-1 resize-none overflow-auto bg-background p-4 font-mono text-[16px] leading-6 text-foreground outline-none focus:ring-1 focus:ring-inset focus:ring-ring sm:text-[12px]"
-              onChange={(event) => setDrafts((current) => ({ ...current, [selectedPath]: { content: event.target.value, baseSha256: draft?.baseSha256 ?? document?.sha256 ?? null, sent: false } }))}
-              readOnly={outdated}
-              spellCheck={false}
-              value={draft?.content ?? document?.content ?? ""}
-            />
+            {outdated ? <div className="flex flex-wrap items-center gap-2 border-b bg-destructive/5 px-3 py-2 text-[11px] text-destructive" role="alert"><span className="min-w-0 flex-1">{t("coderObservedChanged")}</span><Button className="h-7 text-[10px]" onClick={() => setDiscardDialogOpen(true)} size="sm" type="button" variant="outline">{t("coderDiscardDraft")}</Button></div> : null}
+            <div className="flex min-h-0 flex-1 overflow-hidden">
+              <div
+                aria-hidden="true"
+                className="w-11 shrink-0 overflow-hidden border-r bg-muted/25 py-4 pr-2 text-right font-mono text-[11px] leading-6 text-muted-foreground/65 select-none"
+                ref={gutterRef}
+              >
+                {Array.from({ length: lineCount }, (_, index) => (
+                  <div key={index + 1}>{index + 1}</div>
+                ))}
+              </div>
+              <textarea
+                aria-label={editAriaLabel}
+                className="tflash-scroll min-h-0 min-w-0 flex-1 resize-none overflow-auto bg-background p-4 font-mono text-[16px] leading-6 text-foreground outline-none focus:ring-1 focus:ring-inset focus:ring-ring sm:text-[12px]"
+                onChange={(event) => setDrafts((current) => ({ ...current, [selectedPath]: { content: event.target.value, baseSha256: draft?.baseSha256 ?? document?.sha256 ?? null, sent: false } }))}
+                onScroll={(event) => {
+                  if (gutterRef.current) gutterRef.current.scrollTop = event.currentTarget.scrollTop;
+                }}
+                readOnly={outdated}
+                spellCheck={false}
+                value={editorValue}
+              />
+            </div>
             <footer className="flex shrink-0 flex-wrap items-center gap-2 border-t px-3 py-2">
-              <p className="min-w-0 flex-1 text-[10px] text-muted-foreground">Local edits stay in this browser until Coder applies them and the write is verified.</p>
-              <Button className="h-8 text-[11px]" disabled={!dirty || outdated || readOnly} onClick={applyDraft} size="sm" type="button">{isBusy && draft?.sent ? <LoaderCircleIcon className="animate-spin" /> : null}Ask Coder to apply</Button>
+              <p className="min-w-0 flex-1 text-[10px] text-muted-foreground">{t("coderLocalEditsNote")}</p>
+              <Button className="h-8 text-[11px]" disabled={!dirty || outdated || readOnly} onClick={applyDraft} size="sm" type="button">{isBusy && draft?.sent ? <LoaderCircleIcon className="animate-spin" /> : null}{t("coderAskCoderApply")}</Button>
             </footer>
           </> : null}
         </>}
@@ -375,23 +438,51 @@ export function CoderWorkspace({
 
     {snapshot && tab === "changes" ? <div className="flex min-h-0 flex-1 flex-col">
       <div className="max-h-48 shrink-0 overflow-auto border-b bg-background p-2">
-        <p className="px-2 py-1 text-[10px] font-medium text-muted-foreground uppercase">Observed Git status</p>
-        {snapshot.repository.changes.length ? <ul>{snapshot.repository.changes.map((change) => <ChangeRow change={change} key={`${change.status}:${change.previousPath}:${change.path}`} />)}</ul> : <p className="p-2 text-xs text-muted-foreground">{snapshot.repository.isRepository ? "No changes in the latest observed status." : "This workspace is not a Git repository."}</p>}
+        <p className="px-2 py-1 text-[10px] font-medium text-muted-foreground uppercase">{t("coderObservedGitStatus")}</p>
+        {snapshot.repository.changes.length ? <ul>{snapshot.repository.changes.map((change) => <ChangeRow change={change} key={`${change.status}:${change.previousPath}:${change.path}`} />)}</ul> : <p className="p-2 text-xs text-muted-foreground">{snapshot.repository.isRepository ? t("coderNoGitChanges") : t("coderNotGitRepo")}</p>}
       </div>
-      {snapshot.diff ? <DiffView diff={snapshot.diff} /> : !snapshot.repository.isRepository ? <div className="flex flex-1 items-center justify-center p-6">
-        <div className="w-full max-w-md"><h3 className="text-sm font-medium">Clone a public repository</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">Use a credential-free HTTPS URL from GitHub, GitLab, or Bitbucket. The sandbox must be empty, and cloning requires approval.</p><div className="mt-3 flex gap-2"><input aria-label="Public repository URL" className="h-9 min-w-0 flex-1 rounded-md border bg-background px-3 text-[16px] outline-none sm:text-xs focus:ring-1 focus:ring-ring" onChange={(event) => setRepositoryUrl(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") cloneRepository(); }} placeholder="https://github.com/owner/repository" value={repositoryUrl} /><Button className="h-9" disabled={readOnly || !repositoryUrl.trim()} onClick={cloneRepository} size="sm" type="button">Clone</Button></div>{repositoryError ? <p className="mt-2 text-xs text-destructive" role="alert">{repositoryError}</p> : null}</div>
-      </div> : <div className="flex flex-1 items-center justify-center p-6 text-center text-xs text-muted-foreground">No tracked diff in this observation. Untracked files appear in status only.</div>}
-      {snapshot.diffTruncated ? <p className="shrink-0 border-t p-2 text-[10px] text-muted-foreground">Diff display is truncated at 60,000 characters.</p> : null}
+      {snapshot.diff ? <DiffView diff={snapshot.diff} label={t("coderWorkspaceDiffLabel")} /> : !snapshot.repository.isRepository ? <div className="flex flex-1 items-center justify-center p-6">
+        <div className="w-full max-w-md"><h3 className="text-sm font-medium">{t("coderCloneTitle")}</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">{t("coderCloneHint")}</p><div className="mt-3 flex gap-2"><input aria-label={t("coderRepoUrlLabel")} className="h-9 min-w-0 flex-1 rounded-md border bg-background px-3 text-[16px] outline-none sm:text-xs focus:ring-1 focus:ring-ring" onChange={(event) => setRepositoryUrl(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") cloneRepository(); }} placeholder="https://github.com/owner/repository" value={repositoryUrl} /><Button className="h-9" disabled={readOnly || !repositoryUrl.trim()} onClick={cloneRepository} size="sm" type="button">{t("coderCloneButton")}</Button></div>{repositoryError ? <p className="mt-2 text-xs text-destructive" role="alert">{repositoryError}</p> : null}</div>
+      </div> : <div className="flex flex-1 items-center justify-center p-6 text-center text-xs text-muted-foreground">{t("coderNoTrackedDiff")}</div>}
+      {snapshot.diffTruncated ? <p className="shrink-0 border-t p-2 text-[10px] text-muted-foreground">{t("coderDiffTruncated")}</p> : null}
     </div> : null}
 
     {tab === "terminal" ? <div className="tflash-scroll min-h-0 flex-1 space-y-2 overflow-auto p-3">
-      <div className="flex items-center gap-3"><p className="min-w-0 flex-1 text-[10px] leading-4 text-muted-foreground">Real shell calls from this conversation. Exit 0 is observed command success, not a claim about a remote repository.</p><Button className="h-8 shrink-0 text-[11px]" disabled={readOnly} onClick={runChecks} size="sm" type="button" variant="outline">Run checks</Button></div>
-      {projection.commands.length ? [...projection.commands].reverse().map((command, index) => <CommandResult command={command} defaultOpen={index === 0} key={command.id} />) : <div className="flex min-h-48 items-center justify-center text-center text-xs text-muted-foreground">No shell commands yet. Ask Coder to run a focused test or check.</div>}
+      <div className="flex items-center gap-3"><p className="min-w-0 flex-1 text-[10px] leading-4 text-muted-foreground">{t("coderTerminalHint")}</p><Button className="h-8 shrink-0 text-[11px]" disabled={readOnly} onClick={runChecks} size="sm" type="button" variant="outline">{t("coderRunChecks")}</Button></div>
+      {projection.commands.length ? [...projection.commands].reverse().map((command, index) => <CommandResult command={command} defaultOpen={index === 0} key={command.id} />) : <div className="flex min-h-48 items-center justify-center text-center text-xs text-muted-foreground">{t("coderNoCommands")}</div>}
     </div> : null}
 
     {tab === "plan" ? <div className="tflash-scroll min-h-0 flex-1 overflow-auto p-3">
-      {plan ? <AgentPlanCard plan={plan} /> : <div className="flex min-h-48 items-center justify-center text-center"><div><ListTodoIcon className="mx-auto mb-2 size-5 text-muted-foreground" /><p className="text-xs text-muted-foreground">No agent-reported plan yet. Substantial Coder tasks can use the plan tool.</p></div></div>}
-      {projection.diagnostics.length ? <section className="mt-3 rounded-md border p-3"><h3 className="text-xs font-medium">Latest patch diagnostics</h3><ul className="mt-2 space-y-2">{projection.diagnostics.map((diagnostic, index) => <li className="text-[11px]" key={`${diagnostic.path}:${diagnostic.line}:${index}`}><span className="text-muted-foreground">{diagnostic.path ?? "workspace"}{diagnostic.line ? `:${diagnostic.line}` : ""}</span><p>{diagnostic.message}</p></li>)}</ul></section> : null}
+      {plan ? <AgentPlanCard plan={plan} /> : <div className="flex min-h-48 items-center justify-center text-center"><div><ListTodoIcon className="mx-auto mb-2 size-5 text-muted-foreground" /><p className="text-xs text-muted-foreground">{t("coderNoPlanYet")}</p></div></div>}
+      {projection.diagnostics.length ? <section className="mt-3 rounded-md border p-3"><h3 className="text-xs font-medium">{t("coderPatchDiagnostics")}</h3><ul className="mt-2 space-y-2">{projection.diagnostics.map((diagnostic, index) => <li className="text-[11px]" key={`${diagnostic.path}:${diagnostic.line}:${index}`}><span className="text-muted-foreground">{diagnostic.path ?? "workspace"}{diagnostic.line ? `:${diagnostic.line}` : ""}</span><p>{diagnostic.message}</p></li>)}</ul></section> : null}
     </div> : null}
+
+    <Dialog onOpenChange={setDiscardDialogOpen} open={discardDialogOpen}>
+      <DialogContent closeLabel={t("dismiss")}>
+        <DialogHeader>
+          <DialogTitle>{t("coderDiscardDraftTitle")}</DialogTitle>
+          <DialogDescription>{t("coderDiscardDraftBody")}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button onClick={() => setDiscardDialogOpen(false)} type="button" variant="outline">{t("cancel")}</Button>
+          <Button
+            onClick={() => {
+              if (selectedPath) {
+                setDrafts((current) => {
+                  const next = { ...current };
+                  delete next[selectedPath];
+                  return next;
+                });
+              }
+              setDiscardDialogOpen(false);
+            }}
+            type="button"
+            variant="destructive"
+          >
+            {t("coderDiscardDraft")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </section>;
 }

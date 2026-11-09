@@ -1,11 +1,13 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { SafeLink } from "@/lib/safe-navigation";
+import { useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { useAppSettings } from "./app-settings";
 import { useWorkspace } from "./workspace-store";
 import {
   assignProject,
   deleteProject,
+  workspaceSchema,
   type Project,
   type MemoryNote,
 } from "@/lib/workspace";
@@ -13,6 +15,7 @@ import { downloadBlob } from "@/lib/download";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
+const MAX_IMPORT_BYTES = 256 * 1024;
 const textClass = "w-full rounded-md border bg-background p-2 text-sm";
 export function WorkspacePanel() {
   const { workspace, ready, storageError, syncStatus, cloudEnabled, change, clear, resolveConflict, retrySync } = useWorkspace();
@@ -24,6 +27,33 @@ export function WorkspacePanel() {
     id: string;
   }>();
   const [error, setError] = useState(false);
+  const [importFeedback, setImportFeedback] = useState<{ ok: boolean; key: "importWorkspaceSuccess" | "importWorkspaceInvalid" | "importWorkspaceTooLarge" }>();
+  const importInputRef = useRef<HTMLInputElement>(null);
+
+  async function importWorkspaceFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (file.size > MAX_IMPORT_BYTES) {
+      setImportFeedback({ ok: false, key: "importWorkspaceTooLarge" });
+      return;
+    }
+    try {
+      const parsedJson = JSON.parse(await file.text()) as unknown;
+      const result = workspaceSchema.safeParse(parsedJson);
+      if (!result.success) {
+        setImportFeedback({ ok: false, key: "importWorkspaceInvalid" });
+        return;
+      }
+      change(() => result.data);
+      setProject(undefined);
+      setNote(undefined);
+      setError(false);
+      setImportFeedback({ ok: true, key: "importWorkspaceSuccess" });
+    } catch {
+      setImportFeedback({ ok: false, key: "importWorkspaceInvalid" });
+    }
+  }
   function run(fn: () => void) {
     try {
       fn();
@@ -123,12 +153,12 @@ export function WorkspacePanel() {
               <ul className="mt-2 space-y-1">
                 {p.chatIds.map((id) => (
                   <li key={id}>
-                    <a
+                    <SafeLink
                       className="break-words underline"
                       href={`/s/${encodeURIComponent(id)}`}
                     >
                       {settings.chats.find((c) => c.id === id)?.title ?? id}
-                    </a>
+                    </SafeLink>
                   </li>
                 ))}
               </ul>
@@ -331,30 +361,55 @@ export function WorkspacePanel() {
         </label>
         <p className="text-xs text-muted-foreground">{t("limitHint")}</p>
       </div>
-      <div className="flex flex-wrap gap-2 border-t pt-4">
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() =>
-            run(() =>
-              downloadBlob(
-                new Blob([JSON.stringify(workspace, null, 2)], {
-                  type: "application/json",
-                }),
-                "tflash-workspace.json",
-              ),
-            )
-          }
-        >
-          {t("exportWorkspace")}
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => setDeleting({ type: "all", id: "all" })}
-        >
-          {t("clearWorkspace")}
-        </Button>
+      <div className="space-y-2 border-t pt-4">
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() =>
+              run(() =>
+                downloadBlob(
+                  new Blob([JSON.stringify(workspace, null, 2)], {
+                    type: "application/json",
+                  }),
+                  "tflash-workspace.json",
+                ),
+              )
+            }
+          >
+            {t("exportWorkspace")}
+          </Button>
+          <input
+            ref={importInputRef}
+            accept=".json,application/json"
+            aria-label={t("importWorkspace")}
+            className="hidden"
+            onChange={(event) => void importWorkspaceFile(event)}
+            type="file"
+          />
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => importInputRef.current?.click()}
+          >
+            {t("importWorkspace")}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setDeleting({ type: "all", id: "all" })}
+          >
+            {t("clearWorkspace")}
+          </Button>
+        </div>
+        {importFeedback ? (
+          <p
+            className={importFeedback.ok ? "text-xs text-emerald-700 dark:text-emerald-300" : "text-xs text-destructive"}
+            role={importFeedback.ok ? "status" : "alert"}
+          >
+            {t(importFeedback.key)}
+          </p>
+        ) : null}
       </div>
       {deleting ? (
         <div

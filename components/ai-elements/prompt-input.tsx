@@ -500,6 +500,7 @@ export type PromptInputProps = Omit<HTMLAttributes<HTMLFormElement>, "onSubmit" 
   maxFiles?: number;
   // bytes
   maxFileSize?: number;
+  dropLabel?: string;
   onError?: (err: { code: "max_files" | "max_file_size" | "accept"; message: string }) => void;
   onSubmit: (
     message: PromptInputMessage,
@@ -515,6 +516,7 @@ export const PromptInput = ({
   syncHiddenInput,
   maxFiles,
   maxFileSize,
+  dropLabel,
   onError,
   onSubmit,
   children,
@@ -527,6 +529,7 @@ export const PromptInput = ({
   // Refs
   const inputRef = useRef<HTMLInputElement | null>(null);
   const formRef = useRef<HTMLFormElement | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   // ----- Local attachments (only used when no provider)
   const [items, setItems] = useState<(FileUIPart & { id: string })[]>([]);
@@ -720,23 +723,43 @@ export const PromptInput = ({
       return;
     }
 
+    let dragDepth = 0;
+    const hasFiles = (e: DragEvent) => Boolean(e.dataTransfer?.types?.includes("Files"));
+    const onDragEnter = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      dragDepth += 1;
+      setIsDragging(true);
+    };
     const onDragOver = (e: DragEvent) => {
-      if (e.dataTransfer?.types?.includes("Files")) {
+      if (hasFiles(e)) {
         e.preventDefault();
       }
     };
+    const onDragLeave = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (dragDepth === 0) setIsDragging(false);
+    };
     const onDrop = (e: DragEvent) => {
-      if (e.dataTransfer?.types?.includes("Files")) {
+      dragDepth = 0;
+      setIsDragging(false);
+      if (hasFiles(e)) {
         e.preventDefault();
       }
       if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
         add(e.dataTransfer.files);
       }
     };
+    form.addEventListener("dragenter", onDragEnter);
     form.addEventListener("dragover", onDragOver);
+    form.addEventListener("dragleave", onDragLeave);
     form.addEventListener("drop", onDrop);
     return () => {
+      setIsDragging(false);
+      form.removeEventListener("dragenter", onDragEnter);
       form.removeEventListener("dragover", onDragOver);
+      form.removeEventListener("dragleave", onDragLeave);
       form.removeEventListener("drop", onDrop);
     };
   }, [add, globalDrop]);
@@ -746,23 +769,43 @@ export const PromptInput = ({
       return;
     }
 
+    let dragDepth = 0;
+    const hasFiles = (e: DragEvent) => Boolean(e.dataTransfer?.types?.includes("Files"));
+    const onDragEnter = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      dragDepth += 1;
+      setIsDragging(true);
+    };
     const onDragOver = (e: DragEvent) => {
-      if (e.dataTransfer?.types?.includes("Files")) {
+      if (hasFiles(e)) {
         e.preventDefault();
       }
     };
+    const onDragLeave = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (dragDepth === 0) setIsDragging(false);
+    };
     const onDrop = (e: DragEvent) => {
-      if (e.dataTransfer?.types?.includes("Files")) {
+      dragDepth = 0;
+      setIsDragging(false);
+      if (hasFiles(e)) {
         e.preventDefault();
       }
       if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
         add(e.dataTransfer.files);
       }
     };
+    document.addEventListener("dragenter", onDragEnter);
     document.addEventListener("dragover", onDragOver);
+    document.addEventListener("dragleave", onDragLeave);
     document.addEventListener("drop", onDrop);
     return () => {
+      setIsDragging(false);
+      document.removeEventListener("dragenter", onDragEnter);
       document.removeEventListener("dragover", onDragOver);
+      document.removeEventListener("dragleave", onDragLeave);
       document.removeEventListener("drop", onDrop);
     };
   }, [add, globalDrop]);
@@ -890,12 +933,21 @@ export const PromptInput = ({
       <form className="w-full" onSubmit={handleSubmit} ref={formRef} {...props}>
         <InputGroup
           className={cn(
-            "overflow-hidden rounded-2xl bg-card/80 shadow-sm backdrop-blur-md",
+            "relative overflow-hidden rounded-2xl bg-card/80 shadow-sm backdrop-blur-md",
             "focus-within:border-foreground! has-[[data-slot=input-group-control]:focus-visible]:border-foreground!",
+            isDragging && "border-primary! ring-2 ring-primary/25",
             className,
           )}
         >
           {children}
+          {isDragging ? (
+            <div
+              aria-hidden="true"
+              className="animate-in fade-in-0 pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary bg-background/85 text-xs font-medium text-primary backdrop-blur-xs"
+            >
+              {dropLabel ?? "Drop files to attach"}
+            </div>
+          ) : null}
         </InputGroup>
       </form>
     </>
