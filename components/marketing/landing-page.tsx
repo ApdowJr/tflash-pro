@@ -5,7 +5,6 @@ import { useEffect, useState } from "react";
 import {
   ArrowRightIcon,
   BadgeCheckIcon,
-  BotIcon,
   CheckIcon,
   Code2Icon,
   FileSearchIcon,
@@ -53,11 +52,18 @@ const FEATURE_ICONS = [
   ShieldCheckIcon,
 ] as const;
 
-const MODE_TILES = [
-  { title: "Chat", icon: MessageSquareTextIcon, body: "Quick answers, context, and follow-up conversations" },
-  { title: "Research", icon: FileSearchIcon, body: "Traceable sources, citations, and executive summaries" },
-  { title: "Coder", icon: Code2Icon, body: "Repo work, patches, tests, and build verification" },
-] as const;
+const MODE_TILES = {
+  en: [
+    { title: "Chat", icon: MessageSquareTextIcon, body: "Quick answers, context, and follow-up conversations" },
+    { title: "Research", icon: FileSearchIcon, body: "Traceable sources, citations, and executive summaries" },
+    { title: "Coder", icon: Code2Icon, body: "Repo work, patches, tests, and build verification" },
+  ],
+  so: [
+    { title: "Sheeko", icon: MessageSquareTextIcon, body: "Jawaabo degdeg ah, macne buuxa, iyo wada hadal joogto ah" },
+    { title: "Cilmi-baaris", icon: FileSearchIcon, body: "Ilo la raaci karo, xigashooyin, iyo warbixinno kooban" },
+    { title: "Coder", icon: Code2Icon, body: "Shaqada repo-ga, sixid koodh, tijaabooyin, iyo hubin dhab ah" },
+  ],
+} as const;
 
 const copy = {
   en: {
@@ -206,131 +212,131 @@ const copy = {
     signIn: "Soo gal",
     getStarted: "Bilow",
     language: "Luqadda",
-    badge: "Goob AI · wada hadal, baaritaan & coder",
+    badge: "Goob AI · sheeko, cilmi-baaris & coder",
     heroA: "Loo dhisay",
-    heroEm: "shaqulka dhabta ah.",
+    heroEm: "shaqada dhabta ah.",
     heroBody:
-      "Goob AI oo ku hadasha, baarista leh caddayn, ama koodhka leh verification. Tflash waxay haystaa shaqada mid deggan, laba luqadood, oo diyaar u ah wax soo saar.",
-    ctaPrimary: "Fur workspace",
-    ctaSecondary: "Arag sida loo shaqeeyo",
-    trust: "Loogu talagalay desktop, tablet iyo mobile · hawlo fasax leh",
+      "Goob shaqo oo AI ah: kula hadal model, baar adigoo haysta ilo la raaci karo, ama qor koodh la hubiyay. Tflash waxay shaqadaada ka dhigtaa mid habaysan, laba-luqadood ah, oo diyaar u ah adeegsi dhab ah.",
+    ctaPrimary: "Fur goobta shaqada",
+    ctaSecondary: "Arag sida ay u shaqayso",
+    trust: "Loogu talagalay desktop, tablet iyo mobile · hawlo oggolaansho leh",
     previewTitle: "Hawl cusub",
-    previewStatus: "Fasax ayaa loo baahan yahay",
-    previewUser: "Hel xanuunka suurtagalka ah ee socodka lacag-bixinta oo samee hagaajinta leh testga tooska ah.",
-    previewReply: "Waxaan baari doonaa waddo xannibaadda, waxaan go’aamin doonaa sababta asaasiga ah, oo waxaan diyaarin doonaa hagaajinta la eegay.",
-    previewSteps: ["Raadi xannibaadda", "Hagaajinta asaasiga ah", "Run verification la doortay"],
+    previewStatus: "Oggolaansho ayaa loo baahan yahay",
+    previewUser: "Hel qaladka ku jira habka lacag-bixinta oo ku xalli isbeddel leh tijaabo ku habboon.",
+    previewReply: "Waxaan raaci doonaa halka qaladku ka dhacay, waxaan ogaanayaa sababta rasmiga ah, waxaanan diyaarinayaa xal la hubiyay.",
+    previewSteps: ["Raac codsiga fashilmay", "Xalli sababta asaasiga ah", "Socodsii hubin kooban"],
     previewTool: "coder · app/payments",
-    previewToolNote: "Wuxuu eegayaa isbeddel maxalli ah · fasax ayuu sugayaa",
+    previewToolNote: "Wuxuu eegayaa isbeddel gudaha ah · wuxuu sugayaa oggolaanshahaaga",
     previewApprove: "Oggolow",
-    previewReview: "Baadh",
-    overviewKicker: "Maxaa Tflash",
-    overviewTitle: "Hal goob oo deggan oo shaqada oo dhan qabta.",
+    previewReview: "Dib u eeg",
+    overviewKicker: "Sababta Tflash",
+    overviewTitle: "Hal meel oo deggan oo hawsha oo dhan qabata.",
     overviewBody:
-      "U beddel fikradda bilow ilaa natiijo dhammeystiran iyada oo aan tabyo, dukumentiyo, iyo software UIyo aan u wareegin. Tflash waxay ku xidhaataa baarista, koodhka, ogolaanshaha, iyo soo saarista hal dusha sare.",
+      "U beddel fikrad qabyo ah natiijo dhammaystiran adigoon u kala boodin daaqado, dukumeentiyo, iyo qalab kala duwan. Tflash waxay ku midaysaa baarista, koodhka, oggolaanshaha, iyo dhoofinta hal goob shaqo.",
     featureKicker: "Hababka shaqada",
-    featureTitle: "Wada hadal, baaritaan, ama koodh, aan beddelin qalabka.",
+    featureTitle: "Wada hadal, cilmi-baaris, ama koodh adigoon beddelin qalabka.",
     features: [
       {
-        title: "Wada hadal agent laba luqadood",
-        body: "Interface-ka iyo kaaliyuhu waxay ku hadlaan Soomaali iyo English, iyadoo shaqadu ay weli feker leh tahay.",
+        title: "Wada hadal kaaliye laba-luqadood ah",
+        body: "Interface-ka iyo kaaliyuhu waxay ku hadlaan Soomaali iyo English, iyadoo shaqadu ay weli tahay mid feker leh oo akhriskeedu fudud yahay.",
       },
       {
-        title: "Bedel modelka si fudud",
-        body: "U beddel bixiyayaasha iyo moodulada adigoon socodka jabin. Doorashada saxda ah waxay qaadan kartaa daqiiqado.",
+        title: "Beddel modelka si fudud",
+        body: "U kala beddel bixiyeyaasha iyo modelada adigoon hakin shaqadaada. Dooro model-ka ku habboon hawsha ilbiriqsiyo gudahood.",
       },
       {
-        title: "Fulinta fasaxka hore",
-        body: "Hawl kasta oo dibadda ah ayaa la xakameeyaa, la baaro, oo si cad loogu ogolaado kahor fulinta.",
+        title: "Fulinta ku xiran oggolaansho",
+        body: "Tallaabo kasta oo dibadda ah way xaddidan tahay, waa la eegi karaa, waxayna sugtaa oggolaanshahaaga ka hor inta aysan dhicin.",
       },
       {
-        title: "Baaritaan leh caddayn",
-        body: "Hayso meesha xukunka ka yimid, maxaa la akhriyay, iyo caddaynta runta ah ee taageertay.",
+        title: "Cilmi-baaris leh caddayn la raaci karo",
+        body: "Keydi halka sheegashadu ka timid, waxa la akhriyey, iyo caddaynta dhabta ah ee taageeraysa.",
       },
       {
-        title: "Natiijooyin aad isticmaali karto",
-        body: "U beddel natiijada Markdown, CSV, JSON, DOCX, ama PDF adigoon workspace-ka ka baxin.",
+        title: "Natiijooyin aad adeegsan karto",
+        body: "U beddel natiijada Markdown, CSV, JSON, DOCX, ama PDF adigoon goobta shaqada ka bixin.",
       },
       {
         title: "Cod iyo socodka wada hadalka",
-        body: "Isticmaal gudbinta codka oo dib u maqal jawaabaha markaad wax si degdeg ah u qabanayso mobile ama meelaha dabaaldegga.",
+        body: "Isticmaal cod ku qorista oo dib u dhegeyso jawaabaha markaad u baahan tahay inaad si dhaqso leh ugu shaqayso mobile ama goobta shaqada.",
       },
       {
-        title: "Loo sameeyay shaqo dhab ah",
-        body: "Productku wuxuu ku dhisan yahay socodka hawsha tooska ah: waydii, baadh, oggolow, dhammeystir, oo keen natiijo amni leh.",
+        title: "Loo dhisay shaqo dhab ah",
+        body: "Qalabku wuxuu ku dhisan yahay socodka shaqo ee dhabta ah: weydii, eeg, oggolow, dhammee, oo dhoofi adigoo kalsooni qaba.",
       },
     ],
-    stepsKicker: "Sida loo shaqeeyo",
+    stepsKicker: "Sida ay u shaqayso",
     stepsTitle: "Saddex tallaabo, su’aal ilaa natiijo.",
     steps: [
       {
         title: "Dooro habka saxda ah",
-        body: "U beddel Chat, Research, iyo Coder si aad u waafajiso shaqada. Habka kasta wuxuu hayaa macnaha iyo qalabka saxda ah.",
+        body: "U kala beddel Sheeko, Cilmi-baaris, iyo Coder si aad u waafajiso hawsha. Hab kasta wuxuu muujiyaa xogta iyo xakamaynta ku habboon.",
       },
       {
-        title: "Shaqayso macno iyo ogolaansho",
-        body: "Ku dar faylasha, waydii baaritaan, ama socodka repo. Tallaabo kasta oo dibadda ah waxay sugaysaa ogolaanshahaaga.",
+        title: "La shaqee macne iyo oggolaansho",
+        body: "Ku dar faylal, codso cilmi-baaris, ama qabo hawlo repo. Tallaabo kasta oo dibadda ah waxay sugtaa oggolaanshahaaga cad.",
       },
       {
-        title: "Dhammeystir oo soo saar",
-        body: "Haysashada natiijada wada hadalka, soo dejinta natiijada, ama sii wad dardargelinta tallaabada xigta adoon dhib lahayn.",
+        title: "Dhammee oo dhoofi",
+        body: "Ku hay natiijada wada hadalka, soo dejiso faylka, ama sii wad tallaabada xigta si fudud.",
       },
     ],
     providersKicker: "Bixiyeyaasha",
     providersTitle: "Keen modelka aad horey u aaminsanayd.",
     providersBody:
-      "Hal interface oo heer sare ah, backends badan. Isticmaal furahaaga ama gateway-ga aad horey u isticmaashid, adoon beddelin socodkaaga.",
-    providersNote: "Ollama, LM Studio iyo endpoints gaar ah waxaa laga gaaraa server-ka, oo waa in si cad loo oggolaadaa production-ka.",
+      "Hal interface oo heer sare ah, backends badan. Isticmaal furayaashaada ama gateway-ga aad horey u adeegsan jirtay, adigoon beddelin socodkaaga.",
+    providersNote: "Ollama, LM Studio iyo endpoints gaar ah waxaa laga gaaraa server-ka, waana in si cad loo oggolaadaa production-ka.",
     securityKicker: "Asturnaanta",
     securityTitle: "Fasaxgu waa default-ka, ma aha muuqaal.",
     securityPoints: [
       {
-        title: "Furayaasha waxay ku xiran yihiin akoonka",
-        body: "Furaha bixiye waxaa la ilaaliyaa oo lala xiriiraa akoonka soo galay, si aanay u daadin isticmaaleyaasha ama sessions-ka.",
+        title: "Furayaashu waxay ku xiran yihiin akoonka",
+        body: "Aqoonsiga bixiyeyaasha waa la ilaaliyaa waxayna ku xiran yihiin akoonka soo galay, si aysan ugu dhex fidin isticmaaleyaal ama fadhiyo kale.",
       },
       {
-        title: "Wicitaannada dibadda waxay weydiistaan fasax",
-        body: "Amarrada shell, qalabka, iyo baarista waxay u baahan yihiin fasax cusub kahor inta aan la fulin.",
+        title: "Wicitaannada dibaddu waxay weydiiyaan oggolaansho",
+        body: "Amarrada shell, wicitaannada qalabka, iyo tallaabooyinka baaristu waxay u baahan yihiin oggolaansho cusub ka hor fulinta.",
       },
       {
-        title: "Wada hadallada leh milkiilayaal",
-        body: "Taarikhda hawsha waxay la socotaa milkiileka akoonka. Badeecadku wuxuu hayaa shaqada gacantaada.",
+        title: "Wada hadalladu adiga ayay kuu gaar yihiin",
+        body: "Taariikhda goobta shaqadu waxay ku xiran tahay lahaanshaha akoonkaaga. Nidaamku wuxuu shaqada ku hayaa gacantaada.",
       },
     ],
     securityNote:
-      "Ma jiro badeecad dammaanad qaadi karta amni qumman. Mashruucu wuxuu qeexayaa xaddidaadaha, kharashka la yaqaan, iyo xadka ogolaanshaha si cad README-ka iyo hagidda shaqada.",
+      "Ma jiro badeecad dammaanad qaadi karta amni qumman. Mashruucu wuxuu si cad ugu qeexaa xaddidaadaha dhabta ah, kharashyada la yaqaan, iyo xuduudaha oggolaanshaha README-ka iyo hagidda shaqada.",
     faqKicker: "Su’aalo",
     faqTitle: "Jawaabaha gaaban.",
     faqs: [
       {
         q: "Tflash ma bilaash baa?",
-        a: "Haddii aad isticmaasho furahaaga bixiyaha, waxaad si toos ah u bixisaa bixiyahaas. Tflash laftiisu ma laha subscription; qaar ka mid ah modelada gateway waa bilaash, helitaankuna wuxuu ku xiran yahay bixiyaha.",
+        a: "Haddii aad isticmaasho furahaaga bixiyaha, waxaad si toos ah u bixisaa bixiyahaas. Tflash lafteedu ma laha biil bille ah; qaar ka mid ah modelada gateway waa bilaash, helitaankooduna wuxuu ku xiran yahay bixiyaha.",
       },
       {
         q: "Akoon ma u baahanahay?",
-        a: "Haa — ku soo gal email iyo furaha, ama ku sii wad Vercel. Labaduba waa akoonto gooni ah oo ma wadaagaan taariikhda.",
+        a: "Haa — ku soo gal email iyo fure sir ah, ama ku sii wad Vercel. Labaduba waa akoonno kala madax bannaan oo aan wadaagin taariikh.",
       },
       {
-        q: "Soomaali ma shaqaysaa meel kasta?",
-        a: "Interface-ka iyo kaaliyuhu haa. Aqoonsiga codka iyo codadka la rakibay waxay ku xiran yihiin browser-kaaga ama qalabkaaga, taageeraduna way kala duwanaan kartaa.",
+        q: "Soomaali ma ka shaqaysaa meel kasta?",
+        a: "Interface-ka iyo kaaliyuhu haa. Aqoonsiga codka iyo codadka la heli karo waxay ku xiran yihiin browser-kaaga ama qalabkaaga, taageeraduna way ku kala duwanaan kartaa.",
       },
       {
-        q: "Xogtaydu xaggee ku nooshahay?",
-        a: "Transcripts-yada waxay ku jiraan workflow storage; index data iyo metadata-yada wada hadalka waxay ku jiraan Supabase ama browser storage iyadoo ku xiran habka soo galkaaga.",
+        q: "Xogtaydu xaggee ku kaydsan tahay?",
+        a: "Qoraallada wada hadalku waxay ku jiraan kaydka workflow-ga; xogta tusmada iyo metadata-da wada hadalku waxay ku jiraan Supabase ama kaydka browser-ka iyadoo ku xiran habka soo-gelitaankaaga.",
       },
       {
-        q: "Offline ma isticmaali karaa?",
-        a: "Maya. Tflash wuxuu u baahan yahay xidhiidh internet ah si uu u gaadho bixiyaha la doortay iyo qalabka xiran.",
+        q: "Internet la'aan ma isticmaali karaa?",
+        a: "Maya. Tflash waxay u baahan tahay xiriir internet si ay u gaadho bixiyaha la doortay oo ay ula shaqayso qalabka ku xiran.",
       },
     ],
     finalKicker: "Diyaar markaad tahay",
     finalTitle: "Ku bilow su’aal. Ku dhammee natiijo.",
-    finalBody: "Soo gal, dooro model, oo la soco goob AI deggan oo loo dhisay shaqo dhabta ah.",
+    finalBody: "Soo gal, dooro model, oo ku shaqee goob AI oo deggan oo loo dhisay shaqada dhabta ah.",
     finalCta: "Fur Tflash",
-    footerTagline: "Goob AI laba luqadood ah oo loogu talagalay wada hadal, baaritaan iyo shaqo dhammaystiran.",
+    footerTagline: "Goob AI laba-luqadood ah oo loogu talagalay wada hadal, cilmi-baaris iyo shaqo dhammaystiran.",
     footerSignIn: "Soo gal",
     footerCreate: "Samee akoon",
-    footerDocs: "Dukumentiyada",
-    footerSource: "Source GitHub",
+    footerDocs: "Dukumeentiyada",
+    footerSource: "Koodhka GitHub",
     footerLabel: "Qaybta hoose",
     footerNote: "Tflash waa mashruuc madax bannaan. Magacyada iyo calaamadaha modelada waxaa iska leh milkiilayaashooda.",
   },
@@ -355,6 +361,7 @@ function useLanguage() {
     setLanguage(next);
     try {
       localStorage.setItem("tflash:language", next);
+      window.dispatchEvent(new CustomEvent("tflash:language-change", { detail: next }));
     } catch {
       // private browsing
     }
@@ -381,7 +388,7 @@ function OrbitArt() {
   );
 }
 
-function ChatPreview({ text }: { readonly text: (typeof copy)[Language] }) {
+function ChatPreview({ language, text }: { readonly language: Language; readonly text: (typeof copy)[Language] }) {
   return (
     <div aria-hidden="true" className="lp-preview-wrap">
       <div className="lp-preview">
@@ -414,15 +421,15 @@ function ChatPreview({ text }: { readonly text: (typeof copy)[Language] }) {
           </div>
         </div>
       </div>
-      <div className="lp-preview-badge"><BadgeCheckIcon size={14} />Somali + English</div>
+      <div className="lp-preview-badge"><BadgeCheckIcon size={14} />{language === "so" ? "Soomaali + English" : "Somali + English"}</div>
     </div>
   );
 }
 
-function ModeGrid() {
+function ModeGrid({ language }: { readonly language: Language }) {
   return (
-    <div className="lp-mode-grid" aria-label="Product modes">
-      {MODE_TILES.map(({ title, icon: Icon, body }) => (
+    <div className="lp-mode-grid" aria-label={language === "so" ? "Hababka adeegga" : "Product modes"}>
+      {MODE_TILES[language].map(({ title, icon: Icon, body }) => (
         <article className="lp-mode-card" key={title}>
           <span className="lp-mode-icon"><Icon size={18} /></span>
           <h3>{title}</h3>
@@ -474,9 +481,9 @@ export function LandingPage() {
               <a className="lp-button lp-button-ghost" href="#how">{text.ctaSecondary}</a>
             </div>
             <p className="lp-trust"><CheckIcon size={13} />{text.trust}</p>
-            <ModeGrid />
+            <ModeGrid language={language} />
           </div>
-          <ChatPreview text={text} />
+          <ChatPreview language={language} text={text} />
         </div>
       </header>
 

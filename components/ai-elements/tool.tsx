@@ -1,5 +1,6 @@
 "use client";
 
+import { useOptionalAppSettings } from "@/components/settings/app-settings";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 import type { DynamicToolUIPart, ToolUIPart } from "ai";
@@ -44,6 +45,16 @@ const statusLabels: Record<ToolPart["state"], string> = {
   "output-error": "Error",
 };
 
+const statusLabelKeys = {
+  "approval-requested": "toolAwaitingApproval",
+  "approval-responded": "toolResponded",
+  "input-available": "toolRunning",
+  "input-streaming": "toolPending",
+  "output-available": "toolCompleted",
+  "output-denied": "toolDenied",
+  "output-error": "toolError",
+} as const satisfies Record<ToolPart["state"], string>;
+
 export const getStatusIndicator = (status: ToolPart["state"]) =>
   status === "output-available" ? null : (
     <span className={cn("text-sm", status === "output-error" && "text-destructive")}>
@@ -61,8 +72,15 @@ export const ToolHeader = ({
   statusError,
   ...props
 }: ToolHeaderProps) => {
+  const { t } = useOptionalAppSettings();
   const derivedName = type === "dynamic-tool" ? toolName : type.split("-").slice(1).join("-");
   const displayName = title ?? derivedName;
+  const fallbackStatus =
+    state === "output-available" ? null : (
+      <span className={cn("text-sm", state === "output-error" && "text-destructive")}>
+        {t(statusLabelKeys[state])}
+      </span>
+    );
 
   return (
     <CollapsibleTrigger
@@ -80,7 +98,7 @@ export const ToolHeader = ({
       <span className="text-sm">{displayName}</span>
       {" "}{statusLabel !== undefined
         ? <span className={cn("text-sm", statusError && "text-destructive")}>{statusLabel}</span>
-        : getStatusIndicator(state)}
+        : fallbackStatus}
       <ChevronRightIcon className="size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
     </CollapsibleTrigger>
   );
@@ -111,6 +129,7 @@ export const BashToolContent = ({
   errorText,
   ...props
 }: BashToolContentProps) => {
+  const { t } = useOptionalAppSettings();
   const command = getRecordValue(input, "command");
   const stdout = getRecordValue(output, "stdout") ?? (typeof output === "string" ? output : "");
   const stderr = getRecordValue(output, "stderr") ?? errorText ?? "";
@@ -129,14 +148,14 @@ export const BashToolContent = ({
         <pre className="overflow-x-auto whitespace-pre-wrap rounded-md bg-muted/50 p-3 font-mono text-xs leading-relaxed">
           <code>
             <span className="mb-2 block font-sans text-[10px] text-muted-foreground uppercase tracking-wide">
-              Output
+              {t("toolOutput")}
             </span>
             {stdout ? <span className="block">{String(stdout).trimEnd()}</span> : null}
             {stderr ? (
               <span className="block text-destructive">{String(stderr).trimEnd()}</span>
             ) : null}
             {typeof exitCode === "number" && exitCode !== 0 ? (
-              <span className="block text-muted-foreground">Exited with code {exitCode}</span>
+              <span className="block text-muted-foreground">{t("toolExitedWithCode")} {exitCode}</span>
             ) : null}
           </code>
         </pre>
@@ -158,20 +177,23 @@ export type ToolInputProps = ComponentProps<"div"> & {
   input: ToolPart["input"];
 };
 
-export const ToolInput = ({ className, input, ...props }: ToolInputProps) => (
-  <div className={cn("overflow-hidden rounded-md bg-muted/50", className)} {...props}>
-    <span className="block px-3 pt-3 font-sans text-[10px] text-muted-foreground uppercase tracking-wide">
-      Parameters
-    </span>
-    <div>
-      <CodeBlock
-        className={compactCodeBlockClassName}
-        code={JSON.stringify(input, null, 2)}
-        language="json"
-      />
+export const ToolInput = ({ className, input, ...props }: ToolInputProps) => {
+  const { t } = useOptionalAppSettings();
+  return (
+    <div className={cn("overflow-hidden rounded-md bg-muted/50", className)} {...props}>
+      <span className="block px-3 pt-3 font-sans text-[10px] text-muted-foreground uppercase tracking-wide">
+        {t("toolParameters")}
+      </span>
+      <div>
+        <CodeBlock
+          className={compactCodeBlockClassName}
+          code={JSON.stringify(input, null, 2)}
+          language="json"
+        />
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 export type ToolOutputProps = ComponentProps<"div"> & {
   output: ToolPart["output"];
@@ -179,6 +201,7 @@ export type ToolOutputProps = ComponentProps<"div"> & {
 };
 
 export const ToolOutput = ({ className, output, errorText, ...props }: ToolOutputProps) => {
+  const { t } = useOptionalAppSettings();
   if (!(output || errorText)) {
     return null;
   }
@@ -207,7 +230,7 @@ export const ToolOutput = ({ className, output, errorText, ...props }: ToolOutpu
       {...props}
     >
       <span className="block px-3 pt-3 font-sans text-[10px] text-muted-foreground uppercase tracking-wide">
-        {errorText ? "Error" : "Result"}
+        {errorText ? t("toolError") : t("toolResult")}
       </span>
       {errorText && <div className="px-3 pt-2 pb-3">{errorText}</div>}
       {Output}

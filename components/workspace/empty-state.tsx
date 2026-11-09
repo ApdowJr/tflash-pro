@@ -1,11 +1,12 @@
 "use client";
 
-import { ArrowUpRightIcon, SparklesIcon } from "lucide-react";
+import { ArrowUpRightIcon, Code2Icon, FileSearchIcon, KeyRoundIcon, MessageSquareIcon, SparklesIcon } from "lucide-react";
 import { FlashMark } from "@/components/brand/logo";
 import { useAppSettings } from "@/components/settings/app-settings";
 import type { TranslationKey } from "@/components/settings/i18n";
 import { usePromptInputController } from "@/components/ai-elements/prompt-input";
 import { AGENT_MODES, type AgentMode } from "@/lib/agent-modes";
+import { cn } from "@/lib/utils";
 
 const MODE_PROMPTS: Record<AgentMode, readonly [TranslationKey, TranslationKey]> = {
   chat: ["suggestion1", "suggestion2"],
@@ -13,21 +14,31 @@ const MODE_PROMPTS: Record<AgentMode, readonly [TranslationKey, TranslationKey]>
   research: ["suggestion4", "suggestion6"],
 };
 
+const MODE_ICONS = {
+  chat: MessageSquareIcon,
+  coder: Code2Icon,
+  research: FileSearchIcon,
+} as const;
+
 /**
- * A quiet, Claude-inspired launch surface: one greeting, a compact mode
- * indicator, and a couple of optional prompt starters. Mode selection lives
- * in the sidebar so the welcome screen stays focused on the conversation.
+ * Quiet launch surface with greeting, optional mode switcher pills,
+ * setup hint when no provider credential is configured, and prompt starters.
  */
 export function EmptyState({
   name,
   mode,
+  onModeChange,
+  onOpenSettings,
 }: {
   readonly name: string;
   readonly mode: AgentMode;
+  readonly onModeChange?: (mode: AgentMode) => void;
+  readonly onOpenSettings?: () => void;
 }) {
-  const { t, settings } = useAppSettings();
+  const { t, settings, hydrated, providersLoaded, isConnected } = useAppSettings();
   const controller = usePromptInputController();
   const activeMode = AGENT_MODES.find((item) => item.id === mode) ?? AGENT_MODES[0];
+  const needsProvider = hydrated && providersLoaded && !isConnected(settings.providerId);
 
   const addPrompt = (prompt: TranslationKey) => {
     controller.textInput.append(t(prompt));
@@ -54,7 +65,52 @@ export function EmptyState({
           : "What would you like to work on today?"}
       </p>
 
-      <section className="mt-9 w-full max-w-xl" aria-label={t("startWith")}>
+      {onModeChange ? (
+        <div
+          aria-label={t("chooseModeLabel")}
+          className="mt-6 flex flex-wrap justify-center gap-2"
+          role="group"
+        >
+          {AGENT_MODES.map((item) => {
+            const Icon = MODE_ICONS[item.id];
+            const selected = item.id === mode;
+            return (
+              <button
+                aria-pressed={selected}
+                className={cn(
+                  "inline-flex min-h-9 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  selected
+                    ? "border-primary/45 bg-primary/10 text-foreground"
+                    : "border-border/80 bg-card/55 text-muted-foreground hover:bg-accent/70 hover:text-foreground",
+                )}
+                key={item.id}
+                onClick={() => onModeChange(item.id)}
+                title={item.hint[settings.language]}
+                type="button"
+              >
+                <Icon aria-hidden="true" className="size-3.5" />
+                <span>{item.label[settings.language]}</span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+
+      {needsProvider && onOpenSettings ? (
+        <div className="mt-5 flex flex-wrap items-center justify-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/8 px-3.5 py-2 text-xs text-foreground">
+          <KeyRoundIcon aria-hidden="true" className="size-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+          <span>{t("onboardingNoProviderTitle")}</span>
+          <button
+            className="font-semibold text-primary underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={onOpenSettings}
+            type="button"
+          >
+            {t("onboardingConnectProvider")}
+          </button>
+        </div>
+      ) : null}
+
+      <section className="mt-8 w-full max-w-xl" aria-label={t("startWith")}>
         <div className="mb-2 flex items-center justify-center gap-2 text-[11px] font-medium text-muted-foreground">
           <SparklesIcon className="size-3.5" aria-hidden="true" />
           <span>{t("startWith")}</span>

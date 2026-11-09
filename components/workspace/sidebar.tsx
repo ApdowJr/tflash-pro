@@ -11,7 +11,8 @@ import {
   Trash2Icon,
   XIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { SafeLink } from "@/lib/safe-navigation";
+import { useEffect, useMemo, useRef, useState, type FormEvent, useCallback } from "react";
 import { FlashLockup } from "@/components/brand/logo";
 import { Button } from "@/components/ui/button";
 import {
@@ -57,6 +58,7 @@ export function Sidebar({
   account,
   activeChatId,
   open,
+  desktopCollapsed = false,
   onClose,
   onNewChat,
   onOpenSettings,
@@ -67,6 +69,7 @@ export function Sidebar({
   readonly account?: Account;
   readonly activeChatId?: string;
   readonly open: boolean;
+  readonly desktopCollapsed?: boolean;
   readonly onClose: () => void;
   readonly onNewChat: () => void;
   readonly onOpenSettings: () => void;
@@ -77,6 +80,7 @@ export function Sidebar({
   const { settings, t, hydrated, accountId, accountKind, renameChat, removeChat, historyError, refreshChats, chatActionWarnings, chatActionStorageError, acknowledgeChatAction } = useAppSettings();
   const { workspace, ready: workspaceReady } = useWorkspace();
   const [query, setQuery] = useState("");
+  const [historyScope, setHistoryScope] = useState<"current" | "all">("current");
   const [action, setAction] = useState<ChatAction | null>(null);
   const [title, setTitle] = useState("");
   const [pending, setPending] = useState(false);
@@ -85,16 +89,20 @@ export function Sidebar({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const wasOpenRef = useRef(false);
   const returnFocusRef = useRef<HTMLElement | null>(null);
-  const modeChats = useMemo(() => settings.chats.filter((chat) => {
-    // Keep the open conversation visible while its stored preference loads.
-    if (chat.id === activeChatId) return true;
-    if (typeof window === "undefined") return mode === "chat";
+  const chatModeFor = useCallback((chatId: string): AgentMode => {
+    if (chatId === activeChatId) return mode;
+    if (typeof window === "undefined") return "chat";
     try {
-      return parseAgentMode(window.localStorage.getItem(agentModeStorageKey(accountKind, accountId, chat.id))) === mode;
+      return parseAgentMode(window.localStorage.getItem(agentModeStorageKey(accountKind, accountId, chatId)));
     } catch {
-      return mode === "chat";
+      return "chat";
     }
-  }), [accountId, accountKind, activeChatId, mode, settings.chats]);
+  }, [accountId, accountKind, activeChatId, mode]);
+  const modeChats = useMemo(() => (
+    historyScope === "all"
+      ? settings.chats
+      : settings.chats.filter((chat) => chat.id === activeChatId || chatModeFor(chat.id) === mode)
+  ), [activeChatId, chatModeFor, historyScope, mode, settings.chats]);
   const contentSearch = useChatSearch({
     query, chats: modeChats, proofs: settings.chatProofs, accountId, accountKind, hydrated,
   });
@@ -165,10 +173,12 @@ export function Sidebar({
         onClick={onClose}
       />
       <aside
+        aria-hidden={desktopCollapsed || undefined}
         id="conversation-sidebar"
         className={cn(
-          "tf-safe-x fixed inset-y-0 left-0 z-50 flex w-[min(17rem,88vw)] flex-col border-r bg-sidebar text-sidebar-foreground transition-transform duration-200 ease-out lg:static lg:z-auto lg:w-[17rem] lg:translate-x-0",
+          "tf-safe-x fixed inset-y-0 left-0 z-50 flex w-[min(17rem,88vw)] flex-col border-r bg-sidebar text-sidebar-foreground transition-[transform,width] duration-200 ease-out lg:static lg:z-auto lg:translate-x-0",
           open ? "visible translate-x-0 shadow-2xl lg:shadow-none" : "invisible -translate-x-full lg:visible",
+          desktopCollapsed ? "lg:pointer-events-none lg:w-0 lg:overflow-hidden lg:border-r-0" : "lg:w-[17rem]",
         )}
       >
         <div className="flex h-16 shrink-0 items-center justify-between gap-2 border-b px-3.5">
@@ -245,7 +255,27 @@ export function Sidebar({
         {historyError ? <div className="px-3 py-2 text-xs text-destructive" role="alert">{t(historyError)} <button className="underline" onClick={() => void refreshChats()} type="button">{t("refresh")}</button></div> : null}
         {chatActionStorageError ? <p className="px-3 py-2 text-xs text-destructive" role="alert">{t("chatActionStorageUnavailable")}</p> : null}
         {chatActionWarnings.map((warning) => <ChatActionReview key={warning.key} warning={warning} acknowledge={acknowledgeChatAction} />)}
-        <div className="px-4 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.13em] text-muted-foreground">{t("history")}</div>
+        <div className="flex items-center justify-between gap-2 px-4 pt-3 pb-1">
+          <span className="text-[10px] font-semibold uppercase tracking-[0.13em] text-muted-foreground">{t("history")}</span>
+          <div aria-label={t("history")} className="flex items-center gap-0.5 rounded-md border bg-background/50 p-0.5" role="group">
+            <button
+              aria-pressed={historyScope === "current"}
+              className={cn("rounded px-1.5 py-0.5 text-[10px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", historyScope === "current" ? "bg-accent font-medium text-foreground" : "text-muted-foreground hover:text-foreground")}
+              onClick={() => setHistoryScope("current")}
+              type="button"
+            >
+              {t("historyCurrentMode")}
+            </button>
+            <button
+              aria-pressed={historyScope === "all"}
+              className={cn("rounded px-1.5 py-0.5 text-[10px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", historyScope === "all" ? "bg-accent font-medium text-foreground" : "text-muted-foreground hover:text-foreground")}
+              onClick={() => setHistoryScope("all")}
+              type="button"
+            >
+              {t("historyAllModes")}
+            </button>
+          </div>
+        </div>
         <nav aria-label={t("chats")} className="tflash-scroll min-h-0 flex-1 overflow-y-auto px-2 pb-2 pt-1">
           {groups.length === 0 ? (
             <div className="px-3 py-4 text-center text-[12px] leading-relaxed text-muted-foreground">
@@ -259,22 +289,30 @@ export function Sidebar({
                   {group.chats.map((chat) => {
                     const active = chat.id === activeChatId;
                     const snippet = Object.hasOwn(contentSearch.matches, chat.id) ? contentSearch.matches[chat.id] : undefined;
+                    const itemMode = historyScope === "all" ? chatModeFor(chat.id) : undefined;
+                    const itemModeLabel = itemMode === "coder" ? t("modeCoder") : itemMode === "research" ? t("modeResearch") : itemMode === "chat" ? t("modeChat") : undefined;
                     return (
                       <li className="group/chat relative" key={chat.id}>
-                        <a
+                        <SafeLink
                           aria-current={active ? "page" : undefined}
                           className={cn(
-                            "flex min-w-0 items-center rounded-lg pr-9 pl-2.5 text-[13px] transition-colors",
+                            "flex min-w-0 items-center gap-1.5 rounded-lg pr-9 pl-2.5 text-[13px] transition-colors",
                             snippet ? "min-h-14 py-2" : "h-10 lg:h-9",
                             active ? "bg-accent font-medium text-accent-foreground" : "text-muted-foreground hover:bg-accent/65 hover:text-foreground",
                           )}
                           href={`/s/${encodeURIComponent(chat.id)}`}
+                          onClick={onClose}
                         >
-                          <span className="flex min-w-0 flex-col gap-0.5">
+                          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                             <span className="truncate">{chat.title}</span>
                             {snippet ? <span className="line-clamp-2 break-words text-[11px] font-normal leading-snug text-muted-foreground">{snippet.before}<mark className="rounded-sm bg-primary/15 text-foreground">{snippet.match}</mark>{snippet.after}</span> : null}
                           </span>
-                        </a>
+                          {itemModeLabel ? (
+                            <span className="shrink-0 rounded border border-border/70 bg-background/70 px-1 py-0.5 text-[9px] font-medium text-muted-foreground">
+                              {itemModeLabel}
+                            </span>
+                          ) : null}
+                        </SafeLink>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <button aria-label={`${t("chatActions")}: ${chat.title}`} className="tf-reveal absolute top-1/2 right-1 flex size-8 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-background/70 hover:text-foreground focus-visible:opacity-100 group-hover/chat:opacity-100" type="button"><MoreHorizontalIcon className="size-4" /></button>

@@ -97,6 +97,8 @@ export function ChatComposer({
       ) : null}
       <PromptInput
         className="tflash-composer overflow-visible rounded-2xl border-border bg-card shadow-[var(--shell-shadow)] focus-within:border-primary/45! focus-within:ring-2 focus-within:ring-primary/10"
+        dropLabel={t("dropFilesHere")}
+        globalDrop
         onSubmit={onSubmit}
         onSubmitCapture={(event) => { if (documentPending) { event.preventDefault(); event.stopPropagation(); } }}
       >
@@ -108,7 +110,7 @@ export function ChatComposer({
           // Send stays disabled until it is safe to submit.
           placeholder={t(mode === "coder" ? "coderPlaceholder" : mode === "research" ? "researchPlaceholder" : "chatPlaceholder")}
         />
-        <PromptInputFooter className={`flex-wrap border-t-0 px-2.5 pt-1.5 pb-2.5 ${isBusy && (controller.textInput.value.trim() || controller.attachments.files.length) ? "pr-24" : "pr-14"}`}>
+        <PromptInputFooter className={`flex-wrap border-t-0 px-2.5 pt-1.5 pb-2.5 ${(!isBusy || controller.textInput.value.trim() || controller.attachments.files.length) ? "pr-24" : "pr-14"}`}>
           <PromptInputTools className="min-w-0 gap-1">
             <ComposerAttachButton onImportDocument={() => openDocumentImport.current()} />
             <ComposerModelButton onOpen={onOpenModels} />
@@ -163,23 +165,34 @@ function ComposerAttachments() {
   if (attachments.files.length === 0) return null;
   return (
     <div className="flex flex-wrap gap-1.5 px-3 pt-3">
-      {attachments.files.map((file) => (
-        <span
-          className="flex max-w-[15rem] items-center gap-1.5 rounded-md border border-border/70 bg-muted/60 py-1 pr-1 pl-2 text-[11px] text-foreground"
-          key={file.id}
-        >
-          <FileIcon className="size-3 shrink-0 text-muted-foreground" />
-          <span className="truncate">{file.filename}</span>
-          <button
-            aria-label={`${t("removeAttachment")}: ${file.filename}`}
-            className="tf-touch-target flex size-11 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-            onClick={() => attachments.remove(file.id)}
-            type="button"
+      {attachments.files.map((file) => {
+        const isImage = file.mediaType?.startsWith("image/") && Boolean(file.url);
+        return (
+          <span
+            className="flex max-w-[15rem] items-center gap-1.5 rounded-lg border border-border/70 bg-muted/60 py-1 pr-1 pl-1.5 text-[11px] text-foreground"
+            key={file.id}
           >
-            <XIcon className="size-3" />
-          </button>
-        </span>
-      ))}
+            {isImage ? (
+              <img
+                alt={file.filename ?? t("attachmentLabel")}
+                className="size-7 shrink-0 rounded border border-border/50 object-cover"
+                src={file.url}
+              />
+            ) : (
+              <FileIcon className="ml-0.5 size-3.5 shrink-0 text-muted-foreground" />
+            )}
+            <span className="truncate">{file.filename}</span>
+            <button
+              aria-label={`${t("removeAttachment")}: ${file.filename}`}
+              className="tf-touch-target flex size-11 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              onClick={() => attachments.remove(file.id)}
+              type="button"
+            >
+              <XIcon className="size-3" />
+            </button>
+          </span>
+        );
+      })}
     </div>
   );
 }
@@ -254,11 +267,11 @@ function ComposerAction({
   const canSubmit = hasInputText || attachments.files.length > 0;
 
   return (
-    <>
+    <div className="absolute right-2 bottom-2 z-10 flex items-center gap-1.5 sm:right-2.5 sm:bottom-2.5">
       {isBusy ? (
         <PromptInputButton
           aria-label={t(cancelling ? "cancelling" : "stop")}
-          className={`tf-touch-target absolute bottom-2 size-8 rounded-full border-border bg-card sm:bottom-2.5 sm:size-8 ${canSubmit ? "right-12 sm:right-12" : "right-2 sm:right-2.5"}`}
+          className="tf-touch-target size-8 shrink-0 rounded-full border-border bg-card sm:size-8"
           disabled={cancelling}
           onClick={onCancel}
           type="button"
@@ -266,15 +279,16 @@ function ComposerAction({
         >
           <SquareIcon className="size-3 fill-current" />
         </PromptInputButton>
-      ) : null}
-      {!isBusy ? <VoiceInputButton disabled={isResuming || cancelling} /> : null}
+      ) : (
+        <VoiceInputButton disabled={isResuming || cancelling} />
+      )}
       {(!isBusy || canSubmit) ? (
         <PromptInputSubmit
           aria-label={t("send")}
-          className="tf-touch-target right-2 bottom-2 size-8 bg-primary text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40 sm:right-2.5 sm:bottom-2.5 sm:size-8"
+          className="tf-touch-target static right-auto bottom-auto size-8 shrink-0 bg-primary text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40 sm:size-8"
           disabled={isResuming || cancelling || !canSubmit}
         />
       ) : null}
-    </>
+    </div>
   );
 }

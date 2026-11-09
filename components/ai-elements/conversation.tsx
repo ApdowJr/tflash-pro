@@ -218,7 +218,7 @@ export const ConversationScrollButton = ({
       <Button
         aria-label="Scroll to bottom"
         className={cn(
-          "absolute bottom-32 left-[50%] translate-x-[-50%] rounded-full dark:bg-background dark:hover:bg-muted",
+          "absolute bottom-4 left-[50%] z-10 translate-x-[-50%] shadow-sm rounded-full dark:bg-background dark:hover:bg-muted",
           className,
         )}
         onClick={handleScrollToBottom}

@@ -2,6 +2,15 @@
 
 import { WifiOffIcon } from "lucide-react";
 import { useEffect, useState } from "react";
+import type { Language } from "@/components/settings/i18n";
+
+function readStoredLanguage(): Language {
+  try {
+    return window.localStorage.getItem("tflash:language") === "so" ? "so" : "en";
+  } catch {
+    return "en";
+  }
+}
 
 /**
  * A quiet connection indicator.
@@ -17,8 +26,18 @@ import { useEffect, useState } from "react";
 export function ConnectivityBanner() {
   const [offline, setOffline] = useState(false);
   const [recovered, setRecovered] = useState(false);
+  const [language, setLanguage] = useState<Language>("en");
 
   useEffect(() => {
+    setLanguage(readStoredLanguage());
+    const onLanguageEvent = (event: Event) => {
+      const detail = (event as CustomEvent<unknown>).detail;
+      if (detail === "so" || detail === "en") setLanguage(detail);
+      else setLanguage(readStoredLanguage());
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === null || event.key === "tflash:language") setLanguage(readStoredLanguage());
+    };
     // `navigator.onLine` starts optimistic in some browsers; only report what
     // the events and the initial read agree on.
     setOffline(typeof navigator !== "undefined" && navigator.onLine === false);
@@ -32,9 +51,13 @@ export function ConnectivityBanner() {
     };
     window.addEventListener("offline", onOffline);
     window.addEventListener("online", onOnline);
+    window.addEventListener("tflash:language-change", onLanguageEvent);
+    window.addEventListener("storage", onStorage);
     return () => {
       window.removeEventListener("offline", onOffline);
       window.removeEventListener("online", onOnline);
+      window.removeEventListener("tflash:language-change", onLanguageEvent);
+      window.removeEventListener("storage", onStorage);
     };
   }, []);
 
@@ -62,12 +85,16 @@ export function ConnectivityBanner() {
         {offline ? (
           <>
             <WifiOffIcon aria-hidden="true" className="size-3.5 shrink-0" />
-            <span>You are offline. Messages will fail until the connection returns. · Offline.</span>
+            <span>
+              {language === "so"
+                ? "Internet-ka ayaa go'an. Farriimuhu ma bixi doonaan ilaa uu soo noqdo."
+                : "You are offline. Messages will fail until the connection returns."}
+            </span>
           </>
         ) : (
           <>
             <span aria-hidden="true" className="size-1.5 rounded-full bg-emerald-500" />
-            <span>Back online. · Mar kale online.</span>
+            <span>{language === "so" ? "Internet-ka wuu soo noqday." : "Back online."}</span>
           </>
         )}
       </div>

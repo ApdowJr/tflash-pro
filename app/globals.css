@@ -96,6 +96,37 @@
   --shell-shadow: 0 1px 2px oklch(0 0 0 / 24%), 0 18px 44px -28px oklch(0 0 0 / 55%);
 }
 
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --background: oklch(0.175 0.012 255);
+    --foreground: oklch(0.95 0.006 250);
+    --card: oklch(0.21 0.014 255);
+    --card-foreground: oklch(0.95 0.006 250);
+    --popover: oklch(0.21 0.014 255);
+    --popover-foreground: oklch(0.95 0.006 250);
+    --primary: oklch(0.72 0.13 245);
+    --primary-foreground: oklch(0.17 0.025 255);
+    --secondary: oklch(0.255 0.016 255);
+    --secondary-foreground: oklch(0.94 0.006 250);
+    --muted: oklch(0.245 0.014 255);
+    --muted-foreground: oklch(0.7 0.014 250);
+    --accent: oklch(0.275 0.018 255);
+    --accent-foreground: oklch(0.96 0.005 250);
+    --destructive: oklch(0.704 0.176 22.2);
+    --border: oklch(1 0 0 / 10%);
+    --input: oklch(1 0 0 / 13%);
+    --ring: oklch(0.72 0.13 245);
+    --sidebar: oklch(0.15 0.012 255);
+    --sidebar-foreground: oklch(0.94 0.006 250);
+    --brand: oklch(0.72 0.13 245);
+    --brand-foreground: oklch(0.17 0.025 255);
+    --brand-tile: oklch(0.28 0.045 250);
+    --brand-bolt: oklch(0.76 0.13 245);
+    --shell-shadow: 0 1px 2px oklch(0 0 0 / 24%), 0 18px 44px -28px oklch(0 0 0 / 55%);
+  }
+}
+
 html {
   height: 100%;
   -webkit-font-smoothing: antialiased;
@@ -179,7 +210,70 @@ button { touch-action: manipulation; }
 .tf-md :where(img, video, svg) { max-width: 100%; }
 .tf-md :where(th, td) { padding: 0.5rem 0.75rem; }
 
-.tf-shimmer { color: var(--muted-foreground); }
+.tf-shimmer {
+  display: inline-block;
+  color: var(--muted-foreground);
+  background: linear-gradient(
+    110deg,
+    var(--muted-foreground) 35%,
+    var(--foreground) 50%,
+    var(--muted-foreground) 65%
+  );
+  background-size: 220% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: tf-shimmer-slide 1.8s linear infinite;
+}
+
+@keyframes tf-shimmer-slide {
+  from { background-position: 120% 0; }
+  to { background-position: -100% 0; }
+}
+
+/* Native CSS replacements for tw-animate-css utilities used by Radix primitives and AI elements. */
+@keyframes tf-enter {
+  from {
+    opacity: var(--tf-enter-opacity, 1);
+    transform: translate3d(var(--tf-enter-translate-x, 0), var(--tf-enter-translate-y, 0), 0)
+      scale3d(var(--tf-enter-scale, 1), var(--tf-enter-scale, 1), 1);
+  }
+}
+
+@keyframes tf-exit {
+  to {
+    opacity: var(--tf-exit-opacity, 1);
+    transform: translate3d(var(--tf-exit-translate-x, 0), var(--tf-exit-translate-y, 0), 0)
+      scale3d(var(--tf-exit-scale, 1), var(--tf-exit-scale, 1), 1);
+  }
+}
+
+.animate-in {
+  animation-name: tf-enter;
+  animation-duration: 150ms;
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  animation-fill-mode: both;
+}
+
+.animate-out {
+  animation-name: tf-exit;
+  animation-duration: 120ms;
+  animation-timing-function: cubic-bezier(0.4, 0, 1, 1);
+  animation-fill-mode: both;
+}
+
+.fade-in-0 { --tf-enter-opacity: 0; }
+.fade-out-0 { --tf-exit-opacity: 0; }
+.zoom-in-95 { --tf-enter-scale: 0.95; }
+.zoom-out-95 { --tf-exit-scale: 0.95; }
+.slide-in-from-top-2 { --tf-enter-translate-y: -0.5rem; }
+.slide-in-from-bottom-2 { --tf-enter-translate-y: 0.5rem; }
+.slide-in-from-left-2 { --tf-enter-translate-x: -0.5rem; }
+.slide-in-from-right-2 { --tf-enter-translate-x: 0.5rem; }
+.slide-out-to-top-2 { --tf-exit-translate-y: -0.5rem; }
+.slide-out-to-bottom-2 { --tf-exit-translate-y: 0.5rem; }
+.slide-out-to-left-2 { --tf-exit-translate-x: -0.5rem; }
+.slide-out-to-right-2 { --tf-exit-translate-x: 0.5rem; }
 
 @media (hover: none) {
   .tf-reveal { opacity: 1 !important; }
@@ -1468,7 +1562,8 @@ button { touch-action: manipulation; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tf-rise, .tf-fade-in { animation: none; }
+  .tf-rise, .tf-fade-in, .tf-shimmer, .animate-in, .animate-out { animation: none; }
+  .tf-shimmer { -webkit-text-fill-color: currentColor; background: none; }
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;

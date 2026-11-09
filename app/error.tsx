@@ -1,8 +1,9 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect } from "react";
+import { SafeLink } from "@/lib/safe-navigation";
+import { useEffect, useState } from "react";
 import { ErrorState } from "@/components/app/error-state";
+import type { Language } from "@/components/settings/i18n";
 import { Button } from "@/components/ui/button";
 
 /**
@@ -19,26 +20,38 @@ export default function AppError({
   readonly error: Error & { digest?: string };
   readonly reset: () => void;
 }) {
+  const [language, setLanguage] = useState<Language>("en");
+
   useEffect(() => {
     // Structured, redacted log on the server route; the browser console keeps
     // the raw object for local debugging.
     console.error("[tflash] route error", error.digest ?? "no-digest", error.message);
   }, [error]);
 
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem("tflash:language") === "so") setLanguage("so");
+    } catch { /* ignore */ }
+  }, []);
+
+  const so = language === "so";
+
   return (
     <main id="main-content" tabIndex={-1} className="flex min-h-dvh items-center justify-center bg-background">
       <ErrorState
-        eyebrow="Something broke · Khalad ayaa dhacay"
-        title="This screen could not load"
-        description="The page failed while rendering. Retrying usually fixes a temporary problem. If it keeps happening, open a new chat or check the deployment health endpoint."
+        eyebrow={so ? "Khalad ayaa dhacay" : "Something broke"}
+        title={so ? "Shaashaddan lama soo rari karin" : "This screen could not load"}
+        description={so
+          ? "Boggu wuu fashilmay intii la soo rarayay. Dib u isku dayiddu badanaa way xallisaa dhibaato ku meel gaar ah. Haddii ay sii socoto, fur wada hadal cusub."
+          : "The page failed while rendering. Retrying usually fixes a temporary problem. If it keeps happening, open a new chat or check the deployment health endpoint."}
         detail={error.digest ? `digest: ${error.digest}` : undefined}
         actions={(
           <>
             <Button onClick={reset} type="button">
-              Try again · Isku day mar kale
+              {so ? "Isku day mar kale" : "Try again"}
             </Button>
             <Button asChild type="button" variant="outline">
-              <Link href="/">New chat · Wada hadal cusub</Link>
+              <SafeLink href="/">{so ? "Wada hadal cusub" : "New chat"}</SafeLink>
             </Button>
           </>
         )}

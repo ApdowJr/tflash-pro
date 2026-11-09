@@ -128,6 +128,7 @@ type SettingsContextValue = {
   readonly modelsStateFor: (providerId: string) => ModelsState;
   readonly loadModels: (providerId: string, force?: boolean) => Promise<void>;
   readonly envConfigured: Readonly<Record<string, boolean>>;
+  readonly providersLoaded: boolean;
   /** Set when an OAuth round trip came back with a problem, for the panel to show. */
   readonly oauthError?: string;
   /** The integration whose authorization just completed, for a one-line confirmation. */
@@ -191,7 +192,8 @@ export function AppSettingsProvider({ children, userId, accountKind }: { readonl
   const [hydratedIdentity, setHydratedIdentity] = useState("");
   const hydrated = hydratedIdentity === identity;
   const [envSnapshot, setEnvSnapshot] = useState<{ identity: string; values: Readonly<Record<string, boolean>> }>({ identity: "", values: {} });
-  const envConfigured = envSnapshot.identity === identity ? envSnapshot.values : {};
+  const providersLoaded = envSnapshot.identity === identity;
+  const envConfigured = providersLoaded ? envSnapshot.values : {};
   const [liveModels, setLiveModels] = useState<Readonly<Record<string, { token?: string; identity: string; models: readonly ModelInfo[] }>>>({});
   const [modelsState, setModelsState] = useState<Readonly<Record<string, ModelsState & { token?: string; identity: string }>>>({});
   const [historyError, setHistoryError] = useState<"historyLoadFailed" | "historyImportUncertain">();
@@ -359,6 +361,9 @@ export function AppSettingsProvider({ children, userId, accountKind }: { readonl
 
   useEffect(() => {
     document.documentElement.lang = settings.language;
+    try {
+      window.dispatchEvent(new CustomEvent("tflash:language-change", { detail: settings.language }));
+    } catch { /* ignore */ }
   }, [settings.language]);
 
   useEffect(() => {
@@ -1027,6 +1032,7 @@ export function AppSettingsProvider({ children, userId, accountKind }: { readonl
     modelsStateFor,
     loadModels,
     envConfigured,
+    providersLoaded,
     ...(oauthNoticeIdentity === identity && oauthError ? { oauthError } : {}),
     ...(oauthNoticeIdentity === identity && oauthJustConnected ? { oauthJustConnected } : {}),
     clearOAuthNotice,
@@ -1058,5 +1064,27 @@ export function useAppSettings(): SettingsContextValue {
   const context = useContext(SettingsContext);
   if (!context) throw new Error("useAppSettings must be used inside AppSettingsProvider");
   return context;
+}
+
+const FALLBACK_TRANSLATOR: Translator = (key) => translate("en", key);
+
+export function useOptionalAppSettings(): {
+  readonly language: Language;
+  readonly t: Translator;
+  readonly hasProvider: boolean;
+  readonly accountId?: string;
+  readonly accountKind?: "vercel" | "supabase";
+} {
+  const context = useContext(SettingsContext);
+  if (context) {
+    return {
+      language: context.settings.language,
+      t: context.t,
+      hasProvider: true,
+      accountId: context.accountId,
+      accountKind: context.accountKind,
+    };
+  }
+  return { language: "en", t: FALLBACK_TRANSLATOR, hasProvider: false };
 }
 

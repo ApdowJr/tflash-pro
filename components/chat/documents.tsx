@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchDocumentResponse, readDocumentBlob, readDocumentResult } from "@/lib/documents/client-fetch";
 import { BookOpenIcon } from "lucide-react";
-import { useAppSettings } from "@/components/settings/app-settings";
+import { useOptionalAppSettings } from "@/components/settings/app-settings";
 import {
   usePromptInputAttachments,
   PromptInputButton,
@@ -21,7 +21,7 @@ export function DocumentExportButtons({
   filename: string;
   content: string;
 }) {
-  const { t, accountId, accountKind } = useAppSettings();
+  const { t, accountId, accountKind, hasProvider } = useOptionalAppSettings();
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
   const operation = useRef<AbortController | null>(null);
@@ -32,20 +32,22 @@ export function DocumentExportButtons({
     setFailed(false);
     return () => { operation.current?.abort(); operation.current = null; };
   }, [accountId, accountKind, filename, content]);
-  if (!/\.(md|txt)$/.test(filename) || content.length > 50_000) return null;
+  if (!hasProvider || !accountId || !accountKind || !/\.(md|txt)$/.test(filename) || content.length > 50_000) return null;
+  const expectedUserId = accountId;
+  const expectedAccountKind = accountKind;
   async function download(format: "pdf" | "docx") {
     if (operation.current) return;
     const controller = new AbortController();
     operation.current = controller;
     const current = () => operation.current === controller && !controller.signal.aborted &&
-      scope.current.accountId === accountId && scope.current.accountKind === accountKind &&
+      scope.current.accountId === expectedUserId && scope.current.accountKind === expectedAccountKind &&
       scope.current.filename === filename && scope.current.content === content;
     setPending(true);
     setFailed(false);
     try {
       const { response, signal } = await fetchDocumentResponse("/api/documents/export", {
         method: "POST", signal: controller.signal,
-        headers: { "content-type": "application/json", "x-tflash-expected-user-id": accountId, "x-tflash-expected-account-kind": accountKind },
+        headers: { "content-type": "application/json", "x-tflash-expected-user-id": expectedUserId, "x-tflash-expected-account-kind": expectedAccountKind },
         body: JSON.stringify({ filename, content, format }),
       });
       const expected = format === "pdf" ? "application/pdf" : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -100,7 +102,7 @@ export function DocumentImportButton({
   hideTrigger?: boolean;
   onRequestImportReady?: (open: () => void) => void;
 }) {
-  const { t, accountId, accountKind } = useAppSettings();
+  const { t, accountId = "", accountKind = "vercel" } = useOptionalAppSettings();
   const attachments = usePromptInputAttachments();
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => { onRequestImportReady?.(() => input.current?.click()); }, [onRequestImportReady]);

@@ -7,9 +7,9 @@ import { clearDispatchReview, clearReviewedDispatches, dispatchReviewKey, dispat
 
 import { Client } from "eve/client";
 import { activeTurn, interactions, turn } from "eve/events";
-import { useEveAgent } from "eve/react";
-import { AlertCircleIcon, CheckIcon, CopyIcon } from "lucide-react";
-import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEveAgent, type EveMessage, type EveMessagePart } from "eve/react";
+import { AlertCircleIcon, CheckIcon, CopyIcon, PencilIcon, RotateCcwIcon } from "lucide-react";
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   Conversation,
   ConversationContent,
@@ -30,7 +30,8 @@ import { TopBar } from "@/components/workspace/top-bar";
 import { ModelPicker } from "@/components/settings/model-picker";
 import { useAppSettings } from "@/components/settings/app-settings";
 import { SettingsDialog } from "@/components/settings/settings-dialog";
-import { sessionTitle } from "@/lib/chat-history";
+import { deriveChatTitle, sessionTitle } from "@/lib/chat-history";
+import { useSafeNavigate } from "@/lib/safe-navigation";
 import { OWNER_PROOF_HEADER } from "@/lib/security/chat-ownership-wire";
 import { AgentMessage, type AgentInputResponse } from "./agent-message";
 import { InputResponseNotice, useInputResponseRecovery } from "./input-response-recovery";
@@ -63,9 +64,22 @@ const CoderWorkspace = lazy(async () => ({ default: (await import("@/components/
 const ResearchWorkspace = lazy(async () => ({ default: (await import("@/components/research/research-workspace")).ResearchWorkspace }));
 
 function WorkspaceLoading({ label, mobileVisible }: { readonly label: "Coder" | "Research"; readonly mobileVisible: boolean }) {
-  return <section aria-label={`${label} workspace`} className={`min-h-0 min-w-0 flex-col border-t bg-muted/10 xl:flex xl:border-t-0 xl:border-l ${mobileVisible ? "flex flex-1" : "hidden"}`}>
-    <p className="m-auto p-6 text-xs text-muted-foreground" role="status">Loading {label} workspace…</p>
-  </section>;
+  return (
+    <section aria-label={`${label} workspace`} className={`min-h-0 min-w-0 flex-col border-t bg-muted/10 lg:flex lg:flex-1 lg:border-t-0 lg:border-l ${mobileVisible ? "flex flex-1" : "hidden"}`}>
+      <div className="flex h-14 items-center justify-between border-b bg-background px-4">
+        <div className="h-4 w-32 animate-pulse rounded bg-muted" />
+        <div className="h-7 w-20 animate-pulse rounded bg-muted" />
+      </div>
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6">
+        <div className="w-full max-w-sm space-y-2.5">
+          <div className="h-3 w-3/4 animate-pulse rounded bg-muted" />
+          <div className="h-3 w-1/2 animate-pulse rounded bg-muted" />
+          <div className="h-24 w-full animate-pulse rounded-lg border bg-card/50" />
+        </div>
+        <p className="text-xs text-muted-foreground" role="status">Loading {label} workspace…</p>
+      </div>
+    </section>
+  );
 }
 
 type ReadySession = { readonly id: string; readonly resume: boolean; readonly proof?: string };
@@ -236,9 +250,31 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   const [settingsInstance, setSettingsInstance] = useState(0);
   const [modelsOpen, setModelsOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState(false);
   const [workspaceMobileView, setWorkspaceMobileView] = useState<"chat" | "workspace">("chat");
+  const [workspaceExpanded, setWorkspaceExpanded] = useState(false);
+  const [splitPercent, setSplitPercent] = useState(44);
+  const splitContainerRef = useRef<HTMLDivElement>(null);
+  const [editingMessageId, setEditingMessageId] = useState<string>();
   const [agentMode, setAgentMode] = useState<AgentMode>(initialMode);
   const [modeLoadedFor, setModeLoadedFor] = useState<string>();
+  const navigate = useSafeNavigate();
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem("tflash:workspace-split:v1");
+      const parsed = saved ? Number(saved) : Number.NaN;
+      if (Number.isFinite(parsed) && parsed >= 28 && parsed <= 68) {
+        setSplitPercent(Math.round(parsed));
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  const updateSplitPercent = useCallback((next: number) => {
+    const clamped = Math.min(68, Math.max(28, Math.round(next)));
+    setSplitPercent(clamped);
+    try { window.localStorage.setItem("tflash:workspace-split:v1", String(clamped)); } catch { /* ignore */ }
+  }, []);
   const hasSubmittedMessage = useRef(false);
   const submissionPending = useRef<symbol | undefined>(undefined);
   const dispatchInProgress = useRef(0);
@@ -446,16 +482,19 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
   const respondToInputRef = useRef(respondToInputImplementation);
   respondToInputRef.current = respondToInputImplementation;
   const respondToInput = useCallback((responses: readonly AgentInputResponse[]) => respondToInputRef.current(responses), []);
-  const startNewChat = () => window.location.assign(`/?mode=${agentMode}`);
+  const startNewChat = useCallback(() => {
+    navigate(`/?mode=${agentMode}`);
+  }, [agentMode, navigate]);
   const changeAgentMode = (nextMode: AgentMode) => {
     setSidebarOpen(false);
     if (nextMode === agentMode) return;
     // A started conversation never changes identity or mixes working modes.
     if (modeLocked) {
-      window.location.assign(`/?mode=${nextMode}`);
+      navigate(`/?mode=${nextMode}`);
       return;
     }
     setAgentMode(nextMode);
+    setWorkspaceExpanded(false);
     History.prototype.replaceState.call(window.history, window.history.state, "", `/?mode=${nextMode}`);
   };
 
@@ -492,13 +531,15 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
       } else if (event.shiftKey && event.key.toLowerCase() === "o") {
         event.preventDefault();
         startNewChat();
+      } else if (!event.shiftKey && !event.altKey && event.key.toLowerCase() === "b") {
+        event.preventDefault();
+        setDesktopSidebarCollapsed((prev) => !prev);
       }
     };
     // Capture before a dialog handles Escape and changes its own open state.
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, agentMode]);
+  }, [startNewChat]);
 
   const exportChat = () => {
     const markdown = [
@@ -576,8 +617,9 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
       setCancellationError(undefined);
       const firstUser = agent.messages.find((entry) => entry.role === "user");
       const firstText = firstUser?.parts.find((part) => part.type === "text");
-      const title = settings.chats.find((chat) => chat.id === sessionId)?.title ||
-        (firstText?.type === "text" ? firstText.text : "") || text || t("attach");
+      const existingTitle = settings.chats.find((chat) => chat.id === sessionId)?.title;
+      const rawTitleSource = (firstText?.type === "text" ? firstText.text : "") || text || t("attach");
+      const title = existingTitle || deriveChatTitle(rawTitleSource, t("newChat"));
       try {
         await recordChatActivity(sessionId, title);
       } catch (error) {
@@ -666,11 +708,74 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
     });
   };
 
+  const canMutateTurns =
+    !isBusy &&
+    !isResuming &&
+    !disconnected &&
+    !cancelling &&
+    !unknownDispatch &&
+    !inputBlocked &&
+    !stopBlocked &&
+    !sharedBlocked &&
+    Boolean(sessionId);
+
+  const lastAssistantIndex = useMemo(() => {
+    for (let index = agent.messages.length - 1; index >= 0; index -= 1) {
+      if (agent.messages[index]?.role === "assistant") return index;
+    }
+    return -1;
+  }, [agent.messages]);
+
+  const lastUserPrompt = useMemo(() => {
+    for (let index = agent.messages.length - 1; index >= 0; index -= 1) {
+      const candidate = promptInputFromUserMessage(agent.messages[index]);
+      if (candidate) return candidate;
+    }
+    return undefined;
+  }, [agent.messages]);
+
+  const regenerateFromMessage = (assistantIndex: number) => {
+    if (!canMutateTurns) return;
+    let prompt: PromptInputMessage | undefined;
+    for (let index = assistantIndex - 1; index >= 0; index -= 1) {
+      const candidate = promptInputFromUserMessage(agent.messages[index]);
+      if (candidate) {
+        prompt = candidate;
+        break;
+      }
+    }
+    if (!prompt) return;
+    void handleSubmit(prompt).catch((error: unknown) => {
+      if (responseMounted.current) setCancellationError(toErrorMessage(error));
+    });
+  };
+
+  const startSplitResize = (startX: number) => {
+    const container = splitContainerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const onMove = (moveEvent: PointerEvent) => {
+      const pct = ((moveEvent.clientX - rect.left) / rect.width) * 100;
+      updateSplitPercent(pct);
+    };
+    const cleanup = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", cleanup);
+      window.removeEventListener("pointercancel", cleanup);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", cleanup);
+    window.addEventListener("pointercancel", cleanup);
+    onMove({ clientX: startX } as PointerEvent);
+  };
+
   return (
     <div className="flex h-dvh overflow-hidden bg-background text-foreground">
       <Sidebar
         account={account}
         activeChatId={activeSessionId}
+        desktopCollapsed={desktopSidebarCollapsed}
         mode={agentMode}
         onModeChange={changeAgentMode}
         onClose={() => setSidebarOpen(false)}
@@ -683,11 +788,13 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
       <main id="main-content" tabIndex={-1} className="flex min-w-0 flex-1 flex-col">
         <TopBar
           canExport={!isEmpty}
+          desktopCollapsed={desktopSidebarCollapsed}
           onExportChat={exportChat}
           onNewChat={startNewChat}
           onOpenModels={() => setModelsOpen(true)}
           onOpenSettings={() => openSettings("providers")}
           onOpenSidebar={() => setSidebarOpen(true)}
+          onToggleDesktopSidebar={() => setDesktopSidebarCollapsed((prev) => !prev)}
           sidebarOpen={sidebarOpen}
           mode={agentMode}
           title={showConversationLayout ? title : undefined}
@@ -735,19 +842,30 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
         {runState === "cancelled" ? <p role="status" className="mx-auto w-full max-w-2xl px-4 py-2 text-xs text-muted-foreground sm:px-6">{t("turnStoppedHint")}</p> : null}
         {currentPlan && agentMode === "chat" ? <div className="shrink-0 px-4 py-2 sm:px-6"><AgentPlanCard compact plan={currentPlan} runState={unknownDispatch || inputBlocked || stopBlocked || sharedBlocked ? "interrupted" : runState} onContinue={() => handleSubmit({ text: t("continueTaskPrompt"), files: [] })} /></div> : null}
 
-        {agentMode !== "chat" ? <div aria-label={`${agentMode === "coder" ? "Coder" : "Research"} layout`} data-workspace-layout className="flex shrink-0 gap-1 border-b bg-background px-3 py-1.5 xl:hidden" role="tablist">
+        {agentMode !== "chat" ? <div aria-label={`${agentMode === "coder" ? "Coder" : "Research"} layout`} data-workspace-layout className="flex shrink-0 gap-1 border-b bg-background px-3 py-1.5 lg:hidden" role="tablist">
           {(["chat", "workspace"] as const).map((view) => <button
             aria-selected={workspaceMobileView === view}
-            className={`min-h-9 flex-1 rounded-md text-xs font-medium capitalize focus-visible:outline-2 focus-visible:outline-ring ${workspaceMobileView === view ? "bg-accent text-foreground" : "text-muted-foreground"}`}
+            className={`min-h-9 flex-1 rounded-md text-xs font-medium focus-visible:outline-2 focus-visible:outline-ring ${workspaceMobileView === view ? "bg-accent text-foreground" : "text-muted-foreground"}`}
             key={view}
             onClick={() => setWorkspaceMobileView(view)}
             role="tab"
             type="button"
-          >{view}</button>)}
+          >{view === "chat" ? t("workspaceMobileChatTab") : t("workspaceMobilePanelTab")}</button>)}
         </div> : null}
 
-        <div className={agentMode !== "chat" ? "flex min-h-0 flex-1 flex-col xl:grid xl:grid-cols-[minmax(340px,0.85fr)_minmax(500px,1.15fr)]" : "flex min-h-0 flex-1 flex-col"}>
-        <section aria-label="Conversation" className={`min-h-0 min-w-0 flex-1 flex-col ${agentMode !== "chat" && workspaceMobileView === "workspace" ? "hidden xl:flex" : "flex"}`}>
+        <div
+          className={agentMode !== "chat" ? "flex min-h-0 flex-1 flex-col lg:flex-row" : "flex min-h-0 flex-1 flex-col"}
+          ref={splitContainerRef}
+          style={agentMode !== "chat" ? ({ "--tf-split": `${splitPercent}%` } as CSSProperties) : undefined}
+        >
+        <section
+          aria-label="Conversation"
+          className={
+            agentMode !== "chat"
+              ? `min-h-0 min-w-0 flex-col ${workspaceMobileView === "workspace" ? "hidden lg:flex" : "flex flex-1"} ${workspaceExpanded ? "lg:hidden" : "lg:w-[var(--tf-split)] lg:min-w-[300px] lg:flex-none"}`
+              : "flex min-h-0 min-w-0 flex-1 flex-col"
+          }
+        >
         {showConversationLayout ? (
           <Conversation
             className="min-h-0 flex-1"
@@ -760,38 +878,89 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
             }
           >
             <ConversationContent className="tflash-scroll mx-auto w-full max-w-3xl gap-6 px-4 pt-5 pb-8 sm:gap-7 sm:px-8">
-              {agent.messages.map((message, index) =>
-                showPendingThinking &&
-                isPendingAssistantShell &&
-                message.id === lastMessage.id ? null : (
+              {agent.messages.map((message, index) => {
+                if (
+                  showPendingThinking &&
+                  isPendingAssistantShell &&
+                  message.id === lastMessage.id
+                ) {
+                  return null;
+                }
+                const userPrompt = message.role === "user" ? promptInputFromUserMessage(message) : undefined;
+                const canRegenHere =
+                  message.role === "assistant" &&
+                  index === lastAssistantIndex &&
+                  canMutateTurns &&
+                  agent.messages.slice(0, index).some((entry) => Boolean(promptInputFromUserMessage(entry)));
+                return (
                   <div className="group/msg relative" key={message.id}>
                     <AgentMessage
                       canRespond={canRespond}
+                      editing={editingMessageId === message.id}
                       isStreaming={
                         agent.status === "busy" && index === agent.messages.length - 1
                       }
                       message={message}
-  onInputResponses={respondToInput}
-  questionsFor={questionsFor}
-  />
+                      onCancelEdit={() => setEditingMessageId(undefined)}
+                      onInputResponses={respondToInput}
+                      onSaveEdit={
+                        message.role === "user" && userPrompt
+                          ? async (editedText) => {
+                              try {
+                                await handleSubmit({ text: editedText, files: userPrompt.files });
+                                if (responseMounted.current) setEditingMessageId(undefined);
+                              } catch (error) {
+                                if (responseMounted.current) setCancellationError(toErrorMessage(error));
+                              }
+                            }
+                          : undefined
+                      }
+                      questionsFor={questionsFor}
+                    />
                     {message.role === "assistant" ? (
                       <MessageActions
+                        canRegenerate={canRegenHere}
                         isStreaming={isBusy && index === agent.messages.length - 1}
                         message={message}
+                        onRegenerate={canRegenHere ? () => regenerateFromMessage(index) : undefined}
+                      />
+                    ) : editingMessageId !== message.id && userPrompt ? (
+                      <UserMessageActions
+                        canEdit={canMutateTurns && userPrompt.text.length > 0}
+                        onEdit={() => setEditingMessageId(message.id)}
+                        text={userPrompt.text}
                       />
                     ) : null}
                   </div>
-                ),
-              )}
+                );
+              })}
               {isResuming && agent.messages.length === 0 ? <ResumingState /> : null}
               {showPendingThinking ? <PendingThinking /> : null}
-              {errorMessage ? <ErrorMessage message={errorMessage} /> : null}
+              {errorMessage ? (
+                <ErrorMessage
+                  message={errorMessage}
+                  onRetry={
+                    canMutateTurns && lastUserPrompt
+                      ? () => {
+                          void handleSubmit(lastUserPrompt).catch((error: unknown) => {
+                            if (responseMounted.current) setCancellationError(toErrorMessage(error));
+                          });
+                        }
+                      : undefined
+                  }
+                />
+              ) : null}
             </ConversationContent>
             <ConversationScrollButton />
           </Conversation>
         ) : (
           <div className="tflash-scroll min-h-0 flex-1 overflow-y-auto">
-            <EmptyState name={account.name} mode={agentMode} />
+            <EmptyState
+              mode={agentMode}
+              name={account.name}
+              onModeChange={!modeLocked ? changeAgentMode : undefined}
+              onOpenSettings={() => openSettings("providers")}
+            />
           </div>
         )}
 
@@ -822,22 +991,60 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
           </div>
         </div>
         </section>
+        {agentMode !== "chat" && !workspaceExpanded ? (
+          <div
+            aria-label={t("resizeSplitPane")}
+            aria-orientation="vertical"
+            aria-valuemax={68}
+            aria-valuemin={28}
+            aria-valuenow={splitPercent}
+            className="hidden w-1.5 shrink-0 cursor-col-resize items-center justify-center bg-border/35 transition-colors hover:bg-primary/40 focus-visible:bg-primary/50 focus-visible:outline-none lg:flex"
+            onDoubleClick={() => updateSplitPercent(44)}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowLeft") {
+                event.preventDefault();
+                updateSplitPercent(splitPercent - 3);
+              } else if (event.key === "ArrowRight") {
+                event.preventDefault();
+                updateSplitPercent(splitPercent + 3);
+              } else if (event.key === "Home") {
+                event.preventDefault();
+                updateSplitPercent(28);
+              } else if (event.key === "End") {
+                event.preventDefault();
+                updateSplitPercent(68);
+              }
+            }}
+            onPointerDown={(event) => {
+              event.preventDefault();
+              startSplitResize(event.clientX);
+            }}
+            role="separator"
+            tabIndex={0}
+          >
+            <span className="h-8 w-0.5 rounded-full bg-muted-foreground/35" />
+          </div>
+        ) : null}
         {agentMode === "coder" && coderProjection ? <Suspense fallback={<WorkspaceLoading label="Coder" mobileVisible={workspaceMobileView === "workspace"} />}><CoderWorkspace
           disabled={isResuming || disconnected || unknownDispatch || inputBlocked || stopBlocked || sharedBlocked || hasOpenInput || !sessionId}
+          expanded={workspaceExpanded}
           isBusy={isBusy}
           mobileVisible={workspaceMobileView === "workspace"}
           onCommand={runWorkspaceCommand}
           onReviewApprovals={() => setWorkspaceMobileView("chat")}
+          onToggleExpand={() => setWorkspaceExpanded((prev) => !prev)}
           pendingApprovals={openInputs.filter((input) => input.request.kind === "approval").length}
           plan={currentPlan}
           projection={coderProjection}
         /></Suspense> : null}
         {agentMode === "research" && researchProjection ? <Suspense fallback={<WorkspaceLoading label="Research" mobileVisible={workspaceMobileView === "workspace"} />}><ResearchWorkspace
           disabled={isResuming || disconnected || unknownDispatch || inputBlocked || stopBlocked || sharedBlocked || hasOpenInput || !sessionId}
+          expanded={workspaceExpanded}
           isBusy={isBusy}
           mobileVisible={workspaceMobileView === "workspace"}
           onCommand={runWorkspaceCommand}
           onReviewApprovals={() => setWorkspaceMobileView("chat")}
+          onToggleExpand={() => setWorkspaceExpanded((prev) => !prev)}
           pendingApprovals={openInputs.filter((input) => input.request.kind === "approval").length}
           plan={currentPlan}
           projection={researchProjection}
@@ -870,20 +1077,70 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
 const MessageActions = memo(function MessageActions({
   message,
   isStreaming,
+  canRegenerate = false,
+  onRegenerate,
 }: {
   readonly message: { parts: readonly { type: string; text?: string }[] };
   readonly isStreaming: boolean;
+  readonly canRegenerate?: boolean;
+  readonly onRegenerate?: () => void;
 }) {
+  const { t } = useAppSettings();
   // Do not include reasoning, attachments, tool arguments or tool output.
   const text = useMemo(() => message.parts
     .filter((part) => part.type === "text")
     .map((part) => part.text ?? "")
     .join("\n\n"), [message.parts]);
-  if (!text.trim()) return null;
+  if (!text.trim() && !canRegenerate) return null;
   return (
     <div className="tf-reveal mt-1 flex w-fit items-center gap-1 rounded-md bg-background/85 opacity-0 backdrop-blur transition-opacity focus-within:opacity-100 group-hover/msg:opacity-100">
-      <CopyMessageButton text={text} />
-      <VoiceOutputButton disabled={isStreaming} text={text} />
+      {text.trim() ? <CopyMessageButton text={text} /> : null}
+      {text.trim() ? <VoiceOutputButton disabled={isStreaming} text={text} /> : null}
+      {onRegenerate ? (
+        <Button
+          aria-label={t("regenerate")}
+          className="tf-touch-target h-8 gap-1 rounded-md px-2 text-xs text-muted-foreground"
+          disabled={isStreaming || !canRegenerate}
+          onClick={onRegenerate}
+          size="sm"
+          type="button"
+          variant="ghost"
+        >
+          <RotateCcwIcon className="size-3" />
+          {t("regenerate")}
+        </Button>
+      ) : null}
+    </div>
+  );
+});
+
+const UserMessageActions = memo(function UserMessageActions({
+  text,
+  canEdit,
+  onEdit,
+}: {
+  readonly text: string;
+  readonly canEdit: boolean;
+  readonly onEdit: () => void;
+}) {
+  const { t } = useAppSettings();
+  if (!text.trim() && !canEdit) return null;
+  return (
+    <div className="tf-reveal mt-1 ml-auto flex w-fit items-center gap-1 rounded-md bg-background/85 opacity-0 backdrop-blur transition-opacity focus-within:opacity-100 group-hover/msg:opacity-100">
+      {text.trim() ? <CopyMessageButton text={text} /> : null}
+      {canEdit ? (
+        <Button
+          aria-label={t("editMessage")}
+          className="tf-touch-target h-8 gap-1 rounded-md px-2 text-xs text-muted-foreground"
+          onClick={onEdit}
+          size="sm"
+          type="button"
+          variant="ghost"
+        >
+          <PencilIcon className="size-3" />
+          {t("editMessage")}
+        </Button>
+      ) : null}
     </div>
   );
 });
@@ -921,7 +1178,7 @@ function CopyMessageButton({ text }: { readonly text: string }) {
   );
 }
 
-function ErrorMessage({ message }: { readonly message: string }) {
+function ErrorMessage({ message, onRetry }: { readonly message: string; readonly onRetry?: () => void }) {
   const { t } = useAppSettings();
   return (
     <Message className="max-w-full" from="assistant">
@@ -931,9 +1188,15 @@ function ErrorMessage({ message }: { readonly message: string }) {
           role="alert"
         >
           <AlertCircleIcon className="mt-0.5 size-4 shrink-0 text-destructive" />
-          <div>
+          <div className="min-w-0 flex-1">
             <p className="font-medium text-foreground">{t("requestFailed")}</p>
             <p className="mt-0.5 text-pretty text-muted-foreground leading-relaxed">{message}</p>
+            {onRetry ? (
+              <Button className="mt-2 h-8 gap-1.5" onClick={onRetry} size="sm" type="button" variant="outline">
+                <RotateCcwIcon className="size-3.5" />
+                {t("retryLastMessage")}
+              </Button>
+            ) : null}
           </div>
         </div>
       </MessageContent>
@@ -944,10 +1207,19 @@ function ErrorMessage({ message }: { readonly message: string }) {
 function ResumingState() {
   const { t } = useAppSettings();
   return (
-    <p className="flex items-center gap-2 text-[13px] text-muted-foreground" role="status">
-      <span aria-hidden="true" className="size-1.5 animate-pulse rounded-full bg-brand" />
-      {t("loadingChat")}
-    </p>
+    <div className="space-y-3 py-2" role="status">
+      <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
+        <span aria-hidden="true" className="size-1.5 animate-pulse rounded-full bg-brand" />
+        {t("loadingChat")}
+      </p>
+      <div aria-hidden="true" className="space-y-2.5">
+        <div className="ml-auto h-9 w-2/5 animate-pulse rounded-2xl bg-muted/65" />
+        <div className="space-y-1.5">
+          <div className="h-3.5 w-3/4 animate-pulse rounded bg-muted/65" />
+          <div className="h-3.5 w-1/2 animate-pulse rounded bg-muted/65" />
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -993,4 +1265,23 @@ function getLatestTurnFailure(
     return detail ?? "The turn failed.";
   }
   return undefined;
+}
+
+function promptInputFromUserMessage(userMessage: EveMessage | undefined): PromptInputMessage | undefined {
+  if (!userMessage || userMessage.role !== "user") return undefined;
+  const text = userMessage.parts
+    .filter((part): part is Extract<EveMessagePart, { type: "text" }> => part.type === "text")
+    .map((part) => part.text)
+    .join("\n\n")
+    .trim();
+  const files = userMessage.parts
+    .filter((part): part is Extract<EveMessagePart, { type: "file" }> => part.type === "file" && Boolean(part.url))
+    .map((part) => ({
+      type: "file" as const,
+      url: part.url!,
+      mediaType: part.mediaType,
+      ...(part.filename ? { filename: part.filename } : {}),
+    }));
+  if (!text && files.length === 0) return undefined;
+  return { text, files };
 }

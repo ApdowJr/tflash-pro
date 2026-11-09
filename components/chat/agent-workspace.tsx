@@ -2,9 +2,9 @@
 
 import { DocumentExportButtons } from "./documents";
 import { useEffect, useRef, useState } from "react";
-import { CheckIcon, CircleIcon, DownloadIcon, FileTextIcon, Loader2Icon, TriangleAlertIcon } from "lucide-react";
+import { CheckIcon, CircleIcon, CopyIcon, DownloadIcon, FileTextIcon, Loader2Icon, TriangleAlertIcon } from "lucide-react";
 import { artifactMediaType, type AgentArtifact, type AgentPlan } from "@/lib/agent-workspace";
-import { useAppSettings } from "@/components/settings/app-settings";
+import { useOptionalAppSettings } from "@/components/settings/app-settings";
 import { Button } from "@/components/ui/button";
 
 const stepIcons = { pending: CircleIcon, in_progress: Loader2Icon, completed: CheckIcon, blocked: TriangleAlertIcon };
@@ -17,7 +17,7 @@ export function AgentPlanCard({ plan, compact = false, runState, onContinue }: {
   readonly plan: AgentPlan; readonly compact?: boolean; readonly runState?: AgentRunState;
   readonly onContinue?: () => Promise<void>;
 }) {
-  const { t } = useAppSettings();
+  const { t } = useOptionalAppSettings();
   const [continuing, setContinuing] = useState(false);
   const continuePending = useRef(false);
   const [continueFailed, setContinueFailed] = useState(false);
@@ -73,8 +73,23 @@ export function AgentPlanCard({ plan, compact = false, runState, onContinue }: {
 }
 
 export function AgentArtifactCard({ artifact }: { readonly artifact: AgentArtifact }) {
-  const { t } = useAppSettings();
+  const { t } = useOptionalAppSettings();
   const [error, setError] = useState(false);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  useEffect(() => {
+    if (copyState === "idle") return;
+    const timer = window.setTimeout(() => setCopyState("idle"), 2000);
+    return () => window.clearTimeout(timer);
+  }, [copyState]);
+  async function copyContent() {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable");
+      await navigator.clipboard.writeText(artifact.content);
+      setCopyState("copied");
+    } catch {
+      setCopyState("failed");
+    }
+  }
   function download() {
     setError(false);
     let url: string | undefined;
@@ -99,8 +114,13 @@ export function AgentArtifactCard({ artifact }: { readonly artifact: AgentArtifa
       <div className="flex flex-wrap items-center gap-2">
         <FileTextIcon className="size-4 shrink-0 text-muted-foreground" />
         <span className="min-w-0 flex-1 break-all text-sm font-medium">{artifact.filename}</span>
+        <Button aria-label={`${t("copy")}: ${artifact.filename}`} onClick={() => void copyContent()} size="sm" type="button" variant="ghost">
+          {copyState === "copied" ? <CheckIcon className="size-3.5 text-emerald-600" /> : <CopyIcon className="size-3.5" />}
+          {copyState === "copied" ? t("copied") : t("copy")}
+        </Button>
         <Button aria-label={`${t("downloadFile")}: ${artifact.filename}`} onClick={download} size="sm" type="button" variant="outline"><DownloadIcon className="size-3.5" />{t("downloadFile")}</Button>
       </div>
+      {copyState === "failed" ? <p className="text-xs text-destructive" role="alert">{t("copyFailed")}</p> : null}
       <p className="break-words text-xs text-muted-foreground">{artifact.description}</p>
       <details>
         <summary className="cursor-pointer text-xs text-muted-foreground">{t("previewFile")}</summary>

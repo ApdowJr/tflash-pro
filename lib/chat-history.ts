@@ -32,6 +32,22 @@ export function searchChats(
   return chats.filter((chat) => chat.title.toLowerCase().includes(needle));
 }
 
+/** Clean up a raw prompt into a readable, word-boundary chat title. */
+export function deriveChatTitle(raw: string, fallback: string): string {
+  const cleaned = raw
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^(?:#{1,6}|[-*>])\s+/, "")
+    .trim();
+  if (cleaned.length === 0) return fallback;
+  const maxLength = 72;
+  if (cleaned.length <= maxLength) return cleaned;
+  const slice = cleaned.slice(0, maxLength);
+  const lastSpace = slice.lastIndexOf(" ");
+  const bounded = lastSpace >= Math.floor(maxLength * 0.55) ? slice.slice(0, lastSpace) : slice;
+  return `${bounded.trimEnd()}…`;
+}
+
 /** Stable, human title for the current session. */
 export function sessionTitle(
   messages: readonly { role: string; parts: readonly { type: string; text?: string }[] }[],
@@ -40,7 +56,7 @@ export function sessionTitle(
   for (const message of messages) {
     if (message.role !== "user") continue;
     const text = message.parts.find((part) => part.type === "text" && part.text)?.text;
-    if (text && text.trim().length > 0) return text.trim().slice(0, 90);
+    if (text && text.trim().length > 0) return deriveChatTitle(text, fallback);
   }
   return fallback;
 }

@@ -2,6 +2,7 @@
 
 import { AgentPlanCard } from "@/components/chat/agent-workspace";
 import { ResearchReportCard } from "@/components/chat/research";
+import { useOptionalAppSettings } from "@/components/settings/app-settings";
 import { Button } from "@/components/ui/button";
 import type { AgentPlan } from "@/lib/agent-workspace";
 import { researchDomain, type ResearchEvidence, type ResearchLead, type ResearchWorkspaceProjection } from "@/lib/research-workspace";
@@ -14,6 +15,8 @@ import {
   FileTextIcon,
   GitCompareArrowsIcon,
   ListTodoIcon,
+  Maximize2Icon,
+  Minimize2Icon,
   SearchIcon,
 } from "lucide-react";
 import { useState } from "react";
@@ -26,20 +29,21 @@ function LeadCard({ lead, evidence, disabled, onFetch }: {
   readonly disabled: boolean;
   readonly onFetch: () => void;
 }) {
+  const { t } = useOptionalAppSettings();
   const fetched = !!evidence;
   const hasFullText = !!evidence?.content;
   return <article className="rounded-lg border bg-card p-3">
     <div className="flex items-start gap-3">
       <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2"><span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:text-amber-300">Search lead</span>{fetched ? <span className="flex items-center gap-1 text-[10px] text-emerald-700 dark:text-emerald-300"><CheckIcon className="size-3" />Fetched</span> : null}</div>
+        <div className="flex flex-wrap items-center gap-2"><span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:text-amber-300">{t("researchSearchLeadBadge")}</span>{fetched ? <span className="flex items-center gap-1 text-[10px] text-emerald-700 dark:text-emerald-300"><CheckIcon className="size-3" />{t("researchFetchedBadge")}</span> : null}</div>
         <h3 className="mt-2 break-words text-sm font-medium">{lead.title ?? researchDomain(lead.url)}</h3>
         <a className="mt-1 flex items-center gap-1 break-all text-[11px] text-primary underline underline-offset-2" href={lead.url} rel="noopener noreferrer" target="_blank">{researchDomain(lead.url)}<ExternalLinkIcon className="size-3 shrink-0" /></a>
       </div>
-      <Button className="h-8 shrink-0 text-[11px]" disabled={disabled && !hasFullText} onClick={onFetch} size="sm" type="button" variant="outline">{hasFullText ? "View" : fetched ? "Fetch again" : "Fetch"}</Button>
+      <Button className="h-8 shrink-0 text-[11px]" disabled={disabled && !hasFullText} onClick={onFetch} size="sm" type="button" variant="outline">{hasFullText ? t("researchView") : fetched ? t("researchFetchAgain") : t("researchFetch")}</Button>
     </div>
     {lead.snippet ? <p className="mt-3 whitespace-pre-wrap break-words text-xs leading-5 text-muted-foreground">{lead.snippet}</p> : null}
-    <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground">{lead.publishedAt ? <span>Provider date: {lead.publishedAt}</span> : null}{lead.query ? <span>Query: {lead.query}</span> : null}</div>
-    <p className="mt-2 text-[10px] text-muted-foreground">A search snippet is not fetched evidence.</p>
+    <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground">{lead.publishedAt ? <span>{t("researchProviderDate")} {lead.publishedAt}</span> : null}{lead.query ? <span>{t("researchQueryLabel")} {lead.query}</span> : null}</div>
+    <p className="mt-2 text-[10px] text-muted-foreground">{t("researchSnippetCaveat")}</p>
   </article>;
 }
 
@@ -50,24 +54,26 @@ function EvidenceSummary({ item, selected, compared, onInspect, onCompare }: {
   readonly onInspect: () => void;
   readonly onCompare: () => void;
 }) {
+  const { t } = useOptionalAppSettings();
   return <div className={cn("rounded-md border bg-card p-2", selected && "border-brand")}>
     <div className="flex items-center gap-2">
       <button className="min-w-0 flex-1 rounded text-left focus-visible:outline-2 focus-visible:outline-ring" onClick={onInspect} type="button">
         <span className="block truncate text-xs font-medium">{researchDomain(item.source.url)}</span>
-        <span className="block text-[10px] text-muted-foreground">{item.content ? "Full retrieval available" : "Receipt-backed metadata"}</span>
+        <span className="block text-[10px] text-muted-foreground">{item.content ? t("researchFullRetrieval") : t("researchReceiptMetadata")}</span>
       </button>
-      <button aria-label={`${compared ? "Remove" : "Add"} ${item.source.url} ${compared ? "from" : "to"} comparison`} aria-pressed={compared} className={cn("flex size-7 shrink-0 items-center justify-center rounded border text-muted-foreground", compared && "bg-brand text-white")} onClick={onCompare} type="button">{compared ? <CheckIcon className="size-3.5" /> : <GitCompareArrowsIcon className="size-3.5" />}</button>
+      <button aria-label={`${compared ? t("researchRemoveCompare") : t("researchAddCompare")} ${item.source.url} ${compared ? t("researchFromComparison") : t("researchToComparison")}`} aria-pressed={compared} className={cn("flex size-7 shrink-0 items-center justify-center rounded border text-muted-foreground", compared && "bg-brand text-white")} onClick={onCompare} type="button">{compared ? <CheckIcon className="size-3.5" /> : <GitCompareArrowsIcon className="size-3.5" />}</button>
     </div>
   </div>;
 }
 
 function SourceViewer({ item }: { readonly item: ResearchEvidence }) {
+  const { t } = useOptionalAppSettings();
   return <article className="min-w-0 space-y-3">
-    <div><span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-800 dark:text-emerald-300">Fetched evidence</span><h3 className="mt-2 break-all text-sm font-medium">{item.source.url}</h3><p className="mt-1 text-[10px] text-muted-foreground">Retrieved {item.source.fetchedAt}{item.source.truncated ? " · partial content" : ""}</p></div>
-    <a className="inline-flex items-center gap-1 text-xs text-primary underline underline-offset-2" href={item.source.url} rel="noopener noreferrer" target="_blank">Open source<ExternalLinkIcon className="size-3" /></a>
-    <section><h4 className="text-xs font-medium">Source excerpt</h4><p className="mt-1 whitespace-pre-wrap break-words text-xs leading-5 text-muted-foreground">{item.source.excerpt}</p></section>
-    {item.content ? <details className="rounded-md border"><summary className="cursor-pointer px-3 py-2 text-xs font-medium">Inspect retrieved content</summary><pre className="tflash-scroll max-h-[45dvh] overflow-auto whitespace-pre-wrap break-words border-t p-3 font-sans text-xs leading-5">{item.content}</pre></details> : <p className="text-xs text-muted-foreground">Only receipt-backed source metadata is present in this resumed history; full retrieved text is not available.</p>}
-    <p className="text-[10px] leading-4 text-muted-foreground">Retrieval proves this app read the page, not that every claim in it is true.</p>
+    <div><span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-800 dark:text-emerald-300">{t("researchFetchedEvidenceBadge")}</span><h3 className="mt-2 break-all text-sm font-medium">{item.source.url}</h3><p className="mt-1 text-[10px] text-muted-foreground">{t("researchRetrievedAt")} {item.source.fetchedAt}{item.source.truncated ? ` · ${t("researchPartialContent")}` : ""}</p></div>
+    <a className="inline-flex items-center gap-1 text-xs text-primary underline underline-offset-2" href={item.source.url} rel="noopener noreferrer" target="_blank">{t("researchOpenSource")}<ExternalLinkIcon className="size-3" /></a>
+    <section><h4 className="text-xs font-medium">{t("researchSourceExcerpt")}</h4><p className="mt-1 whitespace-pre-wrap break-words text-xs leading-5 text-muted-foreground">{item.source.excerpt}</p></section>
+    {item.content ? <details className="rounded-md border"><summary className="cursor-pointer px-3 py-2 text-xs font-medium">{t("researchInspectContent")}</summary><pre className="tflash-scroll max-h-[45dvh] overflow-auto whitespace-pre-wrap break-words border-t p-3 font-sans text-xs leading-5">{item.content}</pre></details> : <p className="text-xs text-muted-foreground">{t("researchReceiptOnlyNote")}</p>}
+    <p className="text-[10px] leading-4 text-muted-foreground">{t("researchRetrievalCaveat")}</p>
   </article>;
 }
 
@@ -78,6 +84,8 @@ export function ResearchWorkspace({
   disabled = false,
   mobileVisible = false,
   pendingApprovals = 0,
+  expanded = false,
+  onToggleExpand,
   onCommand,
   onReviewApprovals,
 }: {
@@ -87,9 +95,12 @@ export function ResearchWorkspace({
   readonly disabled?: boolean;
   readonly mobileVisible?: boolean;
   readonly pendingApprovals?: number;
+  readonly expanded?: boolean;
+  readonly onToggleExpand?: () => void;
   readonly onCommand: (text: string) => void;
   readonly onReviewApprovals: () => void;
 }) {
+  const { t } = useOptionalAppSettings();
   const [tab, setTab] = useState<ResearchTab>("brief");
   const [question, setQuestion] = useState("");
   const [scope, setScope] = useState("");
@@ -101,11 +112,11 @@ export function ResearchWorkspace({
   const inspected = projection.evidence.find((item) => item.source.url === inspectedUrl) ?? projection.evidence[0];
   const compared = compareUrls.map((url) => projection.evidence.find((item) => item.source.url === url)).filter((item): item is ResearchEvidence => !!item);
   const tabs = [
-    { id: "brief" as const, label: "Brief", icon: ListTodoIcon },
-    { id: "leads" as const, label: `Leads ${projection.leads.length}`, icon: SearchIcon },
-    { id: "evidence" as const, label: `Evidence ${projection.evidence.length}`, icon: BookOpenIcon },
-    { id: "compare" as const, label: `Compare ${compared.length}`, icon: GitCompareArrowsIcon },
-    { id: "report" as const, label: "Report", icon: FileTextIcon },
+    { id: "brief" as const, label: t("researchTabBrief"), icon: ListTodoIcon },
+    { id: "leads" as const, label: `${t("researchTabLeads")} ${projection.leads.length}`, icon: SearchIcon },
+    { id: "evidence" as const, label: `${t("researchTabEvidence")} ${projection.evidence.length}`, icon: BookOpenIcon },
+    { id: "compare" as const, label: `${t("researchTabCompare")} ${compared.length}`, icon: GitCompareArrowsIcon },
+    { id: "report" as const, label: t("researchTabReport"), icon: FileTextIcon },
   ];
 
   function startResearch() {
@@ -151,17 +162,20 @@ export function ResearchWorkspace({
     onCommand(`Synthesize the current deep-research brief using only the fetched evidence in this conversation. Create the final deliverable with create_research_report and the exact source receipts already returned by web_fetch. Cite every finding, distinguish AI synthesis from source excerpts, and include explicit limitations. Do not add unread URLs or search snippets as sources.`);
   }
 
-  return <section aria-label="Deep Research workspace" data-research-workspace className={cn(
-    "min-h-0 min-w-0 flex-col border-t bg-muted/10 xl:flex xl:border-t-0 xl:border-l",
+  return <section aria-label={t("researchWorkspaceLabel")} data-research-workspace className={cn(
+    "min-h-0 min-w-0 flex-col border-t bg-muted/10 lg:flex lg:border-t-0 lg:border-l",
     mobileVisible ? "flex flex-1" : "hidden",
   )}>
     <header className="flex min-h-14 shrink-0 items-center gap-2 border-b bg-background px-3 py-2">
-      <div className="min-w-0 flex-1"><div className="flex items-center gap-2"><FileSearchIcon className="size-4 text-brand" /><h2 className="text-sm font-semibold">Research workspace</h2></div><p className="mt-0.5 text-[10px] text-muted-foreground">Leads, fetched evidence, synthesis, and citations stay separate.</p></div>
-      <span className="rounded-md border bg-brand/5 px-2 py-1 text-[10px] font-medium text-brand">Deep</span>
-      {pendingApprovals > 0 ? <Button className="h-8 text-[11px]" onClick={onReviewApprovals} size="sm" type="button" variant="outline">{pendingApprovals} approval{pendingApprovals === 1 ? "" : "s"}</Button> : null}
+      <div className="min-w-0 flex-1"><div className="flex items-center gap-2"><FileSearchIcon className="size-4 text-brand" /><h2 className="text-sm font-semibold">{t("researchWorkspaceTitle")}</h2></div><p className="mt-0.5 text-[10px] text-muted-foreground">{t("researchWorkspaceSubtitle")}</p></div>
+      <span className="rounded-md border bg-brand/5 px-2 py-1 text-[10px] font-medium text-brand">{t("researchStageDeep")}</span>
+      {pendingApprovals > 0 ? <Button className="h-8 text-[11px]" onClick={onReviewApprovals} size="sm" type="button" variant="outline">{pendingApprovals} {pendingApprovals === 1 ? t("coderApprovalSingular") : t("coderApprovalPlural")}</Button> : null}
+      {onToggleExpand ? <Button aria-label={t(expanded ? "restoreSplitPane" : "expandWorkspace")} aria-pressed={expanded} className="hidden size-8 lg:inline-flex" onClick={onToggleExpand} size="icon" title={t(expanded ? "restoreSplitPane" : "expandWorkspace")} type="button" variant="ghost">
+        {expanded ? <Minimize2Icon className="size-4" /> : <Maximize2Icon className="size-4" />}
+      </Button> : null}
     </header>
 
-    <div aria-label="Research stages" className="flex shrink-0 gap-1 overflow-x-auto border-b bg-background px-2 py-1.5" role="tablist">
+    <div aria-label={t("researchStagesLabel")} className="flex shrink-0 gap-1 overflow-x-auto border-b bg-background px-2 py-1.5" role="tablist">
       {tabs.map(({ id, label, icon: Icon }) => <button
         aria-selected={tab === id}
         className={cn("flex min-h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-[11px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring", tab === id && "bg-accent text-foreground")}
@@ -189,32 +203,32 @@ export function ResearchWorkspace({
     </div>
 
     {tab === "brief" ? <div className="tflash-scroll min-h-0 flex-1 space-y-4 overflow-auto p-4">
-      {projection.initialRequest ? <section className="rounded-lg border bg-card p-3"><p className="text-[10px] font-medium text-muted-foreground uppercase">Current research request</p><p className="mt-2 whitespace-pre-wrap break-words text-xs leading-5">{projection.initialRequest}</p></section> : null}
-      <section className="space-y-3 rounded-lg border bg-card p-3"><div><h3 className="text-sm font-medium">{projection.initialRequest ? "Refine the research brief" : "Start with a research brief"}</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">Deep is the default workflow. The question can stay focused; evidence gathering does the expanded work.</p></div>
-        <label className="block text-xs font-medium">Question<textarea aria-label="Research question" className="mt-1 min-h-24 w-full resize-y rounded-md border bg-background p-3 text-[16px] font-normal outline-none focus:ring-1 focus:ring-ring sm:text-xs" onChange={(event) => setQuestion(event.target.value)} placeholder="What should be investigated?" value={question} /></label>
-        <div className="grid gap-3 sm:grid-cols-2"><label className="block text-xs font-medium">Scope<input aria-label="Research scope" className="mt-1 h-9 w-full rounded-md border bg-background px-3 text-[16px] font-normal outline-none focus:ring-1 focus:ring-ring sm:text-xs" onChange={(event) => setScope(event.target.value)} placeholder="Optional boundaries" value={scope} /></label><label className="block text-xs font-medium">Time frame<input aria-label="Research time frame" className="mt-1 h-9 w-full rounded-md border bg-background px-3 text-[16px] font-normal outline-none focus:ring-1 focus:ring-ring sm:text-xs" onChange={(event) => setTimeFrame(event.target.value)} placeholder="e.g. 2024–2026" value={timeFrame} /></label></div>
-        <label className="block text-xs font-medium">Deliverable<select aria-label="Research deliverable" className="mt-1 h-9 w-full rounded-md border bg-background px-2 text-[16px] font-normal outline-none focus:ring-1 focus:ring-ring sm:text-xs" onChange={(event) => setDeliverable(event.target.value)} value={deliverable}><option>Cited report with findings and limitations</option><option>Comparative source analysis</option><option>Evidence summary with open questions</option></select></label>
-        <Button disabled={readOnly || !question.trim()} onClick={startResearch} type="button">{projection.initialRequest ? "Refine deep research" : "Start deep research"}</Button>
+      {projection.initialRequest ? <section className="rounded-lg border bg-card p-3"><p className="text-[10px] font-medium text-muted-foreground uppercase">{t("researchCurrentRequest")}</p><p className="mt-2 whitespace-pre-wrap break-words text-xs leading-5">{projection.initialRequest}</p></section> : null}
+      <section className="space-y-3 rounded-lg border bg-card p-3"><div><h3 className="text-sm font-medium">{projection.initialRequest ? t("researchRefineBrief") : t("researchStartBrief")}</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">{t("researchBriefHint")}</p></div>
+        <label className="block text-xs font-medium">{t("researchQuestionLabel")}<textarea aria-label={t("researchQuestionAria")} className="mt-1 min-h-24 w-full resize-y rounded-md border bg-background p-3 text-[16px] font-normal outline-none focus:ring-1 focus:ring-ring sm:text-xs" onChange={(event) => setQuestion(event.target.value)} placeholder={t("researchQuestionPlaceholder")} value={question} /></label>
+        <div className="grid gap-3 sm:grid-cols-2"><label className="block text-xs font-medium">{t("researchScopeLabel")}<input aria-label={t("researchScopeAria")} className="mt-1 h-9 w-full rounded-md border bg-background px-3 text-[16px] font-normal outline-none focus:ring-1 focus:ring-ring sm:text-xs" onChange={(event) => setScope(event.target.value)} placeholder={t("researchScopePlaceholder")} value={scope} /></label><label className="block text-xs font-medium">{t("researchTimeFrameLabel")}<input aria-label={t("researchTimeFrameAria")} className="mt-1 h-9 w-full rounded-md border bg-background px-3 text-[16px] font-normal outline-none focus:ring-1 focus:ring-ring sm:text-xs" onChange={(event) => setTimeFrame(event.target.value)} placeholder={t("researchTimeFramePlaceholder")} value={timeFrame} /></label></div>
+        <label className="block text-xs font-medium">{t("researchDeliverableLabel")}<select aria-label={t("researchDeliverableAria")} className="mt-1 h-9 w-full rounded-md border bg-background px-2 text-[16px] font-normal outline-none focus:ring-1 focus:ring-ring sm:text-xs" onChange={(event) => setDeliverable(event.target.value)} value={deliverable}><option value="Cited report with findings and limitations">{t("researchDeliverableCited")}</option><option value="Comparative source analysis">{t("researchDeliverableCompare")}</option><option value="Evidence summary with open questions">{t("researchDeliverableSummary")}</option></select></label>
+        <Button disabled={readOnly || !question.trim()} onClick={startResearch} type="button">{projection.initialRequest ? t("researchRefineButton") : t("researchStartButton")}</Button>
       </section>
-      {plan ? <AgentPlanCard plan={plan} /> : <p className="text-center text-[11px] text-muted-foreground">A substantial investigation will show its agent-reported plan here.</p>}
+      {plan ? <AgentPlanCard plan={plan} /> : <p className="text-center text-[11px] text-muted-foreground">{t("researchPlanHint")}</p>}
     </div> : null}
 
     {tab === "leads" ? <div className="tflash-scroll min-h-0 flex-1 space-y-3 overflow-auto p-3">
-      <div className="flex items-center gap-2"><p className="min-w-0 flex-1 text-[10px] leading-4 text-muted-foreground">Provider search results are discovery leads until their pages are fetched.</p><Button className="h-8 shrink-0 text-[11px]" disabled={readOnly} onClick={() => onCommand("Find additional primary and independent sources for the current research brief using web_search. Prefer sources that fill evidence gaps or challenge the current findings. Do not create a report yet.")} size="sm" type="button" variant="outline">Find more</Button></div>
-      {projection.leads.length ? projection.leads.map((lead) => <LeadCard evidence={projection.evidence.find((item) => item.source.url === lead.url)} disabled={readOnly} key={lead.url} lead={lead} onFetch={() => openLead(lead)} />) : <div className="flex min-h-56 items-center justify-center text-center"><div><SearchIcon className="mx-auto mb-2 size-5 text-muted-foreground" /><p className="text-xs text-muted-foreground">No structured search leads yet. Start or continue a deep-research turn.</p></div></div>}
+      <div className="flex items-center gap-2"><p className="min-w-0 flex-1 text-[10px] leading-4 text-muted-foreground">{t("researchLeadsHint")}</p><Button className="h-8 shrink-0 text-[11px]" disabled={readOnly} onClick={() => onCommand("Find additional primary and independent sources for the current research brief using web_search. Prefer sources that fill evidence gaps or challenge the current findings. Do not create a report yet.")} size="sm" type="button" variant="outline">{t("researchFindMore")}</Button></div>
+      {projection.leads.length ? projection.leads.map((lead) => <LeadCard evidence={projection.evidence.find((item) => item.source.url === lead.url)} disabled={readOnly} key={lead.url} lead={lead} onFetch={() => openLead(lead)} />) : <div className="flex min-h-56 items-center justify-center text-center"><div><SearchIcon className="mx-auto mb-2 size-5 text-muted-foreground" /><p className="text-xs text-muted-foreground">{t("researchNoLeads")}</p></div></div>}
     </div> : null}
 
     {tab === "evidence" ? <div className="grid min-h-0 flex-1 grid-cols-[minmax(140px,0.36fr)_minmax(0,1fr)]">
-      <aside className="tflash-scroll min-h-0 space-y-2 overflow-auto border-r p-2"><p className="px-1 py-1 text-[10px] text-muted-foreground">Select up to two sources to compare.</p>{projection.evidence.map((item) => <EvidenceSummary compared={compareUrls.includes(item.source.url)} item={item} key={item.source.url} onCompare={() => toggleCompare(item.source.url)} onInspect={() => setInspectedUrl(item.source.url)} selected={inspected?.source.url === item.source.url} />)}{projection.evidence.length === 0 ? <p className="p-2 text-xs text-muted-foreground">No fetched evidence yet.</p> : null}</aside>
-      <div className="tflash-scroll min-h-0 overflow-auto p-4">{inspected ? <SourceViewer item={inspected} /> : <div className="flex h-full items-center justify-center text-center text-xs text-muted-foreground">Fetch a lead first. Only successful web_fetch results appear here.</div>}</div>
+      <aside className="tflash-scroll min-h-0 space-y-2 overflow-auto border-r p-2"><p className="px-1 py-1 text-[10px] text-muted-foreground">{t("researchComparePickHint")}</p>{projection.evidence.map((item) => <EvidenceSummary compared={compareUrls.includes(item.source.url)} item={item} key={item.source.url} onCompare={() => toggleCompare(item.source.url)} onInspect={() => setInspectedUrl(item.source.url)} selected={inspected?.source.url === item.source.url} />)}{projection.evidence.length === 0 ? <p className="p-2 text-xs text-muted-foreground">{t("researchNoEvidence")}</p> : null}</aside>
+      <div className="tflash-scroll min-h-0 overflow-auto p-4">{inspected ? <SourceViewer item={inspected} /> : <div className="flex h-full items-center justify-center text-center text-xs text-muted-foreground">{t("researchFetchLeadFirst")}</div>}</div>
     </div> : null}
 
     {tab === "compare" ? <div className="tflash-scroll min-h-0 flex-1 overflow-auto p-4">
-      {compared.length === 2 ? <div className="space-y-4"><div className="grid gap-3 md:grid-cols-2">{compared.map((item, index) => <article className="rounded-lg border bg-card p-3" key={item.source.url}><p className="text-[10px] font-medium text-brand">Source {index + 1}</p><h3 className="mt-1 break-all text-xs font-medium">{item.source.url}</h3><p className="mt-1 text-[10px] text-muted-foreground">Fetched {item.source.fetchedAt}</p><p className="mt-3 whitespace-pre-wrap break-words text-xs leading-5 text-muted-foreground">{item.source.excerpt}</p></article>)}</div><p className="text-[10px] leading-4 text-muted-foreground">These are retrieved excerpts, not an AI verdict. Synthesis requires a new report tool result.</p><Button disabled={readOnly} onClick={synthesizeComparison} type="button">Synthesize comparison</Button></div> : <div className="flex min-h-56 items-center justify-center text-center"><div><GitCompareArrowsIcon className="mx-auto mb-2 size-5 text-muted-foreground" /><p className="text-xs text-muted-foreground">Choose two fetched sources in Evidence to compare their actual excerpts.</p><Button className="mt-3" onClick={() => setTab("evidence")} size="sm" type="button" variant="outline">Choose sources</Button></div></div>}
+      {compared.length === 2 ? <div className="space-y-4"><div className="grid gap-3 md:grid-cols-2">{compared.map((item, index) => <article className="rounded-lg border bg-card p-3" key={item.source.url}><p className="text-[10px] font-medium text-brand">{t("researchSourceLabel")} {index + 1}</p><h3 className="mt-1 break-all text-xs font-medium">{item.source.url}</h3><p className="mt-1 text-[10px] text-muted-foreground">{t("researchCompareFetchedAt")} {item.source.fetchedAt}</p><p className="mt-3 whitespace-pre-wrap break-words text-xs leading-5 text-muted-foreground">{item.source.excerpt}</p></article>)}</div><p className="text-[10px] leading-4 text-muted-foreground">{t("researchCompareCaveat")}</p><Button disabled={readOnly} onClick={synthesizeComparison} type="button">{t("researchSynthesizeButton")}</Button></div> : <div className="flex min-h-56 items-center justify-center text-center"><div><GitCompareArrowsIcon className="mx-auto mb-2 size-5 text-muted-foreground" /><p className="text-xs text-muted-foreground">{t("researchChooseTwoNote")}</p><Button className="mt-3" onClick={() => setTab("evidence")} size="sm" type="button" variant="outline">{t("researchChooseSourcesButton")}</Button></div></div>}
     </div> : null}
 
     {tab === "report" ? <div className="tflash-scroll min-h-0 flex-1 overflow-auto p-4">
-      {projection.report ? <ResearchReportCard artifact={projection.report.artifact} sources={projection.report.sources} /> : <div className="flex min-h-56 items-center justify-center text-center"><div className="max-w-sm"><FileTextIcon className="mx-auto mb-2 size-5 text-muted-foreground" /><h3 className="text-sm font-medium">No generated report yet</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">The final report appears only after create_research_report validates real source receipts and produces the downloadable Markdown.</p><Button className="mt-4" disabled={readOnly || projection.evidence.length === 0} onClick={createReport} type="button">Create cited report</Button>{projection.evidence.length === 0 ? <p className="mt-2 text-[10px] text-muted-foreground">Fetch at least one source first.</p> : null}</div></div>}
+      {projection.report ? <ResearchReportCard artifact={projection.report.artifact} sources={projection.report.sources} /> : <div className="flex min-h-56 items-center justify-center text-center"><div className="max-w-sm"><FileTextIcon className="mx-auto mb-2 size-5 text-muted-foreground" /><h3 className="text-sm font-medium">{t("researchNoReportTitle")}</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">{t("researchNoReportBody")}</p><Button className="mt-4" disabled={readOnly || projection.evidence.length === 0} onClick={createReport} type="button">{t("researchCreateReportButton")}</Button>{projection.evidence.length === 0 ? <p className="mt-2 text-[10px] text-muted-foreground">{t("researchFetchOneFirst")}</p> : null}</div></div>}
     </div> : null}
   </section>;
 }

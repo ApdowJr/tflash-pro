@@ -58,9 +58,29 @@ export const viewport: Viewport = {
   ],
 };
 
+const PREHYDRATION_BOOTSTRAP = `(() => {
+  try {
+    var root = document.documentElement;
+    var theme = window.localStorage.getItem("tflash:theme");
+    var resolved = theme === "light" || theme === "dark" || theme === "system" ? theme : "dark";
+    if (resolved === "system") {
+      root.removeAttribute("data-theme");
+      root.style.removeProperty("color-scheme");
+    } else {
+      root.dataset.theme = resolved;
+      root.style.colorScheme = resolved;
+    }
+    var language = window.localStorage.getItem("tflash:language");
+    if (language === "so" || language === "en") root.lang = language;
+  } catch {}
+})();`;
+
 export default function RootLayout({ children }: { readonly children: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: PREHYDRATION_BOOTSTRAP }} />
+      </head>
       <body>
         <ThemeInitializer />
         <ConnectivityBanner />
