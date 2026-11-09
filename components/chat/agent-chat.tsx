@@ -9,7 +9,7 @@ import { Client } from "eve/client";
 import { activeTurn, interactions, turn } from "eve/events";
 import { useEveAgent, type EveMessage, type EveMessagePart } from "eve/react";
 import { AlertCircleIcon, CheckIcon, CopyIcon, PencilIcon, RotateCcwIcon } from "lucide-react";
-import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   Conversation,
   ConversationContent,
@@ -33,6 +33,7 @@ import { SettingsDialog } from "@/components/settings/settings-dialog";
 import { deriveChatTitle, sessionTitle } from "@/lib/chat-history";
 import { useSafeNavigate } from "@/lib/safe-navigation";
 import { OWNER_PROOF_HEADER } from "@/lib/security/chat-ownership-wire";
+import { LazyPanel } from "@/components/app/lazy-panel";
 import { AgentMessage, type AgentInputResponse } from "./agent-message";
 import { InputResponseNotice, useInputResponseRecovery } from "./input-response-recovery";
 import { StopRecoveryNotice, useStopRecovery } from "./stop-recovery";
@@ -60,12 +61,30 @@ const DEFAULT_AGENT_NAME = "Tflash";
 // Specialized workspaces are useful only in their own mode. Keep their UI and
 // projection code out of the general Chat path, and preserve the grid while a
 // mode chunk loads instead of mounting an unstyled placeholder.
-const CoderWorkspace = lazy(async () => ({ default: (await import("@/components/coder/coder-workspace")).CoderWorkspace }));
-const ResearchWorkspace = lazy(async () => ({ default: (await import("@/components/research/research-workspace")).ResearchWorkspace }));
+const loadCoderWorkspace = async () => ({ default: (await import("@/components/coder/coder-workspace")).CoderWorkspace });
+const loadResearchWorkspace = async () => ({ default: (await import("@/components/research/research-workspace")).ResearchWorkspace });
 
-function WorkspaceLoading({ label, mobileVisible }: { readonly label: "Coder" | "Research"; readonly mobileVisible: boolean }) {
+type PanelName = "Coder" | "Research";
+
+/** Shared frame so a loading, failed or loaded panel keeps the same column. */
+function WorkspaceFrame({ label, mobileVisible, children }: {
+  readonly label: PanelName;
+  readonly mobileVisible: boolean;
+  readonly children: ReactNode;
+}) {
   return (
-    <section aria-label={`${label} workspace`} className={`min-h-0 min-w-0 flex-col border-t bg-muted/10 lg:flex lg:flex-1 lg:border-t-0 lg:border-l ${mobileVisible ? "flex flex-1" : "hidden"}`}>
+    <section
+      aria-label={`${label} workspace`}
+      className={`min-h-0 min-w-0 flex-1 flex-col border-t bg-muted/10 lg:flex lg:border-t-0 lg:border-l ${mobileVisible ? "flex flex-1" : "hidden"}`}
+    >
+      {children}
+    </section>
+  );
+}
+
+function WorkspaceLoading({ label, mobileVisible }: { readonly label: PanelName; readonly mobileVisible: boolean }) {
+  return (
+    <WorkspaceFrame label={label} mobileVisible={mobileVisible}>
       <div className="flex h-14 items-center justify-between border-b bg-background px-4">
         <div className="h-4 w-32 animate-pulse rounded bg-muted" />
         <div className="h-7 w-20 animate-pulse rounded bg-muted" />
@@ -78,7 +97,31 @@ function WorkspaceLoading({ label, mobileVisible }: { readonly label: "Coder" | 
         </div>
         <p className="text-xs text-muted-foreground" role="status">Loading {label} workspace…</p>
       </div>
-    </section>
+    </WorkspaceFrame>
+  );
+}
+
+/**
+ * A panel that could not be downloaded stays inside its own column: the
+ * conversation, composer and sidebar keep working, and the reader can retry
+ * without losing the transcript.
+ */
+function WorkspaceUnavailable({ label, mobileVisible, onRetry }: {
+  readonly label: PanelName;
+  readonly mobileVisible: boolean;
+  readonly onRetry: () => void;
+}) {
+  const { t } = useAppSettings();
+  return (
+    <WorkspaceFrame label={label} mobileVisible={mobileVisible}>
+      <div className="m-auto flex max-w-sm flex-col items-start gap-3 p-6" role="alert">
+        <p className="text-sm font-medium text-foreground">{t("workspacePanelFailed")}</p>
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={onRetry} size="sm" type="button" variant="outline">{t("retry")}</Button>
+          <Button onClick={() => window.location.reload()} size="sm" type="button" variant="ghost">{t("workspacePanelReload")}</Button>
+        </div>
+      </div>
+    </WorkspaceFrame>
   );
 }
 
@@ -86,6 +129,19 @@ type ReadySession = { readonly id: string; readonly resume: boolean; readonly pr
 type PreparationError = "chatStorageSetupRequired" | "chatStorageUnavailable" | "chatPreparationFailed" | "chatSignInRequired" | "chatOwnershipUnavailable" | "chatCreationUncertain" | "chatCreationStorageUnavailable";
 type CreatedSession = { readonly id: string; readonly proof?: string; readonly marker: string };
 class CreationNotStartedError extends Error {}
+
+/**
+ * Update the address bar without ever throwing into the caller's flow. A
+ * blocked History API (hardened browser, embedded frame, a same-URL replace)
+ * must not break sending a turn or switching an unstarted mode.
+ */
+function replaceRoute(url: string) {
+  try {
+    History.prototype.replaceState.call(window.history, window.history.state, "", url);
+  } catch {
+    // The conversation still works; only the visible URL stays behind.
+  }
+}
 
 /** Start sessions server-side so every login method receives a bound owner. */
 export function AgentChat({ account, sessionId, sessionless = false, initialMode = "chat" }: {
@@ -312,7 +368,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
 
   const replaceSessionRoute = (nextSessionId: string) => {
     if (resume) return;
-    History.prototype.replaceState.call(window.history, window.history.state, "", `/s/${encodeURIComponent(nextSessionId)}`);
+    replaceRoute(`/s/${encodeURIComponent(nextSessionId)}`);
   };
 
   const agent = useEveAgent({
@@ -495,7 +551,7 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
     }
     setAgentMode(nextMode);
     setWorkspaceExpanded(false);
-    History.prototype.replaceState.call(window.history, window.history.state, "", `/?mode=${nextMode}`);
+    replaceRoute(`/?mode=${nextMode}`);
   };
 
   const openSettings = useCallback(
@@ -1025,30 +1081,42 @@ function ChatSession({ account, sessionId, resume, ownerProof, sessionless, prep
             <span className="h-8 w-0.5 rounded-full bg-muted-foreground/35" />
           </div>
         ) : null}
-        {agentMode === "coder" && coderProjection ? <Suspense fallback={<WorkspaceLoading label="Coder" mobileVisible={workspaceMobileView === "workspace"} />}><CoderWorkspace
-          disabled={isResuming || disconnected || unknownDispatch || inputBlocked || stopBlocked || sharedBlocked || hasOpenInput || !sessionId}
-          expanded={workspaceExpanded}
-          isBusy={isBusy}
-          mobileVisible={workspaceMobileView === "workspace"}
-          onCommand={runWorkspaceCommand}
-          onReviewApprovals={() => setWorkspaceMobileView("chat")}
-          onToggleExpand={() => setWorkspaceExpanded((prev) => !prev)}
-          pendingApprovals={openInputs.filter((input) => input.request.kind === "approval").length}
-          plan={currentPlan}
-          projection={coderProjection}
-        /></Suspense> : null}
-        {agentMode === "research" && researchProjection ? <Suspense fallback={<WorkspaceLoading label="Research" mobileVisible={workspaceMobileView === "workspace"} />}><ResearchWorkspace
-          disabled={isResuming || disconnected || unknownDispatch || inputBlocked || stopBlocked || sharedBlocked || hasOpenInput || !sessionId}
-          expanded={workspaceExpanded}
-          isBusy={isBusy}
-          mobileVisible={workspaceMobileView === "workspace"}
-          onCommand={runWorkspaceCommand}
-          onReviewApprovals={() => setWorkspaceMobileView("chat")}
-          onToggleExpand={() => setWorkspaceExpanded((prev) => !prev)}
-          pendingApprovals={openInputs.filter((input) => input.request.kind === "approval").length}
-          plan={currentPlan}
-          projection={researchProjection}
-        /></Suspense> : null}
+        {agentMode === "coder" && coderProjection ? <LazyPanel
+          failure={(retry) => <WorkspaceUnavailable label="Coder" mobileVisible={workspaceMobileView === "workspace"} onRetry={retry} />}
+          fallback={<WorkspaceLoading label="Coder" mobileVisible={workspaceMobileView === "workspace"} />}
+          label="Coder"
+          load={loadCoderWorkspace}
+          render={(CoderWorkspace) => <CoderWorkspace
+            disabled={isResuming || disconnected || unknownDispatch || inputBlocked || stopBlocked || sharedBlocked || hasOpenInput || !sessionId}
+            expanded={workspaceExpanded}
+            isBusy={isBusy}
+            mobileVisible={workspaceMobileView === "workspace"}
+            onCommand={runWorkspaceCommand}
+            onReviewApprovals={() => setWorkspaceMobileView("chat")}
+            onToggleExpand={() => setWorkspaceExpanded((prev) => !prev)}
+            pendingApprovals={openInputs.filter((input) => input.request.kind === "approval").length}
+            plan={currentPlan}
+            projection={coderProjection}
+          />}
+        /> : null}
+        {agentMode === "research" && researchProjection ? <LazyPanel
+          failure={(retry) => <WorkspaceUnavailable label="Research" mobileVisible={workspaceMobileView === "workspace"} onRetry={retry} />}
+          fallback={<WorkspaceLoading label="Research" mobileVisible={workspaceMobileView === "workspace"} />}
+          label="Research"
+          load={loadResearchWorkspace}
+          render={(ResearchWorkspace) => <ResearchWorkspace
+            disabled={isResuming || disconnected || unknownDispatch || inputBlocked || stopBlocked || sharedBlocked || hasOpenInput || !sessionId}
+            expanded={workspaceExpanded}
+            isBusy={isBusy}
+            mobileVisible={workspaceMobileView === "workspace"}
+            onCommand={runWorkspaceCommand}
+            onReviewApprovals={() => setWorkspaceMobileView("chat")}
+            onToggleExpand={() => setWorkspaceExpanded((prev) => !prev)}
+            pendingApprovals={openInputs.filter((input) => input.request.kind === "approval").length}
+            plan={currentPlan}
+            projection={researchProjection}
+          />}
+        /> : null}
         </div>
       </main>
 

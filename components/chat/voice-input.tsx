@@ -25,6 +25,22 @@ type RecognitionSession = {
   hasFinal: boolean;
 };
 
+/** The last language a reader dictated in, so a Somali speaker is not asked every time. */
+const VOICE_LANGUAGE_KEY = "tflash:voice-language";
+
+function storedLanguage(fallback: Language): Language {
+  try {
+    const value = window.localStorage.getItem(VOICE_LANGUAGE_KEY);
+    if (value === "so" || value === "en") return value;
+  } catch { /* Storage may be blocked; the interface language is the fallback. */ }
+  return fallback;
+}
+
+function rememberLanguage(language: Language) {
+  try { window.localStorage.setItem(VOICE_LANGUAGE_KEY, language); }
+  catch { /* Remembering the choice is a convenience, never a requirement. */ }
+}
+
 function recognitionError(error: string): TranslationKey {
   switch (error) {
     case "not-allowed":
@@ -43,12 +59,21 @@ function recognitionError(error: string): TranslationKey {
   }
 }
 
-/** Dictation only edits the draft; it never sends a turn or stores audio. */
+/**
+ * Dictation only edits the draft; it never sends a turn or stores audio.
+ *
+ * One tap on the microphone opens the panel *and* starts listening, because a
+ * second confirmation press made the control feel broken. The spoken language
+ * still matters — browsers cannot detect it and Somali is not the default
+ * engine language — so the picker stays visible: changing it while listening
+ * restarts capture in the new language, keeping every word already added to the
+ * draft.
+ */
 export function VoiceInputButton({ disabled }: { readonly disabled: boolean }) {
   const { t, settings } = useAppSettings();
   const { textInput } = usePromptInputController();
   const [open, setOpen] = useState(false);
-  const [language, setLanguage] = useState<Language>(settings.language);
+  const [language, setLanguage] = useState<Language>(() => storedLanguage(settings.language));
   const [available, setAvailable] = useState(false);
   const [status, setStatus] = useState<MicStatus>("idle");
   const [error, setError] = useState<TranslationKey>();
@@ -91,24 +116,10 @@ export function VoiceInputButton({ disabled }: { readonly disabled: boolean }) {
     return () => document.removeEventListener("visibilitychange", stopWhenHidden);
   }, [open, abortActive]);
 
-  function changeOpen(next: boolean) {
-    if (next) {
-      setLanguage(settings.language);
-      setAvailable(Boolean(recognitionConstructor()));
-      setError(undefined);
-      setHasFinal(false);
-      setInterim("");
-      setStatus("idle");
-    } else {
-      abortActive();
-      setStatus("idle");
-      setInterim("");
-    }
-    setOpen(next);
-  }
-
-  function start() {
-    if (disabled || active.current) return;
+  /** Begin capture in `nextLanguage`, replacing anything already listening. */
+  function start(nextLanguage: Language = language) {
+    if (disabled) return;
+    abortActive();
     const Constructor = recognitionConstructor();
     if (!Constructor) {
       setAvailable(false);
@@ -125,7 +136,7 @@ export function VoiceInputButton({ disabled }: { readonly disabled: boolean }) {
     try {
       const recognition = new Constructor();
       const session: RecognitionSession = { recognition, committed: new Set(), hasFinal: false };
-      recognition.lang = speechLocale(language);
+      recognition.lang = speechLocale(nextLanguage);
       recognition.continuous = true;
       recognition.interimResults = true;
       recognition.onstart = () => {
@@ -189,6 +200,34 @@ export function VoiceInputButton({ disabled }: { readonly disabled: boolean }) {
     }
   }
 
+  function changeLanguage(next: Language) {
+    setLanguage(next);
+    rememberLanguage(next);
+    // A language change while listening is a fresh attempt, not a silent no-op:
+    // words already added to the draft stay, unfinished speech is discarded.
+    if (active.current) start(next);
+  }
+
+  function changeOpen(next: boolean) {
+    if (next) {
+      const nextLanguage = storedLanguage(settings.language);
+      setLanguage(nextLanguage);
+      setAvailable(Boolean(recognitionConstructor()));
+      setError(undefined);
+      setHasFinal(false);
+      setInterim("");
+      setStatus("idle");
+      setOpen(true);
+      // One tap should dictate, not ask for a second confirmation.
+      start(nextLanguage);
+      return;
+    }
+    abortActive();
+    setStatus("idle");
+    setInterim("");
+    setOpen(false);
+  }
+
   const working = status !== "idle";
   return (
     <Dialog open={open} onOpenChange={changeOpen}>
@@ -209,7 +248,8 @@ export function VoiceInputButton({ disabled }: { readonly disabled: boolean }) {
           <DialogTitle>{t("voiceInput")}</DialogTitle>
           <DialogDescription>{t("voiceInputHint")}</DialogDescription>
         </DialogHeader>
-        <VoiceLanguageSelect value={language} onChange={setLanguage} disabled={working} />
+        <VoiceLanguageSelect value={language} onChange={changeLanguage} disabled={!available || disabled} />
+        {working ? <p className="text-xs text-muted-foreground">{t("voiceLanguageSwitchHint")}</p> : null}
         {!available ? <p className="text-sm text-muted-foreground">{t("voiceInputUnsupported")}</p> : null}
         {error ? <p className="rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive" role="alert">{t(error)}</p> : null}
         {working ? (
@@ -226,7 +266,7 @@ export function VoiceInputButton({ disabled }: { readonly disabled: boolean }) {
               <MicOffIcon className="size-4" />{t("voiceStop")}
             </Button>
           ) : (
-            <Button className="min-h-11" disabled={!available || disabled} onClick={start} type="button">
+            <Button className="min-h-11" disabled={!available || disabled} onClick={() => start()} type="button">
               <MicIcon className="size-4" />{t("voiceStart")}
             </Button>
           )}
