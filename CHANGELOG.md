@@ -1,5 +1,51 @@
 # Changelog
 
+## 2026-11-09 — panel recovery, one-tap dictation, owner-proof hardening
+
+Three follow-ups that were reviewed on separate branches are consolidated here
+for review. Nothing was applied to the hosted project: no migration, auth
+setting, deploy or data change was performed.
+
+### Fixed
+
+- A workspace panel that cannot be downloaded no longer replaces the whole
+  screen. Coder and Research are mounted through a panel-scoped error boundary
+  (`components/app/lazy-panel.tsx`); the column explains the failure, keeps the
+  transcript, composer, sidebar and approvals usable, and offers an in-place
+  retry (a fresh `lazy()` and import) plus a reload. `React.lazy` caches a
+  rejected import, so the old route-level "try again" could never recover
+  without a full reload. See [error recovery](docs/error-recovery-2026-11-04.md).
+- The route error screen retries once automatically, offers a reload action and
+  logs the error name, message and stack alongside the digest. The retry is per
+  boundary instance, so a deterministic failure cannot loop.
+- Address-bar updates go through one guarded `replaceRoute()` helper instead of a
+  bare `History.prototype.replaceState` call, so a blocked History API cannot
+  break sending a turn or switching mode.
+
+### Changed
+
+- **Voice input is one tap.** Pressing the composer microphone now opens the
+  dictation panel *and* starts listening, instead of asking for a second
+  confirmation press. The Somali/English picker stays, because browsers cannot
+  detect the spoken language and the default engine would transcribe Somali as
+  English: the choice is seeded from the interface language, the last used
+  language is remembered, and changing it while listening restarts capture in
+  the new language without discarding words already added to the draft.
+
+### Security (repository only, not applied)
+
+- Adds `supabase/migrations/20261030125000_harden_owner_proof_rpc.sql`, which
+  conditionally revokes client `EXECUTE` on the out-of-band
+  `tflash_verify_owner_proof(text, text)` `SECURITY DEFINER` RPC while leaving it
+  available to the database owner. The version is `…125000` rather than the
+  original `…120000` because `20261030120000_create_tflash_permission_grants.sql`
+  already owns that version on the live project; two files cannot share one.
+- Records a read-only re-check of the hosted project: the `authenticated` grant
+  is still live, the applied migration ledger matches the repository apart from an
+  unrelated `Eng-Apdow` row, all services are healthy, and
+  `password_hibp_enabled` remains `false`. See
+  [database advisors](docs/database-advisors-2026-10-30.md).
+
 ## 2026-11-05 — model picker entry points
 
 The picker dialog existed and the top bar already listened for a
