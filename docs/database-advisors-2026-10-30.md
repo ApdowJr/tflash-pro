@@ -1,9 +1,13 @@
 # Database security advisors — 2026-10-30 (revalidated 2026-11-09)
 
 Project reviewed through the Supabase MCP server:
-`https://uatpsywxzdkdjhbclzve.supabase.co` (`uatpsywxzdkdjhbclzve`). This pass is
-repository-only. No production migration, auth setting, deploy or push was
-performed.
+`https://uatpsywxzdkdjhbclzve.supabase.co` (`uatpsywxzdkdjhbclzve`). The
+2026-10-30 review was repository-only; the RPC revocation described here was
+applied on **2026-11-09** with explicit user approval, and no auth setting,
+deploy or push was performed.
+
+**Status: `tflash_verify_owner_proof` is revoked on the live project.** See
+[applied 2026-11-09](#applied-2026-11-09).
 
 ## Root cause
 
@@ -118,9 +122,10 @@ changed, applied, repaired or pushed.
 - Auth config: `password_hibp_enabled` is `false`, so the leaked-password
   advisor finding is unchanged and still needs an owner action on a Pro plan.
 
-Consequence for this repository: the hardening migration is committed but **not
-applied**. `authenticated` can still execute the `SECURITY DEFINER` RPC until an
-owner runs it through the approved workflow below.
+Consequence for this repository: the hardening migration was committed in
+`main` (`b087632`) and has since been applied to this project on 2026-11-09 — see
+[applied 2026-11-09](#applied-2026-11-09). `authenticated` can no longer execute
+the `SECURITY DEFINER` RPC.
 
 ### Why authenticated users do not need it
 
@@ -253,24 +258,74 @@ unversioned objects. A blind push can produce a misleading or partial history.
   checks remain in `owned-chat.ts` and `agent/channels/eve.ts`.
 - Existing migration, RLS and owner-proof tests remain in the suite.
 
-## Applying to production (not done)
+## Applied 2026-11-09
 
-Requires explicit approval:
+Applied with explicit user approval, through the Supabase MCP connector on
+`uatpsywxzdkdjhbclzve`. The statements are exactly those in
+`supabase/migrations/20261030125000_harden_owner_proof_rpc.sql`; nothing else was
+touched (no auth setting, no project setting, no deploy, no data change).
 
-1. Review the new migration and the drift list above.
-2. Apply
-   `supabase/migrations/20261030125000_harden_owner_proof_rpc.sql` through the
-   approved Supabase migration workflow. It is safe to run against the current
-   project because the function exists; it is a no-op elsewhere.
-3. Verify:
-   ```sql
-   select has_function_privilege(
-     'authenticated',
-     'public.tflash_verify_owner_proof(text,text)',
-     'execute'
-   );
-   ```
-   Expected: `false`.
-4. Re-run the advisors. The `authenticated_security_definer_function_executable`
-   warning should disappear; the leaked-password warning remains until the
-   Dashboard/API change above is made by the owner.
+### Before
+
+```
+fn: tflash_verify_owner_proof(text,text)
+security_definer: true
+authenticated_can_execute: true     <-- the advisor finding
+anon_can_execute: false
+owner (postgres): true
+```
+
+### Statement executed
+
+```sql
+do $$
+begin
+  if to_regprocedure('public.tflash_verify_owner_proof(text,text)') is not null then
+    revoke all on function public.tflash_verify_owner_proof(text, text)
+      from public, anon, authenticated;
+  end if;
+end
+$$;
+```
+
+### After
+
+```
+fn: tflash_verify_owner_proof(text,text)
+acl: postgres=X/postgres           <-- owner only
+authenticated_can_execute: false
+anon_can_execute: false
+service_role_can_execute: false
+owner (postgres): true
+```
+
+`authenticated_security_definer_function_executable` should now clear on the
+next advisor run. The function was **not dropped**, so the behaviour is
+reversible with `grant execute on function public.tflash_verify_owner_proof(text,
+text) to authenticated;` if an undocumented administrative use ever appears.
+
+### Post-change checks
+
+- No runtime caller existed before or after: `grep -rn
+  tflash_verify_owner_proof app agent components lib` is empty, and the HMAC path
+  (`verifyChatOwnership` in `lib/security/owned-chat.ts`,
+  `agent/channels/eve.ts`, `app/api/chats/route.ts`,
+  `app/api/chats/vercel-sync/route.ts`,
+  `components/chat/authenticated-agent-chat.tsx`) is unchanged.
+- RLS is intact: `tflash_chats` still has its 4 policies, `tflash_workspaces` its
+  4, and the chat rows are still readable by their owners. Revoking a function
+  privilege does not touch table grants or policies.
+- The revoke is not reversible by application code: a client `select` on the RPC
+  now fails with `42501` (`permission denied for function`), which
+  `tests/owner-proof-hardening.test.mjs` asserts in PGlite.
+
+### Still open
+
+- `auth_leaked_password_protection` — `password_hibp_enabled` is still `false`.
+  Supabase documents this as Pro-plan and above; it needs the owner to confirm
+  billing and enable it in **Authentication → Providers → Email** (or by PATCH on
+  the Management API). Not done here.
+- The wider schema drift table above (uncommitted `tflash_messages`, the
+  `TRUNCATE`/`REFERENCES`/`TRIGGER` grants to `authenticated`, the full-vs-partial
+  chat index) is still **documented, not fixed**. It needs the snapshot-then-
+  reconcile plan above, not a blind `db push`.

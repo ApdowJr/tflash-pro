@@ -2,8 +2,10 @@
 
 ## 2026-11-09 — panel recovery, one-tap dictation, owner-proof hardening
 
-Three follow-ups that were reviewed on separate branches are consolidated here
-for review. Nothing was applied to the hosted project: no migration, auth
+Three follow-ups that were reviewed on separate branches are consolidated here.
+
+The code shipped to `main` in `b087632`; the owner-proof RPC revocation was then
+**applied to the hosted project on 2026-11-09** with explicit approval. No auth
 setting, deploy or data change was performed.
 
 ### Fixed
@@ -32,7 +34,7 @@ setting, deploy or data change was performed.
   language is remembered, and changing it while listening restarts capture in
   the new language without discarding words already added to the draft.
 
-### Security (repository only, not applied)
+### Security (applied to the hosted project)
 
 - Adds `supabase/migrations/20261030125000_harden_owner_proof_rpc.sql`, which
   conditionally revokes client `EXECUTE` on the out-of-band
@@ -40,10 +42,16 @@ setting, deploy or data change was performed.
   available to the database owner. The version is `…125000` rather than the
   original `…120000` because `20261030120000_create_tflash_permission_grants.sql`
   already owns that version on the live project; two files cannot share one.
-- Records a read-only re-check of the hosted project: the `authenticated` grant
-  is still live, the applied migration ledger matches the repository apart from an
-  unrelated `Eng-Apdow` row, all services are healthy, and
-  `password_hibp_enabled` remains `false`. See
+- **Applied on 2026-11-09.** The function's ACL went from
+  `postgres=X/postgres, authenticated=X/postgres` to `postgres=X/postgres`;
+  `authenticated`, `anon` and `service_role` can no longer execute it, and the
+  owner still can. Nothing was dropped, so it remains reversible. No runtime
+  caller existed before the change, and the HMAC path plus the `tflash_chats`
+  and `tflash_workspaces` RLS policies are unchanged.
+- Still open: `password_hibp_enabled` is `false` (leaked-password protection is a
+  Pro-plan setting), and the wider unaudited schema drift — `tflash_messages`,
+  the excess `TRUNCATE`/`REFERENCES`/`TRIGGER` grants, the full-versus-partial
+  chat index — remains documented rather than fixed. See
   [database advisors](docs/database-advisors-2026-10-30.md).
 
 ## 2026-11-05 — model picker entry points
