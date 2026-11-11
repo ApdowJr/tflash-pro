@@ -85,3 +85,21 @@ test("dictation starts on the microphone tap and keeps the language choice", asy
   // Still never sends a turn: dictation only edits the draft.
   assert.doesNotMatch(voice, /onSubmit|handleSubmit\(/);
 });
+
+test("the advisors document records the applied revoke instead of claiming it is pending", async () => {
+  const doc = await read("docs/database-advisors-2026-10-30.md");
+  // The revoke is applied on the live project; the doc must say so, and must not
+  // still present the change as an unapplied to-do.
+  assert.match(doc, /## Applied 2026-11-09/);
+  assert.doesNotMatch(doc, /## Applying to production \(not done\)/);
+  assert.match(doc, /authenticated_can_execute: false/);
+  assert.match(doc, /postgres=X\/postgres/);
+  // The remaining owner actions must stay visible.
+  assert.match(doc, /password_hibp_enabled/);
+});
+
+test("the changelog marks the owner-proof change as applied, not repository-only", async () => {
+  const changelog = await read("CHANGELOG.md");
+  assert.match(changelog, /### Security \(applied to the hosted project\)/);
+  assert.doesNotMatch(changelog, /### Security \(repository only, not applied\)/);
+});
